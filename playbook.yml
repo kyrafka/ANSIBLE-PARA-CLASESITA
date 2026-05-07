@@ -1,0 +1,115 @@
+---
+- name: Configurar Jarvis como router con VLANs
+  hosts: localhost
+  become: true
+
+  tasks:
+
+    # ── 1. NETPLAN ──────────────────────────────────────────────
+    - name: Escribir 50-cloud-init.yaml con VLANs
+      copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          network:
+            version: 2
+            ethernets:
+              ens34:
+                dhcp4: true
+              ens35:
+                dhcp4: false
+                addresses: []
+            vlans:
+              vlan10:
+                id: 10
+                link: ens35
+                addresses:
+                  - 192.168.10.1/24
+              vlan20:
+                id: 20
+                link: ens35
+                addresses:
+                  - 192.168.20.1/24
+              vlan30:
+                id: 30
+                link: ens35
+                addresses:
+                  - 192.168.30.1/24
+              vlan40:
+                id: 40
+                link: ens35
+                addresses:
+                  - 192.168.40.1/24
+
+    - name: Aplicar netplan
+      command: netplan apply
+
+    # ── 2. IP FORWARDING ────────────────────────────────────────
+    - name: Habilitar ip_forward
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^#?net\.ipv4\.ip_forward'
+        line: "net.ipv4.ip_forward=1"
+        state: present
+
+    - name: Aplicar sysctl
+      command: sysctl -p
+
+    # ── 3. INSTALAR iptables-persistent ─────────────────────────
+    - name: Instalar iptables-persistent
+      apt:
+        name: iptables-persistent
+        state: present
+        update_cache: true
+
+    # ── 4. LIMPIAR reglas viejas (para no duplicar) ─────────────
+    - name: Flush reglas FORWARD existentes
+      command: iptables -F FORWARD
+
+    - name: Flush reglas NAT existentes
+      command: iptables -t nat -F POSTROUTING
+
+    # ── 5. REGLAS IPTABLES ───────────────────────────────────────
+    - name: NAT Masquerade en ens34
+      iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: ens34
+        jump: MASQUERADE
+
+    - name: FORWARD salida VLANs hacia WAN
+      iptables:
+        chain: FORWARD
+        in_interface: "{{ item }}"
+        out_interface: ens34
+        jump: ACCEPT
+      loop:
+        - vlan10
+        - vlan20
+        - vlan30
+        - vlan40
+
+    - name: FORWARD retorno WAN hacia VLANs
+      iptables:
+        chain: FORWARD
+        in_interface: ens34
+        out_interface: "{{ item }}"
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+      loop:
+        - vlan10
+        - vlan20
+        - vlan30
+        - vlan40
+
+    # ── 6. PERSISTIR reglas ──────────────────────────────────────
+    - name: Guardar reglas iptables
+      command: netfilter-persistent save
+
+    - name: Habilitar netfilter-persistent al arranque
+      systemd:
+        name: netfilter-persistent
+        enabled: true
+        state: started
