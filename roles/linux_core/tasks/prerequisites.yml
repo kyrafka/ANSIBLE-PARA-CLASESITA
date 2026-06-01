@@ -1,0 +1,92 @@
+---
+# linux_core/tasks/prerequisites.yml — Paquetes, módulos kernel, sysctl
+# ---------------------------------------------------------------------------
+
+- name: "PRE — Validación de privilegios"
+  block:
+    - name: "Check if running as root or via sudo"
+      ansible.builtin.command: "id -u"
+      register: root_check
+      changed_when: false
+
+    - name: "Fail if not privileged"
+      ansible.builtin.fail:
+        msg: |
+          FATAL: Se requieren privilegios de root o sudo.
+          Ejecuta: sudo ansible-playbook <playbook>.yml
+      when: root_check.stdout != "0"
+
+- name: "PRE — Verificar existencia de interfaces de red"
+  ansible.builtin.stat:
+    path: "/sys/class/net/{{ item }}"
+  loop:
+    - "{{ nic_wan }}"
+    - "{{ nic_lan }}"
+    - "{{ nic_interlink }}"
+  register: nic_exists
+
+- name: "PRE — Abortar si alguna interfaz no existe"
+  ansible.builtin.fail:
+    msg: "FATAL: La interfaz {{ item.item }} no existe en este sistema."
+  loop: "{{ nic_exists.results }}"
+  when:
+    - not item.stat.exists
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: "PRE — Cargar módulos de kernel necesarios"
+  block:
+    - name: "Asegurar módulos en /etc/modules"
+      ansible.builtin.lineinfile:
+        path: /etc/modules
+        line: "{{ item }}"
+        state: present
+      loop:
+        - "8021q"
+        - "bridge"
+
+    - name: "Cargar módulos de kernel en runtime"
+      ansible.builtin.command: "modprobe {{ item }}"
+      loop:
+        - "8021q"
+        - "bridge"
+      register: modprobe_result
+      changed_when: true
+      failed_when: modprobe_result.rc != 0
+  rescue:
+    - name: "Handle kernel module load failure"
+      ansible.builtin.debug:
+        msg: "WARNING: No se pudieron cargar módulos 8021q/bridge. Verifica si están ya cargados."
+
+- name: "PRE — Habilitar IP Forwarding v4"
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.conf
+    regexp: "^#?net.ipv4.ip_forward"
+    line: "net.ipv4.ip_forward=1"
+    state: present
+
+- name: "PRE — Aplicar sysctl"
+  ansible.builtin.command: "sysctl -p"
+  changed_when: true
+
+- name: "PRE — Instalar paquetes requeridos"
+  ansible.builtin.apt:
+    name:
+      - "bridge-utils"
+      - "vlan"
+      - "frr"
+      - "keepalived"
+      - "netplan.io"
+      - "iptables-persistent"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+  register: apt_result
+  failed_when: apt_result.failed
+
+- name: "PRE — Verificar estado de servicios críticos"
+  ansible.builtin.systemd:
+    name: "systemd-networkd"
+    state: started
+    enabled: yes
+  failed_when: false

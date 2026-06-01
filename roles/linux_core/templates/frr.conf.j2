@@ -1,0 +1,57 @@
+# ============================================================================
+# Configuración FRR (Free Range Routing) para {{ core_id | upper }}
+# ============================================================================
+# OSPF entre Core 1 y Core 2 vía interlink
+# ============================================================================
+
+frr version 9.0
+frr defaults traditional
+!
+hostname {{ core_id }}
+!
+! --- Logging ---
+log file /var/log/frr/{{ core_id }}.log
+log stdout
+log syslog
+!
+! --- Usuario zebra (por defecto FRR) ---
+!
+!
+! ============================================================================
+! Interfaces
+! ============================================================================
+{% for vlan in vlans %}
+interface br-vlan{{ vlan.id }}
+ description {{ vlan.name }}
+ ip ospf {{ ospf_area }}
+ ip ospf cost 10
+!
+{% endfor %}
+interface {{ nic_interlink }}
+ description Interlink Core1-Core2
+ ip ospf {{ ospf_area }}
+ ip ospf cost 1
+!
+!
+! ============================================================================
+! Router OSPF
+! ============================================================================
+router ospf
+ ospf router-id {{ interlink_ip }}
+ passive-interface default
+ no passive-interface {{ nic_interlink }}
+ {% for vlan in vlans -%}
+ no passive-interface br-vlan{{ vlan.id }}
+ {% endfor %}
+ network {{ interlink_net }} area {{ ospf_area }}
+ {% for vlan in vlans -%}
+ network {{ vlan.subnet }} area {{ ospf_area }}
+ {% endfor %}
+!
+!
+line vty
+!
+! ============================================================================
+! Fin de configuración FRR
+! ============================================================================
+!

@@ -1,0 +1,52 @@
+---
+# linux_core/tasks/networking.yml — netplan, bridges, VLANs, interfaces
+# ---------------------------------------------------------------------------
+# Renderiza la configuración de red desde plantilla Jinja2.
+# Hace backup del netplan previo, aplica y verifica.
+# ---------------------------------------------------------------------------
+
+- name: "NET — Backup de configuración netplan existente"
+  ansible.builtin.copy:
+    src: "{{ netplan_config_file }}"
+    dest: "{{ netplan_backup_file }}"
+    remote_src: yes
+    force: no
+  when: "netplan_config_file is file"
+  ignore_errors: yes
+
+- name: "NET — Renderizar configuración de red"
+  ansible.builtin.template:
+    src: "netplan_config.yaml.j2"
+    dest: "{{ netplan_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: yes
+  register: netplan_rendered
+
+- name: "NET — Generar y validar configuración netplan"
+  ansible.builtin.command: "netplan generate"
+  changed_when: true
+  register: netplan_generate
+  failed_when: netplan_generate.rc != 0
+
+- name: "NET — Aplicar configuración netplan"
+  ansible.builtin.command: "netplan apply"
+  changed_when: true
+  register: netplan_apply
+  failed_when: netplan_apply.rc != 0
+
+- name: "NET — Verificar estado de systemd-networkd"
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: started
+    enabled: yes
+
+- name: "NET — Mostrar resumen de interfaces configuradas"
+  ansible.builtin.command: "ip -br a"
+  changed_when: false
+  register: ip_addr_result
+
+- name: "NET — Debug de interfaces"
+  ansible.builtin.debug:
+    msg: "{{ ip_addr_result.stdout_lines }}"

@@ -1,0 +1,109 @@
+# ============================================================================
+# vm-voip01 — FreePBX
+# ============================================================================
+# FreePBX requiere Asterisk preinstalado y configurado.
+# Este playbook prepara el entorno; la configuración de FreePBX
+# se completa vía GUI web.
+# ============================================================================
+
+- name: "Aprovisionar vm-voip01 — FreePBX + Asterisk"
+  hosts: vm-voip01
+  become: true
+  gather_facts: true
+
+  vars:
+    asterisk_version: "20"
+    freepbx_version: "16"
+
+  tasks:
+    - name: "VOIP — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "VOIP — Instalar dependencias de compilación"
+      ansible.builtin.apt:
+        name:
+          - build-essential
+          - git
+          - wget
+          - curl
+          - sox
+          - libncurses5-dev
+          - libssl-dev
+          - libxml2-dev
+          - libnewt-dev
+          - libsqlite3-dev
+          - libjansson-dev
+          - libcurl4-openssl-dev
+          - libedit-dev
+          - uuid-dev
+          - libicu-dev
+        state: present
+
+    - name: "VOIP — Instalar Apache + PHP para FreePBX"
+      ansible.builtin.apt:
+        name:
+          - apache2
+          - mariadb-server
+          - mariadb-client
+          - php8.1
+          - php8.1-cli
+          - php8.1-common
+          - php8.1-curl
+          - php8.1-gd
+          - php8.1-mbstring
+          - php8.1-mysql
+          - php8.1-xml
+          - php8.1-bcmath
+          - php8.1-intl
+          - php8.1-zip
+          - php-pear
+        state: present
+
+    - name: "VOIP — Instalar Asterisk (paquete precompilado)"
+      ansible.builtin.apt:
+        name:
+          - asterisk
+          - asterisk-config
+          - asterisk-core-sounds-en
+          - asterisk-moh-opsound-wav
+        state: present
+      ignore_errors: true
+
+    - name: "VOIP — Start y enable Asterisk"
+      ansible.builtin.systemd:
+        name: asterisk
+        state: started
+        enabled: yes
+      ignore_errors: true
+
+    - name: "VOIP — Start y enable Apache"
+      ansible.builtin.systemd:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: "VOIP — Start y enable MariaDB"
+      ansible.builtin.systemd:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: "VOIP — Aviso de configuración manual de FreePBX"
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║  CONFIGURACIÓN MANUAL REQUERIDA — FreePBX                           ║
+          ╠══════════════════════════════════════════════════════════════════════╣
+          ║  FreePBX requiere configuración interactiva. Pasos sugeridos:        ║
+          ║                                                                       ║
+          ║  1) Descargar FreePBX:                                              ║
+          ║     cd /usr/src                                                      ║
+          ║     wget http://mirror.freepbx.org/modules/packages/freepbx/...   ║
+          ║                                                                       ║
+          ║  2) Seguir la documentación oficial:                               ║
+          ║     https://wiki.freepbx.org/display/FOP/Installing+FreePBX+16     ║
+          ║                                                                       ║
+          ║  3) Acceder vía web: http://<IP-de-vm-voip01>/freepbx               ║
+          ╚══════════════════════════════════════════════════════════════════════╝

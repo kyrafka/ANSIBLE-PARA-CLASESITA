@@ -1,0 +1,47 @@
+---
+# linux_core/tasks/keepalived.yml — Configuración de Keepalived (HA VIPs)
+# ---------------------------------------------------------------------------
+
+- name: "KAL — Renderizar configuración keepalived.conf"
+  ansible.builtin.template:
+    src: "keepalived.conf.j2"
+    dest: "{{ keepalived_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: yes
+
+- name: "KAL — Reiniciar y habilitar servicio keepalived"
+  ansible.builtin.systemd:
+    name: keepalived
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: "KAL — Verificar estado del servicio"
+  ansible.builtin.systemd:
+    name: keepalived
+    state: started
+    enabled: yes
+  register: keepalived_status
+
+- name: "KAL — Debug estado"
+  ansible.builtin.debug:
+    msg: "Keepalived Status: {{ keepalived_status.status.ActiveState | default('Unknown') }}"
+
+- name: "KAL — Esperar a que Keepalived estabilice VIPs (3 segundos)"
+  ansible.builtin.pause:
+    seconds: 3
+
+- name: "KAL — Mostrar VIPs activas"
+  ansible.builtin.shell: "ip -4 addr show | grep -E 'inet |br-vlan'"
+  changed_when: false
+  register: vip_result
+  ignore_errors: yes
+
+- name: "KAL — Debug de VIPs"
+  ansible.builtin.debug:
+    msg:
+      - "Configuración de Keepalived aplicada correctamente."
+      - "Rol actual: {{ core_state }}"
+      - "Prioridad: {{ core_priority }}"

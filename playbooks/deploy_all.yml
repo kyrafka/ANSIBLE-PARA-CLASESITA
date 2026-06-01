@@ -1,0 +1,59 @@
+# ============================================================================
+# deploy_all.yml — Playbook maestro de aprovisionamiento
+# ============================================================================
+# Ejecuta todos los playbooks de servicios Ubuntu en secuencia.
+#
+# Uso:
+#   ansible-playbook -i inventario/hosts.yml playbooks/deploy_all.yml
+#
+# O ejecutar individualmente:
+#   ansible-playbook -i inventario/hosts.yml playbooks/vm-services01.yml
+#   ansible-playbook -i inventario/hosts.yml playbooks/vm-web01.yml
+#   ...
+# ============================================================================
+
+- name: "Deploy All Ubuntu Services"
+  hosts: ubuntu_servers
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: "DESPLEGAR — vm-services01 (Samba + iRedMail)"
+      ansible.builtin.include_tasks:
+        file: "vm-services01.yml"
+      when: "'vm-services01' in inventory_hostname"
+      tags: services
+
+    - name: "DESPLEGAR — vm-web01 (Nginx + HAProxy + PostgreSQL)"
+      ansible.builtin.include_tasks:
+        file: "vm-web01.yml"
+      when: "'vm-web01' in inventory_hostname"
+      tags: web
+
+    - name: "DESPLEGAR — vm-voip01 (FreePBX)"
+      ansible.builtin.include_tasks:
+        file: "vm-voip01.yml"
+      when: "'vm-voip01' in inventory_hostname"
+      tags: voip
+
+    - name: "DESPLEGAR — vm-monitor01 (Zabbix + Grafana)"
+      ansible.builtin.include_tasks:
+        file: "vm-monitor01.yml"
+      when: "'vm-monitor01' in inventory_hostname"
+      tags: monitor
+
+    - name: "DESPLEGAR — vm-storage01 (NFS + PBS + rclone)"
+      ansible.builtin.include_tasks:
+        file: "vm-storage01.yml"
+      when: "'vm-storage01' in inventory_hostname"
+      tags: storage
+
+    - name: "DESPLEGAR — vm-docker01 (Docker + Docker Compose)"
+      ansible.builtin.include_tasks:
+        file: "vm-docker01.yml"
+      when: "'vm-docker01' in inventory_hostname"
+      tags: docker
+  
+  # Alternatively, just run all playbooks in order
+  # 'ansible-playbook -i inventario/hosts.yml playbooks/*.yml' is simpler
+  # but above logic provides host filtering

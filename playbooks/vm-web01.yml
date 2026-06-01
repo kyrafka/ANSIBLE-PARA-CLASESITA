@@ -1,0 +1,125 @@
+# ============================================================================
+# vm-web01 — Nginx + HAProxy + PostgreSQL
+# ============================================================================
+
+- name: "Aprovisionar vm-web01 — Nginx + HAProxy + PostgreSQL"
+  hosts: vm-web01
+  become: true
+  gather_facts: true
+
+  vars:
+    postgresql_version: "16"
+    postgresql_db: "webapp"
+    postgresql_user: "webuser"
+    postgresql_pass: "WebP@ss2024!"
+    nginx_sites:
+      - name: "default"
+        server_name: "_"
+        root: "/var/www/html"
+        index: "index.html index.htm"
+
+  tasks:
+    - name: "WEB — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "WEB — Instalar Nginx"
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - nginx-extras
+        state: present
+
+    - name: "WEB — Instalar HAProxy"
+      ansible.builtin.apt:
+        name: haproxy
+        state: present
+
+    - name: "WEB — Instalar PostgreSQL"
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3-psycopg2
+        state: present
+
+    - name: "WEB — Asegurar que PostgreSQL está corriendo"
+      ansible.builtin.systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: "WEB — Crear base de datos PostgreSQL"
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_db:
+        name: "{{ postgresql_db }}"
+        state: present
+
+    - name: "WEB — Crear usuario PostgreSQL"
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_user:
+        name: "{{ postgresql_user }}"
+        password: "{{ postgresql_pass }}"
+        state: present
+        priv: "{{ postgresql_db }}.*:ALL"
+
+    - name: "WEB — Configurar pg_hba.conf para conexiones locales"
+      ansible.builtin.lineinfile:
+        path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+        regexp: "^host\\s+all\\s+all\\s+127.0.0.1/32"
+        line: "host    all             all             127.0.0.1/32            scram-sha-256"
+        state: present
+        backup: yes
+      notify: "Reload PostgreSQL"
+
+    - name: "WEB — Renderizar nginx.conf"
+      ansible.builtin.template:
+        src: "nginx_default.conf.j2"
+        dest: "/etc/nginx/sites-available/default"
+        mode: "0644"
+      notify: "Reload Nginx"
+
+    - name: "WEB — Habilitar sitio default en Nginx"
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/default"
+        dest: "/etc/nginx/sites-enabled/default"
+        state: link
+        force: yes
+      notify: "Reload Nginx"
+
+    - name: "WEB — Crear página de prueba"
+      ansible.builtin.copy:
+        content: |
+          <html>
+          <head><title>vm-web01</title></head>
+          <body>
+            <h1>vm-web01 — Nginx + HAProxy + PostgreSQL</h1>
+            <p>Servidor web operativo.</p>
+          </body>
+          </html>
+        dest: "/var/www/html/index.html"
+        mode: "0644"
+
+    - name: "WEB — Start y enable servicios"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - nginx
+        - haproxy
+        - postgresql
+
+  handlers:
+    - name: "Reload Nginx"
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+    - name: "Reload PostgreSQL"
+      ansible.builtin.systemd:
+        name: postgresql
+        state: reloaded

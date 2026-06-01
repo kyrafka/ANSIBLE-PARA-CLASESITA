@@ -1,0 +1,48 @@
+---
+# linux_core/tasks/frr.yml — Configuración de FRR (OSPF)
+# ---------------------------------------------------------------------------
+
+- name: "FRR — Renderizar configuración frr.conf"
+  ansible.builtin.template:
+    src: "frr.conf.j2"
+    dest: "{{ frr_config_file }}"
+    owner: frr
+    group: frr
+    mode: "0640"
+    backup: yes
+  notify: "Reload systemd daemon"
+
+- name: "FRR — Renderizar configuración daemons (habilitar ospfd)"
+  ansible.builtin.template:
+    src: "daemons.j2"
+    dest: "{{ frr_daemons_file }}"
+    owner: frr
+    group: frr
+    mode: "0640"
+    backup: yes
+
+- name: "FRR — Crear directorio de log si no existe"
+  ansible.builtin.file:
+    path: "/var/log/frr"
+    state: directory
+    owner: frr
+    group: frr
+    mode: "0755"
+
+- name: "FRR — Reiniciar y habilitar servicio frr"
+  ansible.builtin.systemd:
+    name: frr
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: "FRR — Verificar estado del servicio"
+  ansible.builtin.systemd:
+    name: frr
+    state: started
+    enabled: yes
+  register: frr_status
+
+- name: "FRR — Debug estado"
+  ansible.builtin.debug:
+    msg: "FRR Status: {{ frr_status.status.ActiveState | default('Unknown') }}"

@@ -1,0 +1,110 @@
+# ============================================================================
+# vm-services01 — Samba + iRedMail
+# ============================================================================
+# iRedMail requiere interacción manual durante la instalación.
+# Este playbook prepara el sistema; la instalación de iRedMail
+# debe completarse manualmente con su script oficial.
+# ============================================================================
+
+- name: "Aprovisionar vm-services01 — Samba + iRedMail"
+  hosts: vm-services01
+  become: true
+  gather_facts: true
+
+  vars:
+    samba_workgroup: "LABORATORIO"
+    samba_server_string: "Servidor de archivos del laboratorio"
+    samba_shares:
+      - name: "compartido"
+        path: "/srv/samba/compartido"
+        valid_users: "@usuarios"
+        browsable: "yes"
+        writable: "yes"
+
+  tasks:
+    - name: "SVC01 — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "SVC01 — Instalar Samba"
+      ansible.builtin.apt:
+        name:
+          - samba
+          - samba-common
+          - samba-common-bin
+          - smbclient
+        state: present
+
+    - name: "SVC01 — Crear directorio de shares"
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "0775"
+        owner: root
+        group: users
+      loop: "{{ samba_shares }}"
+
+    - name: "SVC01 — Renderizar smb.conf"
+      ansible.builtin.template:
+        src: "smb.conf.j2"
+        dest: "/etc/samba/smb.conf"
+        mode: "0644"
+      notify: "Recargar Samba"
+
+    - name: "SVC01 — Instalar dependencias para iRedMail"
+      ansible.builtin.apt:
+        name:
+          - wget
+          - tar
+          - gzip
+          - curl
+          - net-tools
+          - bc
+          - python3-pip
+        state: present
+
+    - name: "SVC01 — Descargar iRedMail (versión estable)"
+      ansible.builtin.get_url:
+        url: "https://github.com/iredmail/iRedMail/archive/refs/tags/1.6.8.tar.gz"
+        dest: "/tmp/iRedMail-1.6.8.tar.gz"
+        mode: "0644"
+      register: iredmail_download
+      failed_when: iredmail_download.failed
+      ignore_errors: true
+
+    - name: "SVC01 — Extraer iRedMail"
+      ansible.builtin.unarchive:
+        src: "/tmp/iRedMail-1.6.8.tar.gz"
+        dest: "/opt/"
+        remote_src: true
+      when: iredmail_download is success
+      ignore_errors: true
+
+    - name: "SVC01 — Aviso de instalación manual de iRedMail"
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║  INSTALACIÓN MANUAL REQUERIDA — iRedMail                           ║
+          ╠══════════════════════════════════════════════════════════════════════╣
+          ║  iRedMail requiere interacción interactiva. Para completar:        ║
+          ║    cd /opt/iRedMail-1.6.8/                                          ║
+          ║    sudo bash iRedMail.sh                                            ║
+          ║                                                                       ║
+          ║  Sigue el asistente para configurar dominio, base de datos, etc.   ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+    - name: "SVC01 — Start y enable Samba"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - smbd
+        - nmbd
+
+  handlers:
+    - name: "Recargar Samba"
+      ansible.builtin.systemd:
+        name: smbd
+        state: restarted

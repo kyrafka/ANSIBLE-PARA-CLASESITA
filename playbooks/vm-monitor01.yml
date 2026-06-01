@@ -1,0 +1,119 @@
+# ============================================================================
+# vm-monitor01 — Zabbix + Grafana
+# ============================================================================
+
+- name: "Aprovisionar vm-monitor01 — Zabbix + Grafana"
+  hosts: vm-monitor01
+  become: true
+  gather_facts: true
+
+  vars:
+    zabbix_version: "6.4"
+    zabbix_db: "zabbix"
+    zabbix_db_user: "zabbix"
+    zabbix_db_pass: "Zabb1xP@ss!"
+    grafana_admin_user: "admin"
+    grafana_admin_pass: "admin"
+
+  tasks:
+    - name: "MON — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "MON — Instalar dependencias"
+      ansible.builtin.apt:
+        name:
+          - gnupg2
+          - software-properties-common
+          - apt-transport-https
+          - wget
+          - curl
+        state: present
+
+    - name: "MON — Instalar MariaDB"
+      ansible.builtin.apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+        state: present
+
+    - name: "MON — Start y enable MariaDB"
+      ansible.builtin.systemd:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: "MON — Crear base de datos Zabbix"
+      ansible.builtin.mysql_db:
+        name: "{{ zabbix_db }}"
+        state: present
+        login_unix_socket: /run/mysqld/mysqld.sock
+
+    - name: "MON — Crear usuario de base de datos Zabbix"
+      ansible.builtin.mysql_user:
+        name: "{{ zabbix_db_user }}"
+        password: "{{ zabbix_db_pass }}"
+        priv: "{{ zabbix_db }}.*:ALL"
+        state: present
+        login_unix_socket: /run/mysqld/mysqld.sock
+
+    - name: "MON — Agregar repo de Zabbix"
+      ansible.builtin.apt_repository:
+        repo: "deb https://repo.zabbix.com/zabbix/{{ zabbix_version }}/ubuntu $(lsb_release -cs) main"
+        state: present
+        filename: zabbix
+      ignore_errors: true
+
+    - name: "MON — Importar key de Zabbix"
+      ansible.builtin.apt_key:
+        url: "https://repo.zabbix.com/zabbix-official-repo.key"
+        state: present
+      ignore_errors: true
+
+    - name: "MON — Instalar Zabbix Server + Frontend + Agent"
+      ansible.builtin.apt:
+        name:
+          - zabbix-server-mysql
+          - zabbix-frontend-php
+          - zabbix-apache-conf
+          - zabbix-agent2
+        state: present
+        update_cache: yes
+      ignore_errors: true
+
+    - name: "MON — Instalar Grafana"
+      ansible.builtin.apt:
+        name: grafana
+        state: present
+        update_cache: yes
+      ignore_errors: true
+
+    - name: "MON — Start y enable servicios Zabbix"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - zabbix-server
+        - zabbix-agent2
+      ignore_errors: true
+
+    - name: "MON — Start y enable Grafana"
+      ansible.builtin.systemd:
+        name: grafana-server
+        state: started
+        enabled: yes
+
+    - name: "MON — Aviso de acceso"
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║  ACCESO A SERVICIOS DE MONITOREO                                     ║
+          ╠══════════════════════════════════════════════════════════════════════╣
+          ║  Zabbix:  http://<IP-de-vm-monitor01>/zabbix                        ║
+          ║  Grafana: http://<IP-de-vm-monitor01>:3000                          ║
+          ║                                                                       ║
+          ║  Grafana default: admin / admin                                     ║
+          ║  Zabbix default:  Admin / zabbix                                    ║
+          ╚══════════════════════════════════════════════════════════════════════╝

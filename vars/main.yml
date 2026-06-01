@@ -1,0 +1,95 @@
+# ============================================================================
+# Linux Core 1 y Core 2 — Variables compartidas
+# ============================================================================
+# Ubuntu 24 Server con netplan
+#
+# MODIFICA esto según tu topología real. Se usan placeholders que se
+# pueden sobre-escribir desde los playbooks o con extra-vars.
+# ============================================================================
+
+# --- Nombres de NICs (ajustar si son ens34/ens35/ens36 o eth0/eth1/eth2) ---
+# Ejemplo ESXi con names predictivos: nic_wan: "ens34", nic_lan: "ens35", etc.
+# Ejemplo con udev/eth renames: nic_wan: "eth0", nic_lan: "eth1", etc.
+#
+# O usa extra-vars: -e "nic_wan=ens192 nic_lan=ens224 nic_interlink=ens256"
+# -------------------------------------------------------------------------
+# Configuración de interfaces (adáptala a tu ESXi / Hypervisor)
+# -----------------------------------------------------------------------------
+# nic_wan:       eth0  # Trunk hacia pfSense (u otro firewall upstream)
+# nic_lan:       eth1  # Trunk hacia switches de acceso / clientes
+# nic_interlink: eth2  # Interlink directo Core1 <-> Core2 (OSPF + heartbeat)
+# -----------------------------------------------------------------------------
+# Si prefieres dejarlo en variables para pasarlas desde línea de comandos,
+# déjalas sin asignar aquí y pásalas vía extra-vars.
+# ---------------------------------------------------------------------------
+nic_wan: "eth0"
+nic_lan: "eth1"
+nic_interlink: "eth2"
+
+# --- Red interlink entre Core 1 y Core 2 ---
+interlink_net: "10.0.0.0/30"
+# Core 1 usará: 10.0.0.1/30
+# Core 2 usará: 10.0.0.2/30
+# ( estos se pasan como variables en cada playbook: core1_setup.yml / core2_setup.yml )
+# ---------------------------------------------------------------------------
+
+# ============================================================================
+# DEFINICIÓN DE VLANs — Topología real del laboratorio
+# ============================================================================
+# Basado en tabla de VMs:
+#   VLAN 10 = DMZ
+#   VLAN 30 = Virtualización
+#   VLAN 40 = Storage
+#   VLAN 50 = VoIP
+#   VLAN 60 = Gestión (Windows Server — NO se automatiza)
+#   VLAN 70 = Monitoreo
+# ============================================================================
+
+vlans:
+  - id: 10
+    name: "dmz"
+    subnet: "10.0.10.0/24"
+    core1_ip: "10.0.10.2/24"
+    core2_ip: "10.0.10.3/24"
+    vip: "10.0.10.1/24"
+    vrid: 10
+
+  - id: 30
+    name: "virtualizacion"
+    subnet: "10.0.30.0/24"
+    core1_ip: "10.0.30.2/24"
+    core2_ip: "10.0.30.3/24"
+    vip: "10.0.30.1/24"
+    vrid: 30
+
+  - id: 40
+    name: "storage"
+    subnet: "10.0.40.0/24"
+    core1_ip: "10.0.40.2/24"
+    core2_ip: "10.0.40.3/24"
+    vip: "10.0.40.1/24"
+    vrid: 40
+
+  - id: 50
+    name: "voip"
+    subnet: "10.0.50.0/24"
+    core1_ip: "10.0.50.2/24"
+    core2_ip: "10.0.50.3/24"
+    vip: "10.0.50.1/24"
+    vrid: 50
+
+  - id: 60
+    name: "gestion"
+    subnet: "10.0.60.0/24"
+    core1_ip: "10.0.60.2/24"
+    core2_ip: "10.0.60.3/24"
+    vip: "10.0.60.1/24"
+    vrid: 60
+
+  - id: 70
+    name: "monitoreo"
+    subnet: "10.0.70.0/24"
+    core1_ip: "10.0.70.2/24"
+    core2_ip: "10.0.70.3/24"
+    vip: "10.0.70.1/24"
+    vrid: 70

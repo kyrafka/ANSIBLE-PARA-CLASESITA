@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# core1_setup.yml — Configurador de Core 1 (Keepalived MASTER)
+# =============================================================================
+# Pre-requisitos:
+#   - Ejecutar con: sudo ansible-playbook core1_setup.yml
+#   - Ubuntu 24 Server (netplan) instalado y con apt funcional
+#   - Las 3 NICs definidas en vars/main.yml deben existir en el sistema
+#
+# ¿Qué hace?
+#   1. Instala prerequisitos (bridge-utils, vlan, frr, keepalived)
+#   2. Configura bridges + VLANs en netplan
+#   3. Levanta OSPF vía FRR
+#   4. Activa Keepalived en modo MASTER con VIPs flotantes
+# =============================================================================
+
+- name: "Configura Core 1 — Keepalived MASTER"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vars/main.yml
+
+  vars:
+    core_id: "core1"
+    core_state: "MASTER"
+    core_priority: 200
+    interlink_ip: "10.0.0.1"
+    interlink_peer: "10.0.0.2"
+
+  roles:
+    - linux_core

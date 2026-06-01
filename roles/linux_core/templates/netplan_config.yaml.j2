@@ -1,0 +1,47 @@
+# ============================================================================
+# Configuración de Netplan para Linux Core ({{ core_id | upper }})
+# ============================================================================
+# Generado automáticamente por Ansible — NO EDITAR A MANO
+# Fecha de generación: {{ ansible_date_time.iso8601 | default('N/A') }}
+# ============================================================================
+
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {{ nic_wan }}:
+      dhcp4: false
+      dhcp6: false
+      link-local: []
+    {{ nic_lan }}:
+      dhcp4: false
+      dhcp6: false
+      link-local: []
+    {{ nic_interlink }}:
+      dhcp4: false
+      dhcp6: false
+      link-local: []
+      addresses:
+        - {{ interlink_ip }}/30
+
+  vlans:
+{% for vlan in vlans %}
+    {{ nic_wan }}.{{ vlan.id }}:
+      id: {{ vlan.id }}
+      link: {{ nic_wan }}
+    {{ nic_lan }}.{{ vlan.id }}:
+      id: {{ vlan.id }}
+      link: {{ nic_lan }}
+{% endfor %}
+
+  bridges:
+{% for vlan in vlans %}
+    br-vlan{{ vlan.id }}:
+      interfaces:
+        - {{ nic_wan }}.{{ vlan.id }}
+        - {{ nic_lan }}.{{ vlan.id }}
+      parameters:
+        stp: false
+      addresses:
+        - {{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}
+{% endfor %}

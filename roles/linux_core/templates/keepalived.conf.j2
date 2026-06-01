@@ -1,0 +1,77 @@
+# ============================================================================
+# Configuración Keepalived — {{ core_id | upper }} ({{ core_state }})
+# ============================================================================
+# Generado automáticamente por Ansible — NO EDITAR A MANO
+# ============================================================================
+
+global_defs {
+    router_id {{ core_id }}
+    vrrp_version 2
+    vrrp_garp_master_delay 1
+    vrrp_garp_master_repeat 5
+    vrrp_gna_interval 1
+    notification_email {
+        admin@example.com
+    }
+    smtp_server 127.0.0.1
+    smtp_connect_timeout 30
+    script_user root
+    enable_script_security
+    script_security
+}
+
+# ---------------------------------------------------------------------------
+# VRRP track script para monitorear interfaces críticas
+# ---------------------------------------------------------------------------
+vrrp_script check_{{ nic_interlink }} {
+    script "/usr/bin/pgrep -f {{ nic_interlink }} || /bin/false"
+    interval 2
+    weight 10
+    fall 2
+    rise 2
+}
+
+# ---------------------------------------------------------------------------
+# Instancias VRRP — una por cada VLAN
+# ---------------------------------------------------------------------------
+{% for vlan in vlans %}
+vrrp_instance VI_VLAN{{ vlan.id }} {
+    state {{ core_state }}
+    interface br-vlan{{ vlan.id }}
+    virtual_router_id {{ vlan.vrid }}
+    priority {{ core_priority }}
+    advert_int 1
+    garp_master_delay 1
+    garp_master_repeat 5
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}
+    }
+
+    # Comunicación VRRP vía interlink (unicast)
+    unicast_src_ip {{ interlink_ip }}
+    unicast_peer {
+        {{ interlink_peer }}
+    }
+
+    # Seguimiento de interfaces
+    track_interface {
+        {{ nic_interlink }}
+    }
+
+    # VIP flotante para esta VLAN
+    virtual_ipaddress {
+        {{ vlan.vip }} dev br-vlan{{ vlan.id }}
+    }
+
+    # Notify scripts (opcionales)
+    # notify_master "/etc/keepalived/notify.sh master"
+    # notify_backup "/etc/keepalived/notify.sh backup"
+    # notify_fault  "/etc/keepalived/notify.sh fault"
+}
+{% endfor %}
+
+# ============================================================================
+# End of Keepalived configuration for {{ core_id | upper }}
+# ============================================================================

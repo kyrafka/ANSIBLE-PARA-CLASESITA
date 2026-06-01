@@ -1,0 +1,23 @@
+# ============================================================================
+# Conexión ESXi — Documentación y configuración
+# ============================================================================
+# URL de gestión: https://168.121.48.254:10112/ui/#/host/vms
+# IP del host:     168.121.48.254
+# Puerto:          10112
+# Usuario:         root
+# Contraseña:      qwe123$
+#
+# ⚠️  IMPORTANTE: La contraseña está en texto plano. Si vas a commitear esto
+#    a un repo público, usa ansible-vault o variables de entorno.
+# ============================================================================
+
+esxi_host: "168.121.48.254"
+esxi_port: 10112
+esxi_user: "root"
+esxi_pass: "qwe123$"
+esxi_validate_certs: false
+
+# Variables para uso en variables de entorno (más seguro):
+# export ESXI_HOST=168.121.48.254
+# export ESXI_USER=root
+# export ESXI_PASS='qwe123$'

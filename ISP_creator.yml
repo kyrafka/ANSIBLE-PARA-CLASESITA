@@ -1,0 +1,79 @@
+---
+- name: ISP_creator
+  hosts: localhost
+  become: true
+
+  tasks:
+
+    - name: Escribir 50-cloud-init.yaml
+      copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          network:
+            version: 2
+            ethernets:
+              ens34:
+                dhcp4: true
+              ens35:
+                dhcp4: false
+                addresses:
+                  - 192.168.1.1/24
+
+    - name: Aplicar netplan
+      command: netplan apply
+
+    - name: Habilitar ip_forward
+      lineinfile:
+        path: /etc/sysctl.conf
+        regexp: '^#?net\.ipv4\.ip_forward'
+        line: "net.ipv4.ip_forward=1"
+        state: present
+
+    - name: Aplicar sysctl
+      command: sudo sysctl -p
+
+    - name: Instalar iptables-persistent
+      apt:
+        name: iptables-persistent
+        state: present
+        update_cache: true
+
+    - name: Flush reglas FORWARD existentes
+      command: iptables -F FORWARD
+
+    - name: Flush reglas NAT existentes
+      command: iptables -t nat -F POSTROUTING
+
+    - name: NAT Masquerade en ens34
+      iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: ens34
+        jump: MASQUERADE
+
+    - name: FORWARD de ens35 a ens34
+      iptables:
+        chain: FORWARD
+        in_interface: ens35
+        out_interface: ens34
+        jump: ACCEPT
+
+    - name: FORWARD retorno de ens34 a ens35
+      iptables:
+        chain: FORWARD
+        in_interface: ens34
+        out_interface: ens35
+        ctstate: ESTABLISHED,RELATED
+        jump: ACCEPT
+
+    - name: Guardar reglas iptables
+      command: netfilter-persistent save
+
+    - name: Habilitar netfilter-persistent al arranque
+      systemd:
+        name: netfilter-persistent
+        enabled: true
+        state: started

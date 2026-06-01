@@ -1,0 +1,41 @@
+---
+# linux_core/tasks/main.yml — Orquestador principal del role
+# ---------------------------------------------------------------------------
+# Ejecuta en orden:
+#   1. Prerrequisitos (paquetes, kernel, sysctl)
+#   2. Redes (netplan, bridges, VLANs)
+#   3. FRR (OSPF)
+#   4. Keepalived (HA VIPs)
+# ---------------------------------------------------------------------------
+
+- name: "=====> Linux Core — Prerrequisitos"
+  ansible.builtin.include_tasks:
+    file: prerequisites.yml
+  tags:
+    - prerequisites
+    - all
+
+- name: "=====> Linux Core — Configuración de redes"
+  ansible.builtin.include_tasks:
+    file: networking.yml
+  tags:
+    - networking
+    - netplan
+    - all
+
+- name: "=====> Linux Core — FRR y OSPF"
+  ansible.builtin.include_tasks:
+    file: frr.yml
+  tags:
+    - frr
+    - routing
+    - ospf
+    - all
+
+- name: "=====> Linux Core — Keepalived HA"
+  ansible.builtin.include_tasks:
+    file: keepalived.yml
+  tags:
+    - keepalived
+    - ha
+    - all

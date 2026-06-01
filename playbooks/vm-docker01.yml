@@ -1,0 +1,105 @@
+# ============================================================================
+# vm-docker01 — Docker + Docker Compose
+# ============================================================================
+
+- name: "Aprovisionar vm-docker01 — Docker + Docker Compose"
+  hosts: vm-docker01
+  become: true
+  gather_facts: true
+
+  vars:
+    docker_users:
+      - sysadmin
+
+  tasks:
+    - name: "DKR — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "DKR — Instalar dependencias"
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+        state: present
+
+    - name: "DKR — Agregar key GPG de Docker"
+      ansible.builtin.apt_key:
+        url: "https://download.docker.com/linux/ubuntu/gpg"
+        state: present
+
+    - name: "DKR — Agregar repositorio de Docker"
+      ansible.builtin.apt_repository:
+        repo: "deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: "DKR — Instalar Docker Engine"
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: "DKR — Asegurar que el servicio Docker está corriendo"
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: "DKR — Instalar Docker Compose (plugin)"
+      ansible.builtin.apt:
+        name: docker-compose-plugin
+        state: present
+
+    - name: "DKR — Añadir usuarios al grupo docker"
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: docker
+        append: yes
+      loop: "{{ docker_users }}"
+      ignore_errors: true
+
+    - name: "DKR — Verificar instalación"
+      ansible.builtin.command: "docker --version"
+      changed_when: false
+      register: docker_version
+
+    - name: "DKR — Mostrar versión de Docker"
+      ansible.builtin.debug:
+        msg:
+          - "Docker instalado correctamente: {{ docker_version.stdout }}"
+          - "Usar docker compose (plugin) ó docker-compose v2."
+
+    - name: "DKR — Crear directorio de trabajo para Docker"
+      ansible.builtin.file:
+        path: "/opt/docker-compose"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: "DKR — Crear ejemplo docker-compose.yml"
+      ansible.builtin.copy:
+        content: |
+          version: "3.8"
+          services:
+            nginx:
+              image: nginx:alpine
+              ports:
+                - "80:80"
+              volumes:
+                - ./html:/usr/share/nginx/html:ro
+              restart: unless-stopped
+          # Agrega tus servicios aquí
+        dest: "/opt/docker-compose/docker-compose.yml"
+        mode: "0644"

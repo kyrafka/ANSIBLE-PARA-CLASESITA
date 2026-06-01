@@ -1,0 +1,29 @@
+---
+# handlers for linux_core
+# ---------------------------------------------------------------------------
+
+- name: "Reload netplan"
+  ansible.builtin.command: "netplan apply"
+  changed_when: true
+  register: netplan_apply_result
+  failed_when:
+    - netplan_apply_result.rc != 0
+    - "'failed' in netplan_apply_result"
+
+- name: "Restart FRR"
+  ansible.builtin.systemd:
+    name: frr
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: "Restart keepalived"
+  ansible.builtin.systemd:
+    name: keepalived
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: "Reload systemd daemon"
+  ansible.builtin.systemd:
+    daemon_reload: yes

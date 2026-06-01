@@ -1,0 +1,87 @@
+# ============================================================================
+# vm-storage01 — NFS + Proxmox Backup Server (PBS) + rclone
+# ============================================================================
+
+- name: "Aprovisionar vm-storage01 — NFS + PBS + rclone"
+  hosts: vm-storage01
+  become: true
+  gather_facts: true
+
+  vars:
+    nfs_exports:
+      - path: "/srv/nfs/backups"
+        clients: "10.0.30.0/24(rw,sync,no_subtree_check,no_root_squash)"
+      - path: "/srv/nfs/compartido"
+        clients: "10.0.30.0/24(rw,sync,no_subtree_check)"
+
+  tasks:
+    - name: "STG — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "STG — Instalar NFS Server"
+      ansible.builtin.apt:
+        name:
+          - nfs-kernel-server
+          - nfs-common
+        state: present
+
+    - name: "STG — Crear directorios de exportación"
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "0777"
+        owner: root
+        group: root
+      loop: "{{ nfs_exports }}"
+
+    - name: "STG — Renderizar exports"
+      ansible.builtin.template:
+        src: "exports.j2"
+        dest: "/etc/exports"
+        mode: "0644"
+      notify: "Reload NFS"
+
+    - name: "STG — Start y enable NFS Server"
+      ansible.builtin.systemd:
+        name: nfs-server
+        state: started
+        enabled: yes
+
+    - name: "STG — Instalar rclone"
+      ansible.builtin.apt:
+        name: rclone
+        state: present
+
+    - name: "STG — Crear directorio de configuración rclone"
+      ansible.builtin.file:
+        path: "/root/.config/rclone"
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+    - name: "STG — Aviso de instalación manual de PBS"
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════════╗
+          ║  INSTALACIÓN MANUAL REQUERIDA — Proxmox Backup Server               ║
+          ╠══════════════════════════════════════════════════════════════════════╣
+          ║  PBS no está en repos oficiales de Ubuntu. Pasos sugeridos:          ║
+          ║                                                                       ║
+          ║  1) Descargar el paquete .deb desde Proxmox:                       ║
+          ║     wget https://.../proxmox-backup-server_..._amd64.deb          ║
+          ║                                                                       ║
+          ║  2) Instalar dependencias:                                         ║
+          ║     apt install ./proxmox-backup-server_..._amd64.deb             ║
+          ║                                                                       ║
+          ║  3) Acceder vía web: https://<IP-de-vm-storage01>:8007            ║
+          ║                                                                       ║
+          ║  rclone está instalado. Configurar con: rclone config               ║
+          ╚══════════════════════════════════════════════════════════════════════╝
+
+  handlers:
+    - name: "Reload NFS"
+      ansible.builtin.command: "exportfs -ra"
+      changed_when: true

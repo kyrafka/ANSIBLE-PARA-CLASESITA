@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# core2_setup.yml — Configurador de Core 2 (Keepalived BACKUP)
+# =============================================================================
+# Pre-requisitos:
+#   - Ejecutar con: sudo ansible-playbook core2_setup.yml
+#   - Ubuntu 24 Server (netplan) instalado y con apt funcional
+#   - Las 3 NICs definidas en vars/main.yml deben existir en el sistema
+#
+# ¿Qué hace?
+#   1. Instala prerequisitos (bridge-utils, vlan, frr, keepalived)
+#   2. Configura bridges + VLANs en netplan
+#   3. Levanta OSPF vía FRR
+#   4. Activa Keepalived en modo BACKUP con VIPs flotantes
+# =============================================================================
+
+- name: "Configura Core 2 — Keepalived BACKUP"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vars/main.yml
+
+  vars:
+    core_id: "core2"
+    core_state: "BACKUP"
+    core_priority: 100
+    interlink_ip: "10.0.0.2"
+    interlink_peer: "10.0.0.1"
+
+  roles:
+    - linux_core
