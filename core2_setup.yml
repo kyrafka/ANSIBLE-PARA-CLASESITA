@@ -29,6 +29,11 @@
     core_priority: 100
     interlink_ip: "10.0.0.2"
     interlink_peer: "10.0.0.1"
+    # Interfaces de red específicas de Core 2:
+    nic_wan: "ens34"        # trunk-2 (pfSense)
+    nic_lan: "ens39"        # Lima-ZyA-Acceso-back (switches)
+    nic_interlink: "ens36"  # Interlink P2P 10.0.0.2/30
+    # NOTA: ens35 es INTERNET (no tocar)
 
   roles:
     - linux_core

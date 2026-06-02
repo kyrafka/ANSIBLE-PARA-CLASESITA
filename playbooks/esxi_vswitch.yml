@@ -1,0 +1,104 @@
+---
+# ============================================================================
+# esxi_vswitch.yml — Configuración de port groups (VLANs) en ESXi
+# ============================================================================
+# Crea port groups si no existen. No borra ni modifica los existentes.
+# Requiere: ansible-galaxy collection install community.vmware
+# ============================================================================
+
+- name: "Configurar vSwitches LANT-1 y LANT-2 en ESXi"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    esxi_host: "168.121.48.254"
+    esxi_user: "root"
+    esxi_password: "qwe123$"
+    # Lista de port groups y sus VLAN IDs en LANT-1
+    lant1_port_groups:
+      - name: "LIMA-ZyA-DMZ10"
+        vlan_id: 10
+      - name: "LIMA-ZyA-Usuarios20"
+        vlan_id: 20
+      - name: "LIMA-ZyA-Administración21"
+        vlan_id: 21
+      - name: "LIMA-ZyA-Virtua30"
+        vlan_id: 30
+      - name: "LIMA-ZyA-Storage40"
+        vlan_id: 40
+      - name: "LIMA-ZyA-VoIP50"
+        vlan_id: 50
+      - name: "LIMA-ZyA-Gestión60"
+        vlan_id: 60
+      - name: "LIMA-ZyA-Monitoreo70"
+        vlan_id: 70
+    # Port groups especiales en LANT-1
+    lant1_special:
+      - name: "LIMA-ZyA-Acceso"
+        vlan_id: 4095  # Trunk / Todas las VLANs
+      - name: "TRUNK-1"
+        vlan_id: 4095  # Trunk / Todas las VLANs
+    # Lista de port groups en LANT-2 (idéntica)
+    lant2_port_groups:
+      - name: "LIMA-ZyA-DMZ10-2"
+        vlan_id: 10
+      - name: "LIMA-ZyA-Usuarios20-2"
+        vlan_id: 20
+      - name: "LIMA-ZyA-Administración21-2"
+        vlan_id: 21
+      - name: "LIMA-ZyA-Virtua30-2"
+        vlan_id: 30
+      - name: "LIMA-ZyA-Storage40-2"
+        vlan_id: 40
+      - name: "LIMA-ZyA-VoIP50-2"
+        vlan_id: 50
+      - name: "LIMA-ZyA-Gestión60-2"
+        vlan_id: 60
+      - name: "LIMA-ZyA-Monitoreo70-2"
+        vlan_id: 70
+    lant2_special:
+      - name: "LIMA-ZyA-Acceso-back"
+        vlan_id: 4095
+      - name: "TRUNK-2"
+        vlan_id: 4095
+
+  tasks:
+    - name: "ESXi — Crear port groups en LANT-1 (acceso y trunks)"
+      community.vmware.vmware_portgroup:
+        hostname: "{{ esxi_host }}"
+        username: "{{ esxi_user }}"
+        password: "{{ esxi_password }}"
+        validate_certs: false
+        esxi_hostname: "{{ esxi_host }}"
+        switch_name: "LANT-1"
+        portgroup_name: "{{ item.name }}"
+        vlan_id: "{{ item.vlan_id }}"
+        state: present
+      loop: "{{ lant1_port_groups + lant1_special }}"
+      register: lant1_result
+      failed_when: false
+
+    - name: "ESXi — Crear port groups en LANT-2 (acceso y trunks)"
+      community.vmware.vmware_portgroup:
+        hostname: "{{ esxi_host }}"
+        username: "{{ esxi_user }}"
+        password: "{{ esxi_password }}"
+        validate_certs: false
+        esxi_hostname: "{{ esxi_host }}"
+        switch_name: "LANT-2"
+        portgroup_name: "{{ item.name }}"
+        vlan_id: "{{ item.vlan_id }}"
+        state: present
+      loop: "{{ lant2_port_groups + lant2_special }}"
+      register: lant2_result
+      failed_when: false
+
+    - name: "ESXi — Resumen de configuración aplicada"
+      ansible.builtin.debug:
+        msg:
+          - "Port groups en LANT-1: {{ lant1_result.results | map(attribute='item.name') | list }}"
+          - "Port groups en LANT-2: {{ lant2_result.results | map(attribute='item.name') | list }}"
+      when:
+        - lant1_result is defined
+        - lant1_result.results is defined
+        - lant2_result is defined
+        - lant2_result.results is defined

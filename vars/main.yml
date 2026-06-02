@@ -7,32 +7,6 @@
 # pueden sobre-escribir desde los playbooks o con extra-vars.
 # ============================================================================
 
-# --- Nombres de NICs (ajustar si son ens34/ens35/ens36 o eth0/eth1/eth2) ---
-# Ejemplo ESXi con names predictivos: nic_wan: "ens34", nic_lan: "ens35", etc.
-# Ejemplo con udev/eth renames: nic_wan: "eth0", nic_lan: "eth1", etc.
-#
-# O usa extra-vars: -e "nic_wan=ens192 nic_lan=ens224 nic_interlink=ens256"
-# -------------------------------------------------------------------------
-# Configuración de interfaces (adáptala a tu ESXi / Hypervisor)
-# -----------------------------------------------------------------------------
-# nic_wan:       eth0  # Trunk hacia pfSense (u otro firewall upstream)
-# nic_lan:       eth1  # Trunk hacia switches de acceso / clientes
-# nic_interlink: eth2  # Interlink directo Core1 <-> Core2 (OSPF + heartbeat)
-# -----------------------------------------------------------------------------
-# Si prefieres dejarlo en variables para pasarlas desde línea de comandos,
-# déjalas sin asignar aquí y pásalas vía extra-vars.
-# ---------------------------------------------------------------------------
-nic_wan: "eth0"
-nic_lan: "eth1"
-nic_interlink: "eth2"
-
-# --- Red interlink entre Core 1 y Core 2 ---
-interlink_net: "10.0.0.0/30"
-# Core 1 usará: 10.0.0.1/30
-# Core 2 usará: 10.0.0.2/30
-# ( estos se pasan como variables en cada playbook: core1_setup.yml / core2_setup.yml )
-# ---------------------------------------------------------------------------
-
 # ============================================================================
 # DEFINICIÓN DE VLANs — Topología real del laboratorio
 # ============================================================================
@@ -43,8 +17,51 @@ interlink_net: "10.0.0.0/30"
 #   VLAN 50 = VoIP
 #   VLAN 60 = Gestión (Windows Server — NO se automatiza)
 #   VLAN 70 = Monitoreo
+#
+# Nombres de NICs POR CORE (diferentes entre Core 1 y Core 2)
 # ============================================================================
 
+# --- Mapeo de interfaces por Core ---
+# Core 1:
+#   nic_wan:       ens34  (trunk-1)
+#   nic_lan:       ens35  (Lima-ZyA-Acceso)
+#   nic_interlink: ens36  (Interlink 10.0.0.1/30)
+#   nic_internet:  ens37  (INTERNET — NO TOCAR)
+#
+# Core 2:
+#   nic_wan:       ens34  (trunk-2)
+#   nic_lan:       ens39  (Lima-ZyA-Acceso-back)
+#   nic_interlink: ens36  (Interlink 10.0.0.2/30)
+#   nic_internet:  ens35  (INTERNET — NO TOCAR)
+# ---------------------------------------------------------------------------
+
+# Nombres por defecto (se sobreescriben en cada playbook de core)
+# Usar estructura de diccionario para diferenciar Core 1 y Core 2
+nic_map:
+  core1:
+    wan: "ens34"
+    lan: "ens35"
+    interlink: "ens36"
+    internet: "ens37"
+  core2:
+    wan: "ens34"
+    lan: "ens39"
+    interlink: "ens36"
+    internet: "ens35"
+
+# Nombres actuales (se setean en cada playbook según core_id)
+# nic_wan: "{{ nic_map[core_id].wan }}"
+# nic_lan: "{{ nic_map[core_id].lan }}"
+# nic_interlink: "{{ nic_map[core_id].interlink }}"
+# nic_internet: "{{ nic_map[core_id].internet }}"
+
+# --- Red interlink entre Core 1 y Core 2 ---
+interlink_net: "10.0.0.0/30"
+
+# --- Definición de VLANs ---
+# AÑADE, ELIMINA o MODIFICA según tu topología real.
+# El campo 'name' es solo descriptivo.
+# ---------------------------------------------------------------------------
 vlans:
   - id: 10
     name: "dmz"
