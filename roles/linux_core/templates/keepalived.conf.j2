@@ -21,7 +21,7 @@ global_defs {
 }
 
 # ---------------------------------------------------------------------------
-# VRRP track script para monitorear interfaces críticas
+# VRRP track scripts
 # ---------------------------------------------------------------------------
 vrrp_script check_{{ nic_interlink }} {
     script "/usr/bin/pgrep -f {{ nic_interlink }} || /bin/false"
@@ -30,6 +30,19 @@ vrrp_script check_{{ nic_interlink }} {
     fall 2
     rise 2
 }
+
+# Heartbeat alternativo por VLAN 30 (por si cae el interlink)
+vrrp_script check_peer_vlan30 {
+    script "/bin/ping -c 1 -W 2 {{ vlan30_peer }} || /bin/false"
+    interval 3
+    weight 5
+    fall 3
+    rise 2
+}
+
+{% set vlan30 = vlans | selectattr('id', 'equalto', 30) | list | first %}
+{% if core_id == 'core1' %}{% set vlan30_peer = vlan30.core2_ip | regex_replace('/.*', '') %}
+{% else %}{% set vlan30_peer = vlan30.core1_ip | regex_replace('/.*', '') %}{% endif %}
 
 # ---------------------------------------------------------------------------
 # Instancias VRRP — una por cada VLAN
@@ -50,14 +63,20 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
     }
 
     # Comunicación VRRP vía interlink (unicast)
+    # Fallback por VLAN 30 si el interlink cae
     unicast_src_ip {{ interlink_ip }}
     unicast_peer {
         {{ interlink_peer }}
+        {{ vlan30_peer }}
     }
 
-    # Seguimiento de interfaces
+    # Seguimiento de interfaces y scripts
     track_interface {
         {{ nic_interlink }}
+    }
+    track_script {
+        check_{{ nic_interlink }}
+        check_peer_vlan30
     }
 
     # VIP flotante para esta VLAN
