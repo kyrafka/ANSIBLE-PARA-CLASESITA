@@ -2,6 +2,14 @@
 # linux_core/tasks/keepalived.yml — Configuración de Keepalived (HA VIPs)
 # ---------------------------------------------------------------------------
 
+- name: "KAL — Asegurar que el directorio de configuración existe"
+  ansible.builtin.file:
+    path: "/etc/keepalived"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: "KAL — Renderizar configuración keepalived.conf"
   ansible.builtin.template:
     src: "keepalived.conf.j2"
@@ -10,13 +18,13 @@
     group: root
     mode: "0644"
     backup: yes
+  register: kal_template_rendered
+  notify: "Restart keepalived"  # <-- Llama al handler que me pasaste para reiniciar SOLO si cambia
 
-- name: "KAL — Reiniciar y habilitar servicio keepalived"
-  ansible.builtin.systemd:
-    name: keepalived
-    state: restarted
-    enabled: yes
-    daemon_reload: yes
+# Forzamos un reinicio inmediato en esta tarea de transición si detecta cambios reales de variables
+- name: "KAL — Forzar aplicación inmediata si el archivo mutó"
+  ansible.builtin.meta: flush_handlers
+  when: kal_template_rendered.changed
 
 - name: "KAL — Verificar estado del servicio"
   ansible.builtin.systemd:
@@ -34,7 +42,7 @@
     seconds: 3
 
 - name: "KAL — Mostrar VIPs activas"
-  ansible.builtin.shell: "ip -4 addr show | grep -E 'inet |br-vlan'"
+  ansible.builtin.shell: "ip -4 addr show | grep -E 'inet |br'"
   changed_when: false
   register: vip_result
   ignore_errors: yes
@@ -43,5 +51,5 @@
   ansible.builtin.debug:
     msg:
       - "Configuración de Keepalived aplicada correctamente."
-      - "Rol actual: {{ core_state }}"
-      - "Prioridad: {{ core_priority }}"
+      - "Rol actual de este nodo: {{ core_state }}"
+      - "Prioridad base configurada: {{ core_priority }}"
