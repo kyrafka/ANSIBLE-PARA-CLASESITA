@@ -33,19 +33,18 @@
     isp_config:
       "1":
         as: "65001"
-        wan_ip: "172.17.25.95/24"
-        wan_ip2: "172.17.25.36/24"
+        wan_ip: "172.17.25.36/24"      # Distribuidora A
         wan_gw: "172.17.25.121"
         lan_interface: "eth0"
-        lan_ip: "192.168.2.1/24"
-        pf_ip: "192.168.2.2"        # IP del pfSense en esta red
+        lan_ip: "192.168.2.1/24"       # P2P con pfSense
+        pf_ip: "192.168.2.2"            # pfSense en esta red
       "2":
         as: "65002"
-        wan_ip: "172.17.25.88/24"
+        wan_ip: "172.17.25.88/24"      # Distribuidora B
         wan_gw: "172.17.25.121"
         lan_interface: "ens35"
-        lan_ip: "192.168.1.1/24"
-        pf_ip: "192.168.1.2"        # IP del pfSense en esta red
+        lan_ip: "192.168.1.1/24"       # P2P con pfSense
+        pf_ip: "192.168.1.2"            # pfSense en esta red
 
     # Configuración pfSense (igual para ambos)
     pf_as: "65000"
