@@ -16,16 +16,17 @@ global_defs {
 # VRRP track scripts (Verificación Real de Capa 1/2)
 # ---------------------------------------------------------------------------
 vrrp_script check_{{ nic_int }} {
-    script "/bin/cat /sys/class/net/{{ nic_int }}/operstate | /bin/grep -q up"
+    # Usamos /bin/sh -c para que Linux pueda procesar la tubería (|) sin romperse
+    script "/bin/sh -c '/bin/cat /sys/class/net/{{ nic_int }}/operstate | /bin/grep -q up'"
     interval 2
     weight 10
     fall 2
-    move 2
+    rise 2  # ¡Corregido! Cambiado 'move' por 'rise'
 }
 
 # Fallback secundario tirando un ping al vecino por el interlink físico
 vrrp_script check_peer_link {
-    script "/bin/ping -c 1 -W 2 {{ core_unicast_peer_ip }} || /bin/false"
+    script "/bin/ping -c 1 -W 2 {{ core_unicast_peer_ip }} > /dev/null 2>&1"
     interval 3
     weight 5
     fall 3
