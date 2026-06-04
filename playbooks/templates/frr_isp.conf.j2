@@ -1,0 +1,50 @@
+# ============================================================================
+# Configuración FRR para ISP-CREATE (eBGP con pfSense)
+# ============================================================================
+# Generado automáticamente por Ansible
+# ============================================================================
+
+frr version 9.0
+frr defaults traditional
+!
+hostname {{ hostname | default('ISP-CREATE') }}
+!
+! --- Logging ---
+log file /var/log/frr/{{ hostname | default('ISP-CREATE') }}.log
+log stdout
+log syslog
+!
+! ============================================================================
+! BGP para conexión con pfSense (Multi-WAN)
+! ============================================================================
+router bgp {{ bgp_local_as }}
+ bgp router-id {{ router_id }}
+ no bgp ebgp-requires-policy
+ no bgp default ipv4-unicast
+
+ ! Neighbor: pfSense
+ neighbor {{ bgp_neighbor_ip }} remote-as {{ bgp_neighbor_as }}
+ neighbor {{ bgp_neighbor_ip }} description "pfSense WAN"
+
+ address-family ipv4 unicast
+  ! Redes que anunciamos hacia pfSense
+  network {{ lan_network }}        ! Red LAN del ISP (192.168.x.0/24)
+  redistribute connected           ! Redes conectadas (WAN 172.17.25.x)
+  ! Anunciar default route al pfSense
+  neighbor {{ bgp_neighbor_ip }} default-originate
+  ! Aceptar todo lo que anuncie pfSense
+  neighbor {{ bgp_neighbor_ip }} activate
+  neighbor {{ bgp_neighbor_ip }} soft-reconfiguration inbound
+ exit-address-family
+!
+! ============================================================================
+! IP Forwarding (si no está por sysctl ya)
+! ============================================================================
+ip forwarding
+!
+line vty
+!
+! ============================================================================
+! End of FRR configuration for ISP-CREATE
+! ============================================================================
+!
