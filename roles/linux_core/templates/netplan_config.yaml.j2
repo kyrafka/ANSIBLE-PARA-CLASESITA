@@ -13,21 +13,23 @@ network:
     {{ nic_int }}:
       dhcp4: no
       addresses:
-        - {{ core_unicast_src_ip }}/30  # Configura las IPs estáticas 10.0.0.1 o 10.0.0.2
+        - {{ core_unicast_src_ip }}/30
 
   vlans:
-    {% for vlan in vlans %}
+{% for vlan in vlans %}
     v{{ vlan.id }}-fw:
       id: {{ vlan.id }}
       link: {{ nic_fw }}
-    {% endfor %}
+{% endfor %}
 
   bridges:
-    {% for vlan in vlans %}
+{% for vlan in vlans %}
     br{{ vlan.id }}:
-      interfaces: [v{{ vlan.id }}-fw]
-      addresses: [{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}]
+      interfaces:
+        - v{{ vlan.id }}-fw
+      addresses:
+        - "{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}"
       parameters:
         stp: true
         forward-delay: 0
-    {% endfor %}
+{% endfor %}
