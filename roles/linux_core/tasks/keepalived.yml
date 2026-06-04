@@ -1,7 +1,4 @@
 ---
-# linux_core/tasks/keepalived.yml — Configuración de Keepalived (HA VIPs)
-# ---------------------------------------------------------------------------
-
 - name: "KAL — FORZAR ACTUALIZACIÓN: Eliminar configuración VRRP previa"
   ansible.builtin.file:
     path: "{{ keepalived_config_file }}"
@@ -23,7 +20,7 @@
     enabled: yes
     daemon_reload: yes
 
-- name: "KAL — Esperar a que Keepalived estabilice la topología en el ESXi"
+- name: "KAL — Esperar a que Keepalived de ESXi se estabilice"
   ansible.builtin.pause:
     seconds: 10
 
@@ -48,6 +45,6 @@
 - name: "KAL — Debug estado"
   ansible.builtin.debug:
     msg:
-      - "Configuración de Keepalived reescrita con éxito."
-      - "Rol asignado: {{ core_state }}"
-      - "Prioridad base configurada: {{ core_priority }}"
+      - "Configuración de Keepalived aplicada."
+      - "Rol actual: {{ core_state }}"
+      - "Prioridad: {{ core_priority }}"
