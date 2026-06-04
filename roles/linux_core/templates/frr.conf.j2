@@ -1,7 +1,7 @@
 # ============================================================================
 # Configuración FRR (Free Range Routing) para {{ core_id | upper }}
 # ============================================================================
-# OSPF entre Core 1 y Core 2 vía interlink
+# OSPF entre Core 1 y Core 2 vía VLAN 30 (br30)
 # ============================================================================
 
 frr version 9.0
@@ -14,38 +14,31 @@ log file /var/log/frr/{{ core_id }}.log
 log stdout
 log syslog
 !
-! --- Usuario zebra (por defecto FRR) ---
-!
-!
 ! ============================================================================
 ! Interfaces
 ! ============================================================================
 {% for vlan in vlans %}
-interface br-vlan{{ vlan.id }}
+interface {{ vlan.bridge }}
  description {{ vlan.name }}
- ip ospf {{ ospf_area }}
+ ip ospf {{ ospf_area | default('0.0.0.0') }}
  ip ospf cost 10
 !
 {% endfor %}
-interface {{ nic_interlink }}
- description Interlink Core1-Core2
- ip ospf {{ ospf_area }}
- ip ospf cost 1
-!
-!
 ! ============================================================================
 ! Router OSPF
 ! ============================================================================
 router ospf
- ospf router-id {{ interlink_ip }}
+ ospf router-id {{ core_router_id }}
  passive-interface default
- no passive-interface {{ nic_interlink }}
+ no passive-interface {{ vlan.interlink_bridge | default('br30') }}
  {% for vlan in vlans -%}
- no passive-interface br-vlan{{ vlan.id }}
+ {% if vlan.id != 30 -%}
+ no passive-interface {{ vlan.bridge }}
+ {% endif -%}
  {% endfor %}
- network {{ interlink_net }} area {{ ospf_area }}
+ network {{ interlink_net | default('192.168.13.0/25') }} area {{ ospf_area | default('0.0.0.0') }}
  {% for vlan in vlans -%}
- network {{ vlan.subnet }} area {{ ospf_area }}
+ network {{ vlan.subnet }} area {{ ospf_area | default('0.0.0.0') }}
  {% endfor %}
 !
 !

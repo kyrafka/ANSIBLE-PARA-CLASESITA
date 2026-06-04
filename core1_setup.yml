@@ -31,6 +31,11 @@
     # Interfaces de red específicas de Core 1:
     nic_fw: "ens364"        # trunk-1 (pfSense)
     nic_int: "ens36"        # Lima-ZyA-Acceso / int
+    # IPs de Core 1 en br30 para VRRP unicast y OSPF
+    core_unicast_src_ip: "192.168.13.4"
+    core_unicast_peer_ip: "192.168.13.5"
+    peer_vlan30_ip: "192.168.13.5"
+    core_router_id: "192.168.11.4"
 
   roles:
     - linux_core
