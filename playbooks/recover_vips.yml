@@ -1,0 +1,80 @@
+---
+# ============================================================================
+# recover_vips.yml — Recupera el control de VIPs en Keepalived
+# ============================================================================
+# Ejecutar cuando ambos Cores tengan IPs .1 duplicadas después de un
+# netplan apply (el handler de Ansible o un reinicio levanta las interfaces
+# de forma estática ignorando a Keepalived).
+#
+# ORDEN CRÍTICO:
+#   1) systemd-networkd  → limpia las IPs estáticas de los bridges
+#   2) keepalived       → aplica la prioridad correcta (MASTER=200, BACKUP=100)
+# ============================================================================
+
+- name: "Recover VIPs — Limpiar interfaces y reiniciar Keepalived"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: "RCV — Verificar estado actual de bridges antes de limpiar"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: before_state
+
+    - name: "RCV — Mostrar bridges antes de limpiar"
+      ansible.builtin.debug:
+        msg: "Estado ANTES de limpiar:\n{{ before_state.stdout }}"
+
+    - name: "RCV — 1) Reiniciar systemd-networkd para limpiar IPs estáticas de bridges"
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: restarted
+
+    - name: "RCV — Esperar 3 segundos a que la red se estabilice"
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: "RCV — 2) Reiniciar keepalived para aplicar prioridad correcta"
+      ansible.builtin.systemd:
+        name: keepalived
+        state: restarted
+        daemon_reload: yes
+
+    - name: "RCV — Esperar 5 segundos para que Keepalived asuma rol"
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: "RCV — Verificar estado de Keepalived"
+      ansible.builtin.systemd:
+        name: keepalived
+        state: started
+      register: kal_status
+
+    - name: "RCV — Verificar estado de bridges después de limpiar"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: after_state
+
+    - name: "RCV — Mostrar estado después de limpiar"
+      ansible.builtin.debug:
+        msg: "Estado DESPUÉS de limpiar:\n{{ after_state.stdout }}"
+
+    - name: "RCV — Mostrar rol de Keepalived en cada VLAN"
+      ansible.builtin.command: "cat /var/log/syslog | grep -i 'VRRP_Instance' | tail -10"
+      changed_when: false
+      ignore_errors: true
+
+    - name: "RCV — Diagnóstico final"
+      ansible.builtin.debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════════╗
+          ║  Si las IPs .1 siguen apareciendo en ambos Cores, verificar:   ║
+          ║  1) Que el interlink (br30) esté funcionando entre ambos       ║
+          ║     → ping 192.168.13.4 desde Core 2 / ping 192.168.13.5 desde C1║
+          ║  2) Que las prioridades en keepalived.conf sean correctas:    ║
+          ║     → Core 1: priority 200 (MASTER)                            ║
+          ║     → Core 2: priority 100 (BACKUP)                            ║
+          ║  3) Ver logs: sudo vtysh -c 'show vrrp'                       ║
+          ╚══════════════════════════════════════════════════════════════════╝
