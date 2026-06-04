@@ -11,16 +11,16 @@
     dest: "{{ netplan_backup_file }}"
     remote_src: yes
     force: no
-  when: "netplan_config_file is file"
+  when: netplan_config_file is file
   ignore_errors: yes
 
 - name: "NET — Renderizar configuración de red"
   ansible.builtin.template:
-    src: "netplan_config.yaml.j2"
+    src: "netplan.yaml.j2"  # ¡Corregido para que calce con tu archivo real!
     dest: "{{ netplan_config_file }}"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0600"            # Netplan exige 0600 (privado), si es 0644 te tira el Warning que vimos antes
     backup: yes
   register: netplan_rendered
 
@@ -29,12 +29,14 @@
   changed_when: true
   register: netplan_generate
   failed_when: netplan_generate.rc != 0
+  when: netplan_rendered.changed
 
 - name: "NET — Aplicar configuración netplan"
   ansible.builtin.command: "netplan apply"
   changed_when: true
   register: netplan_apply
   failed_when: netplan_apply.rc != 0
+  when: netplan_rendered.changed
 
 - name: "NET — Verificar estado de systemd-networkd"
   ansible.builtin.systemd:
