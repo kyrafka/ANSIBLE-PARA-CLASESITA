@@ -1,4 +1,4 @@
----
+
 # linux_core/defaults/main.yml — valores por defecto del role
 # -----------------------------------------------------------------------------
 # Descomenta y modifica si quieres sobre-escribir sin tocar vars/main.yml

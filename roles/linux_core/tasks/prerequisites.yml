@@ -4,30 +4,26 @@
 
 - name: "PRE — Validación de privilegios"
   block:
-    - name: "Check if running as root or via sudo"
-      ansible.builtin.command: "id -u"
-      register: root_check
-      changed_when: false
-
-    - name: "Fail if not privileged"
+    - name: "Fail if not privileged (Verificación nativa)"
       ansible.builtin.fail:
         msg: |
           FATAL: Se requieren privilegios de root o sudo.
-          Ejecuta: sudo ansible-playbook <playbook>.yml
-      when: root_check.stdout != "0"
+          Ejecuta tu comando anteponiendo 'sudo':
+          sudo ansible-playbook <playbook>.yml
+      when: ansible_effective_user_id != 0
 
 - name: "PRE — Verificar existencia de interfaces de red"
   ansible.builtin.stat:
     path: "/sys/class/net/{{ item }}"
   loop:
-    - "{{ nic_wan }}"
-    - "{{ nic_lan }}"
-    - "{{ nic_interlink }}"
+    - "{{ nic_fw }}"
+    - "{{ nic_acc }}"
+    - "{{ nic_int }}"
   register: nic_exists
 
 - name: "PRE — Abortar si alguna interfaz no existe"
   ansible.builtin.fail:
-    msg: "FATAL: La interfaz {{ item.item }} no existe en este sistema."
+    msg: "FATAL: La interfaz {{ item.item }} no existe en este sistema virtual."
   loop: "{{ nic_exists.results }}"
   when:
     - not item.stat.exists
