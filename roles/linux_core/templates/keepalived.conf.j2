@@ -1,7 +1,3 @@
-# ============================================================================
-# Configuración Keepalived — {{ core_id | upper }} ({{ core_state }})
-# ============================================================================
-
 global_defs {
     router_id {{ core_id }}
     vrrp_version 2
@@ -12,31 +8,22 @@ global_defs {
     enable_script_security
 }
 
-# ---------------------------------------------------------------------------
-# VRRP track scripts (Verificación Real de Capa 1/2)
-# ---------------------------------------------------------------------------
 vrrp_script check_{{ nic_int }} {
-    # Corregido usando las rutas absolutas reales de Ubuntu 24 (/usr/bin/)
-    script "/usr/bin/sh -c '/usr/bin/cat /sys/class/net/{{ nic_int }}/operstate | /usr/bin/grep -q up'"
+    script "/usr/bin/cat /sys/class/net/{{ nic_int }}/operstate | /usr/bin/grep -q up"
     interval 2
     weight 10
     fall 2
     rise 2
 }
 
-# Fallback secundario tirando un ping al vecino por el interlink físico
 vrrp_script check_peer_link {
-    # ¡Corregido! Llama al script externo pasando de forma dinámica la IP del vecino
-    script "/usr/local/bin/check_peer.sh {{ core_unicast_peer_ip }}"
+    script "/usr/local/bin/check_peer.sh"
     interval 3
     weight 5
     fall 2
     rise 2
 }
 
-# ---------------------------------------------------------------------------
-# Instancias VRRP — una por cada VLAN
-# ---------------------------------------------------------------------------
 {% for vlan in vlans %}
 vrrp_instance VI_VLAN{{ vlan.id }} {
     state {{ core_state }}
@@ -44,13 +31,15 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
     virtual_router_id {{ vlan.vrid }}
     priority {{ core_priority }}
     advert_int 1
+    {% if core_state == 'BACKUP' %}
+    nopreempt
+    {% endif %}
 
     authentication {
         auth_type PASS
         auth_pass {{ keepalived_auth_pass }}
     }
 
-    # Los latidos viajan de forma 100% aislada y segura por el cable ens36
     unicast_src_ip {{ core_unicast_src_ip }}
     unicast_peer {
         {{ core_unicast_peer_ip }}
@@ -64,7 +53,6 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
         check_peer_link
     }
 
-    # La IP virtual flotante de la universidad
     virtual_ipaddress {
         {{ vlan.vip }} dev br{{ vlan.id }}
     }

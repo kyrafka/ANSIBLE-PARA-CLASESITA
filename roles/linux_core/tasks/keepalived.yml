@@ -1,15 +1,3 @@
----
-# linux_core/tasks/keepalived.yml — Configuración de Keepalived (HA VIPs)
-# ---------------------------------------------------------------------------
-
-- name: "KAL — Asegurar que el directorio de configuración existe"
-  ansible.builtin.file:
-    path: "/etc/keepalived"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
 - name: "KAL — Renderizar configuración keepalived.conf"
   ansible.builtin.template:
     src: "keepalived.conf.j2"
@@ -18,38 +6,34 @@
     group: root
     mode: "0644"
     backup: yes
-  register: kal_template_rendered
-  notify: "Restart keepalived"  # <-- Llama al handler que me pasaste para reiniciar SOLO si cambia
 
-# Forzamos un reinicio inmediato en esta tarea de transición si detecta cambios reales de variables
-- name: "KAL — Forzar aplicación inmediata si el archivo mutó"
-  ansible.builtin.meta: flush_handlers
-  when: kal_template_rendered.changed
-
-- name: "KAL — Verificar estado del servicio"
+- name: "KAL — Reiniciar y habilitar keepalived"
   ansible.builtin.systemd:
     name: keepalived
-    state: started
+    state: restarted
     enabled: yes
-  register: keepalived_status
+    daemon_reload: yes
+
+- name: "KAL — Esperar VIP activa en MASTER"
+  ansible.builtin.shell: "ip -4 addr show br10 | grep -q 'inet '"
+  register: vip_check
+  retries: 15
+  delay: 2
+  until: vip_check.rc == 0
+  changed_when: false
+  when: core_state == 'MASTER'
+
+- name: "KAL — Verificar servicio activo en BACKUP"
+  ansible.builtin.shell: "systemctl is-active keepalived"
+  register: svc_check
+  retries: 5
+  delay: 2
+  until: svc_check.rc == 0
+  changed_when: false
+  when: core_state == 'BACKUP'
 
 - name: "KAL — Debug estado"
   ansible.builtin.debug:
-    msg: "Keepalived Status: {{ keepalived_status.status.ActiveState | default('Unknown') }}"
-
-- name: "KAL — Esperar a que Keepalived estabilice VIPs (3 segundos)"
-  ansible.builtin.pause:
-    seconds: 3
-
-- name: "KAL — Mostrar VIPs activas"
-  ansible.builtin.shell: "ip -4 addr show | grep -E 'inet |br'"
-  changed_when: false
-  register: vip_result
-  ignore_errors: yes
-
-- name: "KAL — Debug de VIPs"
-  ansible.builtin.debug:
     msg:
-      - "Configuración de Keepalived aplicada correctamente."
-      - "Rol actual de este nodo: {{ core_state }}"
-      - "Prioridad base configurada: {{ core_priority }}"
+      - "Rol: {{ core_state }}"
+      - "Prioridad: {{ core_priority }}"
