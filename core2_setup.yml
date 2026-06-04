@@ -27,13 +27,10 @@
     core_id: "core2"
     core_state: "BACKUP"
     core_priority: 100
-    interlink_ip: "10.0.0.2"
-    interlink_peer: "10.0.0.1"
+    core_ip_suffix: 5
     # Interfaces de red específicas de Core 2:
-    nic_wan: "ens34"        # trunk-2 (pfSense)
-    nic_lan: "ens39"        # Lima-ZyA-Acceso-back (switches)
-    nic_interlink: "ens36"  # Interlink P2P 10.0.0.2/30
-    # NOTA: ens35 es INTERNET (no tocar)
+    nic_fw: "ens34"         # trunk-2 (pfSense)
+    nic_int: "ens36"        # Lima-ZyA-Acceso-back / int
 
   roles:
     - linux_core
