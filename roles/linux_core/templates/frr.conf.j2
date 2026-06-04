@@ -30,7 +30,7 @@ interface {{ vlan.bridge }}
 router ospf
  ospf router-id {{ core_router_id }}
  passive-interface default
- no passive-interface {{ vlan.interlink_bridge | default('br30') }}
+ no passive-interface {{ interlink_bridge | default('br30') }}
  {% for vlan in vlans -%}
  {% if vlan.id != 30 -%}
  no passive-interface {{ vlan.bridge }}
