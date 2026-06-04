@@ -1,8 +1,7 @@
 ---
 # linux_core/tasks/networking.yml — netplan, bridges, VLANs, interfaces
 # ---------------------------------------------------------------------------
-# Renderiza la configuración de red desde plantilla Jinja2.
-# Hace backup del netplan previo, aplica y verifica.
+# Configuración de infraestructura de red de Capa 2/3 y scripts de Alta Disponibilidad.
 # ---------------------------------------------------------------------------
 
 - name: "NET — Backup de configuración netplan existente"
@@ -43,6 +42,35 @@
     name: systemd-networkd
     state: started
     enabled: yes
+
+# ---------------------------------------------------------------------------
+# AUTOMATIZACIÓN DE ALTA DISPONIBILIDAD (HA) — SCRIPTS COMPLEMENTARIOS
+# ---------------------------------------------------------------------------
+
+- name: "HA — Crear el script de monitoreo ICMP (check_peer.sh)"
+  ansible.builtin.copy:
+    dest: "/usr/local/bin/check_peer.sh"
+    owner: root
+    group: root
+    mode: "0755"  # <-- Asigna permisos de ejecución (chmod +x) automáticamente
+    content: |
+      #!/bin/bash
+      # Generado automáticamente por Ansible — NO EDITAR A MANO
+      # Script de salud para Keepalived (Vigilancia del vecino por Interlink)
+      /usr/bin/ping -c 2 -W 1 "$1" > /dev/null 2>&1
+      exit $?
+  register: ping_script_created
+
+- name: "HA — Reiniciar Keepalived si el script fue actualizado"
+  ansible.builtin.systemd:
+    name: keepalived
+    state: restarted
+  when: ping_script_created.changed
+  ignore_errors: yes
+
+# ---------------------------------------------------------------------------
+# DIAGNÓSTICO FINAL DEL ENTORNO DE RED
+# ---------------------------------------------------------------------------
 
 - name: "NET — Mostrar resumen de interfaces configuradas"
   ansible.builtin.command: "ip -br a"
