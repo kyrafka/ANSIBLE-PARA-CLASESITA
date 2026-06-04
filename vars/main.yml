@@ -1,13 +1,9 @@
+---
 # ============================================================================
-# Linux Core 1 y Core 2 — Variables compartidas
+# Linux Core 1 y Core 2 — Variables globales compartidas (Universidad)
 # ============================================================================
-# Ubuntu 24 Server con netplan
-# Topología fija: 8 VLANs con bridges STP, IPs fijas .4 y .5
+# Ubuntu 24 Server con Netplan, FRR y Keepalived
 # ============================================================================
-
-# --- Mapeo de interfaces por Core ---
-# Core 1: nic_fw=ens364, nic_int=ens36, core_ip_suffix=4
-# Core 2: nic_fw=ens34,  nic_int=ens36, core_ip_suffix=5
 
 # --- Definición de VLANs y sus subnets ---
 vlans:
@@ -82,12 +78,3 @@ vlans:
     core2_ip: "192.168.17.5/27"
     vip: "192.168.17.1/27"
     vrid: 70
-
-# --- Variables derivadas para uso interno de templates ---
-# Interlink ahora se hace a través de br30 (VLAN 30)
-interlink_vlan: 30
-interlink_bridge: "br30"
-# IPs sin máscara para uso en FRR/Keepalived
-interlink_ip_core1: "192.168.13.4"
-interlink_ip_core2: "192.168.13.5"
-interlink_net: "192.168.13.0/25"
