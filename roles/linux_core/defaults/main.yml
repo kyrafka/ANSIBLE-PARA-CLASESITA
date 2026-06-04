@@ -1,36 +1,37 @@
-
-# linux_core/defaults/main.yml — valores por defecto del role
-# -----------------------------------------------------------------------------
-# Descomenta y modifica si quieres sobre-escribir sin tocar vars/main.yml
+---
+# linux_core/tasks/main.yml — Orquestador principal del role
 # ---------------------------------------------------------------------------
-# linux_core/defaults/main.yml — valores por defecto del role
-# -----------------------------------------------------------------------------
+# Ejecuta en orden secuencial limpiando y aplicando toda la infraestructura.
+# ---------------------------------------------------------------------------
 
-# Nombres de interfaces por defecto (Se sobre-escriben con el playbook de cada Core)
-nic_fw: "ens34"
-nic_acc: "ens35"
-nic_int: "ens36"
-nic_internet: "ens37"
+- name: "=====> Linux Core — Prerrequisitos"
+  ansible.builtin.include_tasks:
+    file: prerequisites.yml
+  tags:
+    - prerequisites
+    - all
 
-# Fichero de configuración netplan
-netplan_config_file: "/etc/netplan/50-cloud-init.yaml"
-netplan_backup_file: "/etc/netplan/50-cloud-init.yaml.bak.{{ ansible_date_time.iso8601_basic_short | default('backup') }}"
+- name: "=====> Linux Core — Configuración de redes"
+  ansible.builtin.include_tasks:
+    file: networking.yml
+  tags:
+    - networking
+    - netplan
+    - all
 
-# Configuración FRR
-frr_config_file: "/etc/frr/frr.conf"
-frr_daemons_file: "/etc/frr/daemons"
+- name: "=====> Linux Core — FRR y OSPF"
+  ansible.builtin.include_tasks:
+    file: frr.yml
+  tags:
+    - frr
+    - routing
+    - ospf
+    - all
 
-# Configuración Keepalived
-keepalived_config_file: "/etc/keepalived/keepalived.conf"
-keepalived_auth_pass: "AN3IBL3P4SS"  # Contraseña de sincronización VRRP
-
-# Parámetros OSPF
-ospf_area: "0.0.0.0"
-
-# Valores base (El playbook de cada Core los cambia a MASTER/200 o BACKUP/100)
-core_id: "core_generic"
-core_state: "BACKUP"
-core_priority: 100
-core_unicast_src_ip: "10.0.0.1"
-core_unicast_peer_ip: "10.0.0.2"
-core_router_id: "10.0.0.1"
+- name: "=====> Linux Core — Keepalived HA"
+  ansible.builtin.include_tasks:
+    file: keepalived.yml
+  tags:
+    - keepalived
+    - ha
+    - all

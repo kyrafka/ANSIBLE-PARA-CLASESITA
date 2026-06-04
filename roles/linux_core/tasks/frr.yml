@@ -2,6 +2,14 @@
 # linux_core/tasks/frr.yml — Configuración de FRR (OSPF)
 # ---------------------------------------------------------------------------
 
+- name: "FRR — FORZAR ACTUALIZACIÓN: Eliminar archivos de enrutamiento antiguos"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ frr_config_file }}"
+    - "{{ frr_daemons_file }}"
+
 - name: "FRR — Renderizar configuración frr.conf"
   ansible.builtin.template:
     src: "frr.conf.j2"
@@ -10,7 +18,6 @@
     group: frr
     mode: "0640"
     backup: yes
-  notify: "Reload systemd daemon"
 
 - name: "FRR — Renderizar configuración daemons (habilitar ospfd)"
   ansible.builtin.template:
