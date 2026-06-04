@@ -4,9 +4,22 @@
   become: true
 
   tasks:
+    - name: Blindar DNS temporalmente en resolv.conf (Evita fallos de APT)
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 1.1.1.1
+        mode: "0644"
 
-    - name: Escribir 50-cloud-init.yaml
-      copy:
+    - name: Instalar iptables-persistent (Con DNS ya funcionando)
+      ansible.builtin.apt:
+        name: iptables-persistent
+        state: present
+        update_cache: true
+
+    - name: Escribir 50-cloud-init.yaml (Alineación YAML corregida)
+      ansible.builtin.copy:
         dest: /etc/netplan/50-cloud-init.yaml
         owner: root
         group: root
@@ -22,52 +35,48 @@
                 routes:
                   - to: default
                     via: 172.17.25.121
+                nameservers:
+                  addresses: [8.8.8.8, 1.1.1.1]
               eth0:
                 dhcp4: false
                 addresses:
                   - 192.168.2.1/24
 
     - name: Aplicar netplan
-      command: netplan apply
+      ansible.builtin.command: netplan apply
 
     - name: Habilitar ip_forward
-      lineinfile:
+      ansible.builtin.lineinfile:
         path: /etc/sysctl.conf
         regexp: '^#?net\.ipv4\.ip_forward'
         line: "net.ipv4.ip_forward=1"
         state: present
 
     - name: Aplicar sysctl
-      command: sudo sysctl -p
-
-    - name: Instalar iptables-persistent
-      apt:
-        name: iptables-persistent
-        state: present
-        update_cache: true
+      ansible.builtin.command: sysctl -p
 
     - name: Flush reglas FORWARD existentes
-      command: iptables -F FORWARD
+      ansible.builtin.command: iptables -F FORWARD
 
     - name: Flush reglas NAT existentes
-      command: iptables -t nat -F POSTROUTING
+      ansible.builtin.command: iptables -t nat -F POSTROUTING
 
     - name: NAT Masquerade en ens34
-      iptables:
+      ansible.builtin.iptables:
         table: nat
         chain: POSTROUTING
         out_interface: ens34
         jump: MASQUERADE
 
     - name: FORWARD de eth0 a ens34
-      iptables:
+      ansible.builtin.iptables:
         chain: FORWARD
         in_interface: eth0
         out_interface: ens34
         jump: ACCEPT
 
     - name: FORWARD retorno de ens34 a eth0
-      iptables:
+      ansible.builtin.iptables:
         chain: FORWARD
         in_interface: ens34
         out_interface: eth0
@@ -75,10 +84,10 @@
         jump: ACCEPT
 
     - name: Guardar reglas iptables
-      command: netfilter-persistent save
+      ansible.builtin.command: netfilter-persistent save
 
     - name: Habilitar netfilter-persistent al arranque
-      systemd:
+      ansible.builtin.systemd:
         name: netfilter-persistent
         enabled: true
         state: started

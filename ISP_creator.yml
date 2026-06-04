@@ -4,7 +4,6 @@
   become: true
 
   tasks:
-
     - name: Escribir 50-cloud-init.yaml
       copy:
         dest: /etc/netplan/50-cloud-init.yaml
@@ -22,6 +21,8 @@
                 routes:
                   - to: default
                     via: 172.17.25.121
+                nameservers:
+                  addresses: [8.8.8.8, 1.1.1.1] # <-- ¡FALTABA ESTO!
               ens35:
                 dhcp4: false
                 addresses:
