@@ -3,15 +3,19 @@
 # -----------------------------------------------------------------------------
 # Descomenta y modifica si quieres sobre-escribir sin tocar vars/main.yml
 # ---------------------------------------------------------------------------
+---
+# linux_core/defaults/main.yml — valores por defecto del role
+# -----------------------------------------------------------------------------
 
-# Nombres de interfaces (sobre-escribibles via extra-vars)
-# nic_wan: "eth0"
-# nic_lan: "eth1"
-# nic_interlink: "eth2"
+# Nombres de interfaces por defecto (Se sobre-escriben con el playbook de cada Core)
+nic_fw: "ens34"
+nic_acc: "ens35"
+nic_int: "ens36"
+nic_internet: "ens37"
 
 # Fichero de configuración netplan
 netplan_config_file: "/etc/netplan/50-cloud-init.yaml"
-netplan_backup_file: "/etc/netplan/50-cloud-init.yaml.bak.{{ ansible_date_time.iso8601_basic_short | default(now()) }}"
+netplan_backup_file: "/etc/netplan/50-cloud-init.yaml.bak.{{ ansible_date_time.iso8601_basic_short | default('backup') }}"
 
 # Configuración FRR
 frr_config_file: "/etc/frr/frr.conf"
@@ -19,14 +23,15 @@ frr_daemons_file: "/etc/frr/daemons"
 
 # Configuración Keepalived
 keepalived_config_file: "/etc/keepalived/keepalived.conf"
-keepalived_auth_pass: "AN3IBL3P4SS"  # CAMBIA ESTO en producción
+keepalived_auth_pass: "AN3IBL3P4SS"  # Contraseña de sincronización VRRP
 
 # Parámetros OSPF
 ospf_area: "0.0.0.0"
 
-# Core específico (sobre-escriben los playbooks)
-core_id: "core1"
-core_state: "MASTER"
-core_priority: 200
-interlink_ip: "10.0.0.1"
-interlink_peer: "10.0.0.2"
+# Valores base (El playbook de cada Core los cambia a MASTER/200 o BACKUP/100)
+core_id: "core_generic"
+core_state: "BACKUP"
+core_priority: 100
+core_unicast_src_ip: "10.0.0.1"
+core_unicast_peer_ip: "10.0.0.2"
+core_router_id: "10.0.0.1"

@@ -1,50 +1,41 @@
 # ============================================================================
 # Configuración FRR (Free Range Routing) para {{ core_id | upper }}
 # ============================================================================
-# OSPF entre Core 1 y Core 2 vía VLAN 30 (br30)
-# ============================================================================
 
 frr version 9.0
 frr defaults traditional
 !
 hostname {{ core_id }}
 !
-! --- Logging ---
 log file /var/log/frr/{{ core_id }}.log
 log stdout
 log syslog
 !
-! ============================================================================
-! Interfaces
-! ============================================================================
+interface {{ nic_int }}
+ description Enlace_Directo_Core_Transporte
+ ip ospf {{ ospf_area | default('0.0.0.0') }}
+ ip ospf cost 10
+!
 {% for vlan in vlans %}
-interface {{ vlan.bridge }}
+interface br{{ vlan.id }}
  description {{ vlan.name }}
  ip ospf {{ ospf_area | default('0.0.0.0') }}
  ip ospf cost 10
 !
 {% endfor %}
-! ============================================================================
-! Router OSPF
-! ============================================================================
+!
 router ospf
  ospf router-id {{ core_router_id }}
  passive-interface default
- no passive-interface {{ interlink_bridge | default('br30') }}
+ no passive-interface {{ nic_int }}
  {% for vlan in vlans -%}
- {% if vlan.id != 30 -%}
- no passive-interface {{ vlan.bridge }}
- {% endif -%}
+ no passive-interface br{{ vlan.id }}
  {% endfor %}
- network {{ interlink_net | default('192.168.13.0/25') }} area {{ ospf_area | default('0.0.0.0') }}
+ ! Redes OSPF: Incluye el interlink /30 de transporte y las subnets de las VLANs
+ network 10.0.0.0/30 area {{ ospf_area | default('0.0.0.0') }}
  {% for vlan in vlans -%}
  network {{ vlan.subnet }} area {{ ospf_area | default('0.0.0.0') }}
  {% endfor %}
 !
-!
 line vty
-!
-! ============================================================================
-! Fin de configuración FRR
-! ============================================================================
 !

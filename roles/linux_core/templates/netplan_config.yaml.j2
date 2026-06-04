@@ -2,7 +2,6 @@
 # Configuración de Netplan para Linux Core ({{ core_id | upper }})
 # ============================================================================
 # Generado automáticamente por Ansible — NO EDITAR A MANO
-# Fecha de generación: {{ ansible_date_time.iso8601 | default('N/A') }}
 # ============================================================================
 
 network:
@@ -13,111 +12,22 @@ network:
       dhcp4: no
     {{ nic_int }}:
       dhcp4: no
+      addresses:
+        - {{ core_unicast_src_ip }}/30  # Configura las IPs estáticas 10.0.0.1 o 10.0.0.2
 
   vlans:
-    # --- VLAN 10 ---
-    v10-fw:
-      id: 10
+    {% for vlan in vlans %}
+    v{{ vlan.id }}-fw:
+      id: {{ vlan.id }}
       link: {{ nic_fw }}
-    v10-int:
-      id: 10
-      link: {{ nic_int }}
-    # --- VLAN 20 ---
-    v20-fw:
-      id: 20
-      link: {{ nic_fw }}
-    v20-int:
-      id: 20
-      link: {{ nic_int }}
-    # --- VLAN 21 ---
-    v21-fw:
-      id: 21
-      link: {{ nic_fw }}
-    v21-int:
-      id: 21
-      link: {{ nic_int }}
-    # --- VLAN 30 ---
-    v30-fw:
-      id: 30
-      link: {{ nic_fw }}
-    v30-int:
-      id: 30
-      link: {{ nic_int }}
-    # --- VLAN 40 ---
-    v40-fw:
-      id: 40
-      link: {{ nic_fw }}
-    v40-int:
-      id: 40
-      link: {{ nic_int }}
-    # --- VLAN 50 ---
-    v50-fw:
-      id: 50
-      link: {{ nic_fw }}
-    v50-int:
-      id: 50
-      link: {{ nic_int }}
-    # --- VLAN 60 ---
-    v60-fw:
-      id: 60
-      link: {{ nic_fw }}
-    v60-int:
-      id: 60
-      link: {{ nic_int }}
-    # --- VLAN 70 ---
-    v70-fw:
-      id: 70
-      link: {{ nic_fw }}
-    v70-int:
-      id: 70
-      link: {{ nic_int }}
+    {% endfor %}
 
   bridges:
-    br10:
-      interfaces: [v10-fw, v10-int]
-      addresses: [192.168.11.{{ core_ip_suffix }}/27]
+    {% for vlan in vlans %}
+    br{{ vlan.id }}:
+      interfaces: [v{{ vlan.id }}-fw]
+      addresses: [{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}]
       parameters:
         stp: true
         forward-delay: 0
-    br20:
-      interfaces: [v20-fw, v20-int]
-      addresses: [192.168.12.{{ core_ip_suffix }}/25]
-      parameters:
-        stp: true
-        forward-delay: 0
-    br21:
-      interfaces: [v21-fw, v21-int]
-      addresses: [192.168.21.{{ core_ip_suffix }}/27]
-      parameters:
-        stp: true
-        forward-delay: 0
-    br30:
-      interfaces: [v30-fw, v30-int]
-      addresses: [192.168.13.{{ core_ip_suffix }}/25]
-      parameters:
-        stp: true
-        forward-delay: 0
-    br40:
-      interfaces: [v40-fw, v40-int]
-      addresses: [192.168.14.{{ core_ip_suffix }}/26]
-      parameters:
-        stp: true
-        forward-delay: 0
-    br50:
-      interfaces: [v50-fw, v50-int]
-      addresses: [192.168.15.{{ core_ip_suffix }}/26]
-      parameters:
-        stp: true
-        forward-delay: 0
-    br60:
-      interfaces: [v60-fw, v60-int]
-      addresses: [192.168.16.{{ core_ip_suffix }}/27]
-      parameters:
-        stp: true
-        forward-delay: 0
-    br70:
-      interfaces: [v70-fw, v70-int]
-      addresses: [192.168.17.{{ core_ip_suffix }}/27]
-      parameters:
-        stp: true
-        forward-delay: 0
+    {% endfor %}

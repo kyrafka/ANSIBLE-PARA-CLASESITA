@@ -1,8 +1,6 @@
 # ============================================================================
 # Configuración Keepalived — {{ core_id | upper }} ({{ core_state }})
 # ============================================================================
-# Generado automáticamente por Ansible — NO EDITAR A MANO
-# ============================================================================
 
 global_defs {
     router_id {{ core_id }}
@@ -10,30 +8,24 @@ global_defs {
     vrrp_garp_master_delay 1
     vrrp_garp_master_repeat 5
     vrrp_gna_interval 1
-    notification_email {
-        admin@example.com
-    }
-    smtp_server 127.0.0.1
-    smtp_connect_timeout 30
     script_user root
     enable_script_security
-    script_security
 }
 
 # ---------------------------------------------------------------------------
-# VRRP track scripts
+# VRRP track scripts (Verificación Real de Capa 1/2)
 # ---------------------------------------------------------------------------
-vrrp_script check_{{ nic_int | default('ens36') }} {
-    script "/usr/bin/pgrep -f {{ nic_int | default('ens36') }} || /bin/false"
+vrrp_script check_{{ nic_int }} {
+    script "/bin/cat /sys/class/net/{{ nic_int }}/operstate | /bin/grep -q up"
     interval 2
     weight 10
     fall 2
-    rise 2
+    move 2
 }
 
-# Heartbeat alternativo por VLAN 30 (br30) si el trunk cae
-vrrp_script check_peer_vlan30 {
-    script "/bin/ping -c 1 -W 2 {{ peer_vlan30_ip }} || /bin/false"
+# Fallback secundario tirando un ping al vecino por el interlink físico
+vrrp_script check_peer_link {
+    script "/bin/ping -c 1 -W 2 {{ core_unicast_peer_ip }} || /bin/false"
     interval 3
     weight 5
     fall 3
@@ -44,48 +36,35 @@ vrrp_script check_peer_vlan30 {
 # Instancias VRRP — una por cada VLAN
 # ---------------------------------------------------------------------------
 {% for vlan in vlans %}
-{% set peer_ip = vlan.core2_ip | regex_replace('/.*', '') if core_id == 'core1' else vlan.core1_ip | regex_replace('/.*', '') %}
 vrrp_instance VI_VLAN{{ vlan.id }} {
     state {{ core_state }}
-    interface {{ vlan.bridge }}
+    interface br{{ vlan.id }}
     virtual_router_id {{ vlan.vrid }}
     priority {{ core_priority }}
     advert_int 1
-    garp_master_delay 1
-    garp_master_repeat 5
 
     authentication {
         auth_type PASS
         auth_pass {{ keepalived_auth_pass }}
     }
 
-    # Comunicación VRRP vía br30 (VLAN 30) o fallback por la VLAN actual
+    # Los latidos viajan de forma 100% aislada y segura por el cable ens36
     unicast_src_ip {{ core_unicast_src_ip }}
     unicast_peer {
         {{ core_unicast_peer_ip }}
     }
 
-    # Seguimiento de interfaces y scripts
     track_interface {
-        {{ nic_int | default('ens36') }}
+        {{ nic_int }}
     }
     track_script {
-        check_{{ nic_int | default('ens36') }}
-        check_peer_vlan30
+        check_{{ nic_int }}
+        check_peer_link
     }
 
-    # VIP flotante para esta VLAN
+    # La IP virtual flotante de la universidad
     virtual_ipaddress {
-        {{ vlan.vip }} dev {{ vlan.bridge }}
+        {{ vlan.vip }} dev br{{ vlan.id }}
     }
-
-    # Notify scripts (opcionales)
-    # notify_master "/etc/keepalived/notify.sh master"
-    # notify_backup "/etc/keepalived/notify.sh backup"
-    # notify_fault  "/etc/keepalived/notify.sh fault"
 }
 {% endfor %}
-
-# ============================================================================
-# End of Keepalived configuration for {{ core_id | upper }}
-# ============================================================================
