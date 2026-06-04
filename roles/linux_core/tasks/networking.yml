@@ -16,11 +16,11 @@
 
 - name: "NET — Renderizar configuración de red"
   ansible.builtin.template:
-    src: "netplan.yaml.j2"  # ¡Corregido para que calce con tu archivo real!
+    src: "netplan.yaml.j2"
     dest: "{{ netplan_config_file }}"
     owner: root
     group: root
-    mode: "0600"            # Netplan exige 0600 (privado), si es 0644 te tira el Warning que vimos antes
+    mode: "0600"
     backup: yes
   register: netplan_rendered
 
