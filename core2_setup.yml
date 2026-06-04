@@ -5,13 +5,7 @@
 # Pre-requisitos:
 #   - Ejecutar con: sudo ansible-playbook core2_setup.yml
 #   - Ubuntu 24 Server (netplan) instalado y con apt funcional
-#   - Las 3 NICs definidas en vars/main.yml deben existir en el sistema
-#
-# ¿Qué hace?
-#   1. Instala prerequisitos (bridge-utils, vlan, frr, keepalived)
-#   2. Configura bridges + VLANs en netplan
-#   3. Levanta OSPF vía FRR
-#   4. Activa Keepalived en modo BACKUP con VIPs flotantes
+#   - Las NICs definidas aquí deben existir en el ESXi para Core 2
 # =============================================================================
 
 - name: "Configura Core 2 — Keepalived BACKUP"
@@ -28,14 +22,20 @@
     core_state: "BACKUP"
     core_priority: 100
     core_ip_suffix: 5
-    # Interfaces de red específicas de Core 2:
-    nic_fw: "ens34"         # trunk-2 (pfSense)
-    nic_int: "ens36"        # Lima-ZyA-Acceso-back / int
-    # IPs de Core 2 en br30 para VRRP unicast y OSPF
-    core_unicast_src_ip: "192.168.13.5"
-    core_unicast_peer_ip: "192.168.13.4"
-    peer_vlan30_ip: "192.168.13.4"
-    core_router_id: "192.168.11.5"
+    
+    # INTERFACES REALES DE CORE 2 (Mapeadas de tu ESXi):
+    nic_fw: "ens34"         # Tu Trunk 2 (Hacia pfSense Backup)
+    nic_acc: "ens35"        # Tu puerto de Acceso
+    nic_int: "ens36"        # Tu Interlink físico (Cruce directo al Core 1)
+    nic_internet: "ens39"   # Tu Internet momentáneo (¡Ya con DHCP revivido!)
+    
+    # LATIDOS KEEPALIVED (VRRP UNICAST):
+    # Invertimos las IPs con respecto al Core 1 para que apunten bien por ens36
+    core_unicast_src_ip: "10.0.0.2"   # IP física de este Core 2
+    core_unicast_peer_ip: "10.0.0.1"  # IP física del vecino Core 1 (MASTER)
+    
+    # IDENTIDAD OSPF (Router ID estable)
+    core_router_id: "10.0.0.2"
 
   roles:
     - linux_core
