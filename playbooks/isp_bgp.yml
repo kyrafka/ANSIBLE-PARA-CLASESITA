@@ -87,7 +87,7 @@
         backup: yes
       vars:
         hostname: "ISP-CREATE{{ isp_id }}"
-        router_id: "{{ isp_lan_ip | ansible.utils.ipaddr('address') }}"
+        router_id: "{{ isp_lan_ip | regex_replace('/.*', '') }}"
         bgp_local_as: "{{ isp_as }}"
         bgp_neighbor_ip: "{{ isp_pf_ip }}"
         bgp_neighbor_as: "{{ pf_as }}"
