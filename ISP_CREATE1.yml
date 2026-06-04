@@ -18,7 +18,7 @@
               ens34:
                 dhcp4: false
                 addresses:
-                  - 172.17.25.95/24
+                  - 172.17.25.36/24
                 routes:
                   - to: default
                     via: 172.17.25.121
