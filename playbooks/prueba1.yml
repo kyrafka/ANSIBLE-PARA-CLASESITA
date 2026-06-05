@@ -1,0 +1,178 @@
+---
+# ============================================================================
+# playbooks/prueba1.yml
+# ============================================================================
+# Diagnóstico VRRP con cuadro comparativo
+# Ejecutar en AMBOS cores y comparar las tablas lado a lado
+# ============================================================================
+
+- name: "VRRP — Cuadro diagnóstico completo"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    test_peer: "{{ '10.0.0.2' }}"
+
+  tasks:
+
+    - name: "========================================="
+      ansible.builtin.debug:
+        msg: "╔═══════════════════════════════════════════════════════════════════╗║ VRRP DIAGNOSTICO — {{ inventory_hostname }}"
+
+    # -------------------------------------------------------------------------
+    # 1 — Captura VRRP (10 segundos)
+    # -------------------------------------------------------------------------
+
+    - name: "1) Captura VRRP en ens36"
+      ansible.builtin.shell: |
+        echo "CAPTURA_RAW:"
+        sudo timeout 10 tcpdump -i ens36 -nn 'ip[9] == 112' -c 15 -v 2>&1
+      changed_when: false
+      register: vrrp_capture
+      failed_when: false
+
+    - name: "1) Resultado captura"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_capture.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 2 — Tabla de paquetes capturados
+    # -------------------------------------------------------------------------
+
+    - name: "2) Tabla VRRP"
+      ansible.builtin.debug:
+        msg: |
+          ┌─────────────────────────────────────────────────────────────┐
+          │ CORE: {{ inventory_hostname }}                                    │
+          ├──────────┬──────────────┬────────────────┬─────────┬─────────┤
+          │ VLAN     │ IP ORIGEN    │ DESTINO        │ PRIOR   │ ESTADO  │
+          ├──────────┼──────────────┼────────────────┼─────────┼─────────┤
+          {{ vrrp_capture.stdout_lines | map('regex_replace', '.*(VRRPv2, Advertisement, vrid ([0-9]+), prio ([0-9]+).*IP ([0-9.]+) > ([0-9.]+).*', '│ \\2     │ \\4        │ \\5              │ \\3      │ \\6     │') | list | join('\n') }}
+          └──────────┴──────────────┴────────────────┴─────────┴─────────┘
+
+    # -------------------------------------------------------------------------
+    # 3 — Estado de keepalived
+    # -------------------------------------------------------------------------
+
+    - name: "3) Estado keepalived"
+      ansible.builtin.systemd:
+        name: keepalived
+      register: kal
+
+    - name: "3) Estado"
+      ansible.builtin.debug:
+        msg: |
+          ┌─────────────────────────────────────────────────────────────┐
+          │ KEEPALIVED STATUS: {{ kal.status.ActiveState | default('unknown') }}                    │
+          └─────────────────────────────────────────────────────────────┘
+
+    # -------------------------------------------------------------------------
+    # 4 — Config actual
+    # -------------------------------------------------------------------------
+
+    - name: "4) Config vrrp_instance"
+      ansible.builtin.shell: |
+        sudo grep -A8 'vrrp_instance' /etc/keepalived/keepalived.conf | \
+          grep -E 'vrrp_instance|state|priority|unicast_src|unicast_peer|interface'
+      changed_when: false
+      register: vrrp_conf
+      failed_when: false
+
+    - name: "4) Config"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_conf.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 5 — IPs en bridges
+    # -------------------------------------------------------------------------
+
+    - name: "5) Bridges"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: bridges
+
+    - name: "5) Tabla bridges"
+      ansible.builtin.debug:
+        msg: |
+          ┌─────────────────────────────────────────────────────────────┐
+          │ BRIDGES Y VIPs                                                 │
+          ├─────────────────────────────────────────────────────────────┤
+          {{ bridges.stdout }}
+          └─────────────────────────────────────────────────────────────┘
+
+    - name: "5) VIPs .1"
+      ansible.builtin.shell: ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+' || echo "NINGUNA"
+      changed_when: false
+      register: vips
+      failed_when: false
+
+    - name: "5) VIPs"
+      ansible.builtin.debug:
+        msg: "VIPs activas: {{ vips.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 6 — Logs de prioridad
+    # -------------------------------------------------------------------------
+
+    - name: "6) Logs eleccion"
+      ansible.builtin.shell: |
+        echo "=== ULTIMOS CAMBIOS DE PRIORIDAD ==="
+        sudo grep -E 'priority|effective' /var/log/syslog | tail -5
+        echo ""
+        echo "=== ULTIMAS ELECCIONES ==="
+        sudo grep -E 'advertisement|higher|lower|master|backup|become' /var/log/syslog | tail -10
+      changed_when: false
+      register: elec_logs
+      failed_when: false
+
+    - name: "6) Logs"
+      ansible.builtin.debug:
+        msg: "{{ elec_logs.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 7 — Módulos kernel
+    # -------------------------------------------------------------------------
+
+    - name: "7) Modulos vrrp"
+      ansible.builtin.shell: sudo lsmod | grep -E 'vrrp|ip_vs' || echo "no cargado"
+      changed_when: false
+      register: mods
+      failed_when: false
+
+    - name: "7) Modulos"
+      ansible.builtin.debug:
+        msg: "{{ mods.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 8 — Firewall 112
+    # -------------------------------------------------------------------------
+
+    - name: "8) Firewall proto 112"
+      ansible.builtin.shell: |
+        sudo iptables -L INPUT -n | grep 112 || echo "SIN REGLA INPUT 112"
+        sudo iptables -L OUTPUT -n | grep 112 || echo "SIN REGLA OUTPUT 112"
+      changed_when: false
+      register: fw
+      failed_when: false
+
+    - name: "8) Firewall"
+      ansible.builtin.debug:
+        msg: "{{ fw.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # RESUMEN
+    # -------------------------------------------------------------------------
+
+    - name: "========================================="
+      ansible.builtin.debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════╗
+          ║ RESUMEN — {{ inventory_hostname }}                                   ║
+          ╠═══════════════════════════════════════════════════════════╣
+          ║ Keepalived: {{ kal.status.ActiveState | default('unknown') }}                                    ║
+          ║ VIPs (.1):  {{ vips.stdout }}                   ║
+          ║ Capture:    {{ vrrp_capture.stdout_lines | length }} lineas                      ║
+          ║ Firewall:   {{ fw.stdout_lines | length }} reglas                       ║
+          ╚═══════════════════════════════════════════════════════════╝
