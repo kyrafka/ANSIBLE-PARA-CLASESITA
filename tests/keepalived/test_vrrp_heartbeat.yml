@@ -18,8 +18,10 @@
   gather_facts: true
 
   vars:
-    test_peer: "192.168.13.4"
     interlink_interface: "ens36"
+    # Core1 → peer es 10.0.0.2 (Core2)
+    # Core2 → peer es 10.0.0.1 (Core1)
+    test_peer: "10.0.0.2"
 
   tasks:
     # =========================================================================
