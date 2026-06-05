@@ -1,0 +1,193 @@
+---
+# ============================================================================
+# playbooks/diagnostic_vrrp.yml
+# ============================================================================
+# Diagnóstico profundo VRRP — ejecutar en AMBOS cores
+# ============================================================================
+
+- name: "VRRP Deep Diagnostic"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    test_peer: "{{ '10.0.0.2' }}"
+
+  tasks:
+
+    - name: "=========================================="
+      ansible.builtin.debug:
+        msg: "╔═══════════════════════════════════════════════════════════╗║ DIAGNOSTICO VRRP — {{ inventory_hostname }}"
+
+    # -------------------------------------------------------------------------
+    # 1 — Config actual de keepalived.conf
+    # -------------------------------------------------------------------------
+
+    - name: "1) keepalived.conf COMPLETO"
+      ansible.builtin.shell: sudo cat /etc/keepalived/keepalived.conf
+      changed_when: false
+      register: kal_conf
+      failed_when: false
+
+    - name: "1) Config"
+      ansible.builtin.debug:
+        msg: "{{ kal_conf.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 2 — Sección unicast
+    # -------------------------------------------------------------------------
+
+    - name: "2) Lineas con unicast"
+      ansible.builtin.shell: sudo grep -n 'unicast' /etc/keepalived/keepalived.conf || echo "NO HAY UNICAST"
+      changed_when: false
+      register: unicast_lines
+      failed_when: false
+
+    - name: "2) Unicast config"
+      ansible.builtin.debug:
+        msg: "{{ unicast_lines.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 3 — Archivo template usado
+    # -------------------------------------------------------------------------
+
+    - name: "3) Template en rol linux_core"
+      ansible.builtin.shell: sudo cat /etc/ansible/roles/linux_core/templates/keepalived.conf.j2 2>/dev/null || echo "NO EXISTE"
+      changed_when: false
+      register: template_conf
+      failed_when: false
+
+    - name: "3) Template"
+      ansible.builtin.debug:
+        msg: "{{ template_conf.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 4 — Comparar template vs running
+    # -------------------------------------------------------------------------
+
+    - name: "4) Comparar template vs running"
+      ansible.builtin.shell: |
+        echo "=== DIFERENCIAS template vs running ==="
+        diff /etc/keepalived/keepalived.conf /etc/ansible/roles/linux_core/templates/keepalived.conf.j2 2>/dev/null || echo "Sin diff o error"
+      changed_when: false
+      register: diff_conf
+      failed_when: false
+
+    - name: "4) Diff"
+      ansible.builtin.debug:
+        msg: "{{ diff_conf.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 5 — Verify unicast in running config
+    # -------------------------------------------------------------------------
+
+    - name: "5) Unicast Src IP en running config"
+      ansible.builtin.shell: sudo grep 'unicast_src' /etc/keepalived/keepalived.conf || echo "NO ENCONTRADO"
+      changed_when: false
+      register: uc_src
+      failed_when: false
+
+    - name: "5) Unicast Peer en running config"
+      ansible.builtin.shell: sudo grep 'unicast_peer' /etc/keepalived/keepalived.conf || echo "NO ENCONTRADO"
+      changed_when: false
+      register: uc_peer
+      failed_when: false
+
+    - name: "5) Unicast status"
+      ansible.builtin.debug:
+        msg: |
+          unicast_src: {{ uc_src.stdout }}
+          unicast_peer: {{ uc_peer.stdout }}
+
+    # -------------------------------------------------------------------------
+    # 6 — Captura VRRP mostrando IPs exactas
+    # -------------------------------------------------------------------------
+
+    - name: "6) Captura VRRP (10s) - muestra source IP completa"
+      ansible.builtin.shell: |
+        echo "=== CAPTURA ENS36 ==="
+        sudo timeout 10 tcpdump -i ens36 -nn 'ip[9] == 112' -v 2>&1 | tee /tmp/vrrp_cap2.log
+        echo ""
+        echo "=== ANALISIS ==="
+        grep "VRRPv2" /tmp/vrrp_cap2.log | head -10
+      changed_when: false
+      register: vrrp_cap2
+      failed_when: false
+
+    - name: "6) Captura"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_cap2.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 7 — Test unicast directo con nc/udp
+    # -------------------------------------------------------------------------
+
+    - name: "7) Test conectividad unicast al peer (UDP 112)"
+      ansible.builtin.shell: |
+        echo "Enviando UDP a {{ test_peer }}:112 ..."
+        echo "test" | sudo nc -u -w 2 {{ test_peer }} 112 2>&1 || echo "nc no disponible"
+        echo ""
+        echo "Escuchando 3s en UDP 112..."
+        sudo timeout 3 nc -u -l 112 2>/dev/null || echo "nc listener no disponible"
+      changed_when: false
+      register: uc_test
+      failed_when: false
+
+    - name: "7) UDP test"
+      ansible.builtin.debug:
+        msg: "{{ uc_test.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 8 — Estado bridges y VIPs
+    # -------------------------------------------------------------------------
+
+    - name: "8) Bridges"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: bridges
+
+    - name: "8) Tabla bridges"
+      ansible.builtin.debug:
+        msg: "{{ bridges.stdout }}"
+
+    - name: "8) VIPs .1"
+      ansible.builtin.shell: ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+' || echo "NINGUNA"
+      changed_when: false
+      register: vips
+      failed_when: false
+
+    - name: "8) VIPs"
+      ansible.builtin.debug:
+        msg: "VIPs: {{ vips.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 9 — netplan config de los bridges
+    # -------------------------------------------------------------------------
+
+    - name: "9) netplan bridges"
+      ansible.builtin.shell: sudo grep -A10 'br10\|br20\|br30' /etc/netplan/*.yaml 2>/dev/null | head -30 || echo "no encontrado"
+      changed_when: false
+      register: netplan_br
+      failed_when: false
+
+    - name: "9) Netplan bridges"
+      ansible.builtin.debug:
+        msg: "{{ netplan_br.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # RESUMEN
+    # -------------------------------------------------------------------------
+
+    - name: "=========================================="
+      ansible.builtin.debug:
+        msg: |
+          ╔═══════════════════════════════════════════════════════════╗
+          ║ RESUMEN — {{ inventory_hostname }}                                   ║
+          ╠═══════════════════════════════════════════════════════════╣
+          ║ Unicast src: {{ uc_src.stdout_lines | length > 0 }}                                ║
+          ║ Unicast peer: {{ uc_peer.stdout_lines | length > 0 }}                               ║
+          ║ VIPs (.1): {{ vips.stdout }}                            ║
+          ║ VRRP capture lines: {{ vrrp_cap2.stdout_lines | length }}                          ║
+          ║ Multicast destino: {{ 'SI - PROBLEMA!' if '224.0.0.18' in vrrp_cap2.stdout else 'NO' }}║
+          ╚═══════════════════════════════════════════════════════════╝
