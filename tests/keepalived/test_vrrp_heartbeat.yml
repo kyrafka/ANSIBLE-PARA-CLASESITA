@@ -1,0 +1,304 @@
+---
+# ============================================================================
+# tests/keepalived/test_vrrp_heartbeat.yml
+# ============================================================================
+# Test exhaustivo del flujo VRRP/heartbeat entre ambos Cores
+# Detecta exactamente dónde se detiene o falla la comunicación
+#
+# Uso:
+#   ansible-playbook tests/keepalived/test_vrrp_heartbeat.yml -e "test_peer=192.168.13.5"
+#
+# Ejecutar en AMBOS cores y comparar resultados
+# ============================================================================
+
+- name: "TEST VRRP — Diagnóstico completo de heartbeat"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    # IP del peer en el interlink (el OTRO core)
+    # En Core 1: test_peer = 192.168.13.5 (Core 2)
+    # En Core 2: test_peer = 192.168.13.4 (Core 1)
+    test_peer: "192.168.13.5"
+    interlink_interface: "ens36"
+
+  tasks:
+    # =========================================================================
+    # PASO 1 — Verificaciones de red básicas
+    # =========================================================================
+
+    - name: "TEST HB — 1.1) Interlink UP y tiene IP"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: interfaces_raw
+
+    - name: "TEST HB — Interlinks y bridges"
+      ansible.builtin.debug:
+        msg: "{{ interfaces_raw.stdout }}"
+
+    - name: "TEST HB — 1.2) Ping al peer por interlink (sin VRRP)"
+      ansible.builtin.ping:
+        dest: "{{ test_peer }}"
+      ignore_errors: true
+      register: ping_test
+
+    - name: "TEST HB — Ping al peer"
+      ansible.builtin.debug:
+        msg: "Ping a {{ test_peer }}: {{ 'OK' if ping_test.ping | default('') != '' else 'FALLO' }}"
+
+    - name: "TEST HB — Ping FALLA?"
+      ansible.builtin.assert:
+        that: "ping_test.ping | default('') != ''"
+        fail_msg: "ERROR: El interlink no funciona. Revisar cable/físico."
+        success_msg: "OK: Interlink funciona"
+
+    # =========================================================================
+    # PASO 2 — Firewall: ¿bloquea protocolo 112 (VRRP)?
+    # =========================================================================
+
+    - name: "TEST HB — 2.1) Ver reglas INPUT que bloqueen"
+      ansible.builtin.shell: |
+        sudo iptables -L INPUT -n -v | grep -E '112|DROP|REJECT|Chain' | head -20
+      changed_when: false
+      register: iptables_input
+      failed_when: false
+
+    - name: "TEST HB — INPUT chains"
+      ansible.builtin.debug:
+        msg: "{{ iptables_input.stdout }}"
+
+    - name: "TEST HB — 2.2) Ver reglas OUTPUT que bloqueen"
+      ansible.builtin.shell: |
+        sudo iptables -L OUTPUT -n -v | grep -E '112|DROP|REJECT|Chain' | head -20
+      changed_when: false
+      register: iptables_output
+      failed_when: false
+
+    - name: "TEST HB — OUTPUT chains"
+      ansible.builtin.debug:
+        msg: "{{ iptables_output.stdout }}"
+
+    - name: "TEST HB — 2.3) ¿Está el protocolo 112 bloqueado?"
+      ansible.builtin.shell: |
+        sudo iptables -C INPUT -p 112 -j ACCEPT 2>/dev/null && echo "PERMITIDO" || echo "BLOQUEADO o NO EXISTE"
+      changed_when: false
+      register: vrrp_input_check
+      failed_when: false
+
+    - name: "TEST HB — VRRP en INPUT"
+      ansible.builtin.debug:
+        msg: "VRRP (proto 112) en INPUT: {{ vrrp_input_check.stdout }}"
+
+    - name: "TEST HB — VRRP BLOQUEADO en INPUT!"
+      ansible.builtin.debug:
+        msg: |
+          ALERTA: VRRP (protocolo 112) parece BLOQUEADO por firewall!
+          Esto causaría split-brain porque los heartbeats no entran.
+          Solución: sudo iptables -I INPUT -p 112 -j ACCEPT
+      when: "'BLOQUEADO' in vrrp_input_check.stdout"
+
+    # =========================================================================
+    # PASO 3 — Captura de paquetes VRRP en el interlink
+    # =========================================================================
+
+    - name: "TEST HB — 3.1) Capturar VRRP en interlink (5 segundos)"
+      ansible.builtin.shell: |
+        echo "Iniciando captura en {{ interlink_interface }}..."
+        sudo timeout 5 tcpdump -i {{ interlink_interface }} -c 10 -nn 'ip[9] == 112' 2>&1 | tee /tmp/vrrp_capture.log
+        cat /tmp/vrrp_capture.log
+      changed_when: false
+      register: vrrp_capture
+      failed_when: false
+
+    - name: "TEST HB — Paquetes VRRP capturados"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_capture.stdout }}"
+
+    - name: "TEST HB — 3.2) Contar paquetes capturados"
+      ansible.builtin.shell: |
+        lines=$(wc -l < /tmp/vrrp_capture.log 2>/dev/null || echo 0)
+        echo "Lineas capturadas: $lines"
+        if [ "$lines" -gt 2 ]; then
+          echo "HAY PAQUETES VRRP"
+        else
+          echo "SIN PAQUETES VRRP"
+        fi
+      changed_when: false
+      register: vrrp_count
+      failed_when: false
+
+    - name: "TEST HB — Conteo VRRP"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_count.stdout }}"
+
+    - name: "TEST HB — NO hay paquetes VRRP!"
+      ansible.builtin.debug:
+        msg: |
+          ERROR: No se capturaron paquetes VRRP (proto 112) en {{ interlink_interface }}.
+          Esto significa que Keepalived NO está enviando heartbeats por aquí.
+          Posibles causas:
+          1) Keepalived no está corriendo
+          2) La configuración tiene unicast_src_ip incorrecto
+          3) El servicio no está bindeando correctamente
+        when: "'SIN PAQUETES' in vrrp_count.stdout"
+
+    - name: "TEST HB — SÍ hay paquetes VRRP"
+      ansible.builtin.debug:
+        msg: "OK: Paquetes VRRP detectándose en el interlink"
+      when: "'HAY PAQUETES' in vrrp_count.stdout"
+
+    # =========================================================================
+    # PASO 4 — Estado de Keepalived y transiciones
+    # =========================================================================
+
+    - name: "TEST HB — 4.1) Servicio keepalived activo"
+      ansible.builtin.systemd:
+        name: keepalived
+        state: started
+      register: kal_status
+
+    - name: "TEST HB — Estado keepalived"
+      ansible.builtin.debug:
+        msg: "{{ kal_status.status.ActiveState | default('unknown') }}"
+
+    - name: "TEST HB — 4.2) Logs de transición de estado (últimos 30 segundos)"
+      ansible.builtin.shell: |
+        sudo tail -100 /var/log/syslog | grep -i 'keepalived\|vrrp' | tail -30
+      changed_when: false
+      register: vrrp_logs
+      failed_when: false
+
+    - name: "TEST HB — Logs VRRP recientes"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_logs.stdout }}"
+
+    - name: "TEST HB — 4.3) Ver instancia MASTER en logs"
+      ansible.builtin.shell: |
+        sudo tail -200 /var/log/syslog | grep -i 'became master\|entering master\|master' | tail -10
+      changed_when: false
+      register: master_logs
+      failed_when: false
+
+    - name: "TEST HB — MASTER logs"
+      ansible.builtin.debug:
+        msg: "{{ master_logs.stdout }}"
+
+    - name: "TEST HB — 4.4) Ver instancia BACKUP en logs"
+      ansible.builtin.shell: |
+        sudo tail -200 /var/log/syslog | grep -i 'backup\|entering backup' | tail -10
+      changed_when: false
+      register: backup_logs
+      failed_when: false
+
+    - name: "TEST HB — BACKUP logs"
+      ansible.builtin.debug:
+        msg: "{{ backup_logs.stdout }}"
+
+    - name: "TEST HB — 4.5) Ver todas las instancias VRRP"
+      ansible.builtin.shell: |
+        sudo grep -A5 'vrrp_instance' /etc/keepalived/keepalived.conf | grep -E 'vrrp_instance|state|priority|interface' | head -30
+      changed_when: false
+      register: vrrp_instances
+      failed_when: false
+
+    - name: "TEST HB — Instancias VRRP"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_instances.stdout }}"
+
+    # =========================================================================
+    # PASO 5 — ¿Las VIPs están asignadas correctamente?
+    # =========================================================================
+
+    - name: "TEST HB — 5.1) Todas las IPs en bridges"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: all_bridges
+
+    - name: "TEST HB — Bridges"
+      ansible.builtin.debug:
+        msg: "{{ all_bridges.stdout }}"
+
+    - name: "TEST HB — 5.2) VIPs activas (.1)"
+      ansible.builtin.shell: ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+'
+      changed_when: false
+      register: vips_active
+      failed_when: false
+
+    - name: "TEST HB — VIPs"
+      ansible.builtin.debug:
+        msg: "{{ vips_active.stdout | default('Ninguna') }}"
+
+    # =========================================================================
+    # PASO 6 — Test de firewall: permitir VRRP y re-iniciar
+    # =========================================================================
+
+    - name: "TEST HB — 6.1) Abrir firewall para VRRP (proto 112)"
+      ansible.builtin.shell: |
+        # Verificar si ya está abierto
+        sudo iptables -C INPUT -p 112 -j ACCEPT 2>/dev/null && echo "YA ABIERTO" || {
+          echo "Abriendo INPUT proto 112..."
+          sudo iptables -I INPUT -p 112 -j ACCEPT
+          echo "Abriendo OUTPUT proto 112..."
+          sudo iptables -I OUTPUT -p 112 -j ACCEPT
+          echo "LISTO"
+        }
+      changed_when: false
+      register: firewall_fix
+      failed_when: false
+
+    - name: "TEST HB — Firewall"
+      ansible.builtin.debug:
+        msg: "{{ firewall_fix.stdout }}"
+
+    - name: "TEST HB — 6.2) Re-iniciar keepalived para forzar election"
+      ansible.builtin.systemd:
+        name: keepalived
+        state: restarted
+        daemon_reload: yes
+
+    - name: "TEST HB — Esperar 8 segundos a que se establezca"
+      ansible.builtin.pause:
+        seconds: 8
+
+    - name: "TEST HB — 6.3) Ver IPs después del reinicio"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: after_restart
+
+    - name: "TEST HB — Bridges después del restart"
+      ansible.builtin.debug:
+        msg: "{{ after_restart.stdout }}"
+
+    - name: "TEST HB — 6.4) Nuevo conteo de VIPs"
+      ansible.builtin.shell: ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+'
+      changed_when: false
+      register: vips_after
+      failed_when: false
+
+    - name: "TEST HB — VIPs después del restart"
+      ansible.builtin.debug:
+        msg: "{{ vips_after.stdout | default('Ninguna') }}"
+
+    # =========================================================================
+    # RESULTADO FINAL
+    # =========================================================================
+
+    - name: "TEST HB — RESULTADO FINAL"
+      ansible.builtin.debug:
+        msg: |
+          ═══════════════════════════════════════════════════════════
+          TEST DE HEARTBEAT VRRP COMPLETADO
+          ═══════════════════════════════════════════════════════════
+          Peer: {{ test_peer }}
+          VRRP packets capturados: {{ 'SI' if 'HAY PAQUETES' in vrrp_count.stdout else 'NO' }}
+          VIPs activas (.1): {{ vips_after.stdout | default('Ninguna') }}
+          Firewall VRRP: {{ firewall_fix.stdout }}
+          ═══════════════════════════════════════════════════════════
+
+    - name: "TEST HB — RECOMENDACIÓN"
+      ansible.builtin.debug:
+        msg: |
+          {{ 'ATENCIÓN: Revisar output arriba. Si VIPs siguen en ambos cores,
+          el problema puede ser de configuración de unicast_peer o asymmetric routing.' if (vips_after.stdout_lines | length) > 1 else 'OK: Split-brain resuelto' }}
