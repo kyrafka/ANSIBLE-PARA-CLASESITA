@@ -2,137 +2,103 @@
 # ============================================================================
 # tests/keepalived/test_vrrp.yml
 # ============================================================================
-# Prueba unitaria: Verifica estado VRRP, prioridades y ausencia de split-brain
+# Prueba unitaria: Verifica estado VRRP y detecta split-brain
 #
-# IMPORTANTE: Ejecutar en AMBOS cores para comparar:
-#   Core 1: ansible-playbook tests/keepalived/test_vrrp.yml -e "core_state=MASTER"
-#   Core 2: ansible-playbook tests/keepalived/test_vrrp.yml -e "core_state=BACKUP"
+# Usage:
+#   ansible-playbook tests/keepalived/test_vrrp.yml -e "core_state=MASTER"  # En Core 1
+#   ansible-playbook tests/keepalived/test_vrrp.yml -e "core_state=BACKUP"  # En Core 2
 # ============================================================================
 
-- name: "TEST — VRRP: Verificar estado de keepalived y VIPs"
+- name: "TEST — VRRP: Verificar estado y ausencia de split-brain"
   hosts: localhost
   connection: local
   become: true
   gather_facts: true
 
   vars:
-    # Se pasa como: -e "core_state=MASTER" o "-e core_state=BACKUP"
     core_state: "MASTER"
-    # IP del peer para comparar (el otro core)
-    vip_expected_on_this_core: "{{ true if core_state == 'MASTER' else false }}"
     expected_priority: "{{ '200' if core_state == 'MASTER' else '100' }}"
 
   tasks:
-    - name: "TEST VRRP — 1) Verificar que keepalived está corriendo"
+    - name: "TEST VRRP — 1) Keepalived corriendo"
       ansible.builtin.systemd:
         name: keepalived
         state: started
       register: kal_service
 
-    - name: "TEST VRRP — Estado de keepalived"
+    - name: "TEST VRRP — Estado"
       ansible.builtin.debug:
-        msg: "Keepalived State: {{ kal_service.status.ActiveState | default('unknown') }}"
+        msg: "Keepalived: {{ kal_service.status.ActiveState | default('unknown') }}"
 
-    - name: "TEST VRRP — 2) Mostrar logs recientes de VRRP (últimos 30 segundos)"
-      ansible.builtin.shell: |
-        tail -50 /var/log/syslog | grep -i 'vrrp\|keepalived' | tail -20
+    - name: "TEST VRRP — 2) Logs recientes de VRRP"
+      ansible.builtin.shell: grep -i 'vrrp\|keepalived' /var/log/syslog | tail -20
       changed_when: false
       register: vrrp_logs
       failed_when: false
 
-    - name: "TEST VRRP — Logs de VRRP"
+    - name: "TEST VRRP — Logs"
       ansible.builtin.debug:
         msg: "{{ vrrp_logs.stdout }}"
 
-    - name: "TEST VRRP — 3) Verificar estado de cada instancia VRRP"
-      ansible.builtin.shell: |
-        cat /var/log/syslog | grep -i 'VRRP_Instance' | tail -20
-      changed_when: false
-      register: vrrp_instances
-      failed_when: false
-
-    - name: "TEST VRRP — Estado de instancias VRRP"
-      ansible.builtin.debug:
-        msg: "{{ vrrp_instances.stdout }}"
-
-    - name: "TEST VRRP — 4) Ver todas las IPs en bridges (incluyendo VIPs)"
+    - name: "TEST VRRP — 3) Todas las IPs en bridges"
       ansible.builtin.command: ip -br a
       changed_when: false
       register: all_ips
 
-    - name: "TEST VRRP — Todas las IPs en bridges"
+    - name: "TEST VRRP — IPs"
       ansible.builtin.debug:
         msg: "{{ all_ips.stdout }}"
 
-    - name: "TEST VRRP — 5) Extraer solo las VIPs (.1) activas"
-      ansible.builtin.shell: |
-        ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+'
+    - name: "TEST VRRP — 4) VIPs activas (.1)"
+      ansible.builtin.shell: ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+'
       changed_when: false
       register: vip_addresses
       failed_when: false
 
-    - name: "TEST VRRP — VIPs activas (.1)"
+    - name: "TEST VRRP — VIPs"
       ansible.builtin.debug:
-        msg: "{{ vip_addresses.stdout }}"
+        msg: "{{ vip_addresses.stdout | default('Ninguna') }}"
 
-    - name: "TEST VRRP — 6) Verificar prioridad en configuración"
-      ansible.builtin.shell: |
-        grep -E '^\s*priority\s+' /etc/keepalived/keepalived.conf | head -5
+    - name: "TEST VRRP — 5) Prioridad configurada"
+      ansible.builtin.shell: grep -E '^\s*priority\s+' /etc/keepalived/keepalived.conf | head -3
       changed_when: false
       register: priority_check
       failed_when: false
 
-    - name: "TEST VRRP — Prioridad configurada"
+    - name: "TEST VRRP — Prioridad"
       ansible.builtin.debug:
-        msg: "{{ priority_check.stdout }}"
+        msg: "{{ priority_check.stdout | default('No encontrada') }}"
 
-    - name: "TEST VRRP — 7) Comparar: si este core es BACKUP, NO debe tener VIPs"
+    - name: "TEST VRRP — 6) Validar según estado esperado"
       block:
-        - name: "TEST — Si BACKUP, verificar que NO tiene VIPs activas"
+        - name: "MASTER debe tener VIPs activas"
           ansible.builtin.assert:
-            that:
-              - "vip_addresses.stdout == '' or '.1' not in all_ips.stdout"
-            fail_msg: |
-              ALERTA SPLIT-BRAIN: Este core es BACKUP pero tiene VIPs activas!
-              Esto es un problema grave. Ambos cores tienen VIPs simultáneamente.
-              Ejecutar en AMBOS cores para comparar.
-            success_msg: "OK: BACKUP no tiene VIPs activas"
-          when: core_state == 'BACKUP'
-
-        - name: "TEST — Si MASTER, verificar que SÍ tiene VIPs activas"
-          ansible.builtin.assert:
-            that:
-              - "'.1' in all_ips.stdout"
-            fail_msg: |
-              ERROR: Este core es MASTER pero NO tiene VIPs activas!
+            that: "'.1' in all_ips.stdout"
+            fail_msg: "ALERTA: MASTER sin VIPs! Problema grave."
             success_msg: "OK: MASTER tiene VIPs activas"
-          when: core_state == 'MASTER'
+          when: core_state == "MASTER"
+
+        - name: "BACKUP NO debe tener VIPs"
+          ansible.builtin.assert:
+            that: "'.1' not in all_ips.stdout or vip_addresses.stdout == ''"
+            fail_msg: |
+              ALERTA SPLIT-BRAIN: BACKUP tiene VIPs activas!
+              Esto significa que ambos cores están en MASTER.
+              Solución: sudo systemctl restart systemd-networkd && sudo systemctl restart keepalived
+            success_msg: "OK: BACKUP no tiene VIPs (correcto)"
+          when: core_state == "BACKUP"
       rescue:
-        - name: "TEST — ALERTA: Problema de split-brain detectado"
+        - name: "TEST — ALERTA SPLIT-BRAIN"
           ansible.builtin.debug:
             msg: |
-              ╔══════════════════════════════════════════════════════════════════╗
-              ║  ¡PROBLEMA DETECTADO!                                          ║
-              ║  Split-Brain: Ambos cores tienen VIPs o ambos están en mismo   ║
-              ║  estado.                                                        ║
-              ║                                                                  ║
-              ║  SOLUCIÓN:                                                      ║
-              ║  1) En el BACKUP (Core 2):                                    ║
-              ║     sudo systemctl restart systemd-networkd                     ║
-              ║     sudo systemctl restart keepalived                           ║
-              ║  2) Verificar que el interlink (br30) funciona:                 ║
-              ║     ping -I br30 192.168.13.4 (desde Core 2)                    ║
-              ║     ping -I br30 192.168.13.5 (desde Core 1)                    ║
-              ║  3) Revisar logs: grep VRRP /var/log/syslog                     ║
-              ╚══════════════════════════════════════════════════════════════════╝
+              PROBLEMA DETECTADO: Ambos cores tienen VIPs!
+              Ejecutar en BACKUP: sudo systemctl restart systemd-networkd && sudo systemctl restart keepalived
 
-    - name: "TEST VRRP — RESULTADO FINAL"
+    - name: "TEST VRRP — RESULTADO"
       ansible.builtin.debug:
         msg: |
-          ╔═══════════════════════════════════════════════════════════════════════╗
-          ║  TEST VRRP COMPLETADO                                               ║
-          ║  Core: {{ inventory_hostname }}                                        ║
-          ║  Estado esperado: {{ core_state }}                                       ║
-          ║  Prioridad esperada: {{ expected_priority }}                                     ║
-          ║  VIPs activas: {{ vip_addresses.stdout_lines | length }}                              ║
-          ╚═══════════════════════════════════════════════════════════════════════╝
+          TEST VRRP COMPLETADO
+          Core: {{ inventory_hostname }}
+          Estado esperado: {{ core_state }}
+          Prioridad esperada: {{ expected_priority }}
+          VIPs activas: {{ vip_addresses.stdout_lines | length }}

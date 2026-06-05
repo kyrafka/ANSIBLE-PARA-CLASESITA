@@ -2,69 +2,58 @@
 # ============================================================================
 # tests/frr/test_frr.yml
 # ============================================================================
-# Prueba unitaria: Verifica que FRR está corriendo y tiene rutas
+# Prueba unitaria: Verifica FRR y rutas OSPF
 # ============================================================================
 
-- name: "TEST — FRR: Verificar servicio y configuración"
+- name: "TEST — FRR: Verificar servicio y rutas"
   hosts: localhost
   connection: local
   become: true
   gather_facts: true
 
+  vars:
+    core_id: "core1"
+
   tasks:
-    - name: "TEST FRR — 1) Verificar que FRR está corriendo"
+    - name: "TEST FRR — 1) FRR corriendo"
       ansible.builtin.systemd:
         name: frr
         state: started
       register: frr_running
 
-    - name: "TEST FRR — Estado de FRR"
+    - name: "TEST FRR — Estado"
       ansible.builtin.debug:
-        msg: "FRR Active: {{ frr_running.status.ActiveState | default('unknown') }}"
+        msg: "FRR: {{ frr_running.status.ActiveState | default('unknown') }}"
 
-    - name: "TEST FRR — 2) Verificar configuración cargada"
-      ansible.builtin.command: vtysh -c 'show running-config'
-      changed_when: false
-      register: frr_config
-      failed_when: false
-
-    - name: "TEST FRR — Configuración actual"
-      ansible.builtin.debug:
-        msg: "{{ frr_config.stdout }}"
-
-    - name: "TEST FRR — 3) Verificar router-id"
+    - name: "TEST FRR — 2) Config OSPF"
       ansible.builtin.command: vtysh -c 'show ip ospf'
       changed_when: false
       register: ospf_info
       failed_when: false
 
-    - name: "TEST FRR — Información OSPF"
+    - name: "TEST FRR — Info OSPF"
       ansible.builtin.debug:
         msg: "{{ ospf_info.stdout }}"
 
-    - name: "TEST FRR — 4) Verificar rutas en tabla de enrutamiento"
-      ansible.builtin.command: ip route | grep -E '192\.168\.(11|12|13|14|15|16|17)\.' | sort
-      changed_when: false
-      register: routes
-
-    - name: "TEST FRR — Rutas aprendidas por OSPF"
-      ansible.builtin.debug:
-        msg: "{{ routes.stdout | default('No hay rutas OSPF') }}"
-
-    - name: "TEST FRR — 5) Comparar con tabla de FRR"
-      ansible.builtin.command: vtysh -c 'show ip route' | grep -E '^O|^S|^C'
+    - name: "TEST FRR — 3) Rutas aprendidas"
+      ansible.builtin.command: vtysh -c 'show ip route' | grep -E '^O'
       changed_when: false
       register: frr_routes
       failed_when: false
 
-    - name: "TEST FRR — Rutas en FRR"
+    - name: "TEST FRR — Rutas OSPF"
       ansible.builtin.debug:
-        msg: "{{ frr_routes.stdout }}"
+        msg: "{{ frr_routes.stdout | default('Sin rutas OSPF') }}"
+
+    - name: "TEST FRR — 4) Rutas kernel"
+      ansible.builtin.command: ip route | grep -E '192\.168\.(11|12|13|14|15|16|17|21)' | sort
+      changed_when: false
+      register: kernel_routes
+
+    - name: "TEST FRR — Rutas kernel"
+      ansible.builtin.debug:
+        msg: "{{ kernel_routes.stdout | default('Sin rutas') }}"
 
     - name: "TEST FRR — RESULTADO"
       ansible.builtin.debug:
-        msg: |
-          ╔═══════════════════════════════════════════════════════════╗
-          ║  TEST FRR COMPLETADO                                     ║
-          ║  Revisar output arriba para ver estado de rutas OSPF    ║
-          ╚═══════════════════════════════════════════════════════════╝
+        msg: "TEST FRR COMPLETADO para {{ core_id | upper }}"

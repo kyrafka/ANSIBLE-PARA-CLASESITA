@@ -2,88 +2,65 @@
 # ============================================================================
 # tests/ospf/test_ospf.yml
 # ============================================================================
-# Prueba unitaria: Verifica que OSPF está configurado y tiene vecino
+# Prueba unitaria: Verifica OSPF tiene vecino FULL y rutas aprendidas
 # ============================================================================
 
-- name: "TEST — OSPF: Verificarvecino y rutas"
+- name: "TEST — OSPF: Verificar vecino y rutas"
   hosts: localhost
   connection: local
   become: true
   gather_facts: true
 
   vars:
-    # IP del peer OSPF (el otro core) - se pasa como extra-var
-    #ansible-playbook tests/ospf/test_ospf.yml -e "ospf_peer_ip=192.168.13.5"
+    # Se pasa como: -e "ospf_peer_ip=192.168.13.5"
     ospf_peer_ip: "192.168.13.5"
+    core_id: "core1"
 
   tasks:
-    - name: "TEST OSPF — 1) Verificar que FRR está corriendo"
+    - name: "TEST OSPF — 1) FRR corriendo"
       ansible.builtin.systemd:
         name: frr
         state: started
       register: frr_service
 
-    - name: "TEST OSPF — Estado del servicio FRR"
+    - name: "TEST OSPF — Estado"
       ansible.builtin.debug:
-        msg: "FRR State: {{ frr_service.status.ActiveState | default('unknown') }}"
+        msg: "FRR: {{ frr_service.status.ActiveState | default('unknown') }}"
 
-    - name: "TEST OSPF — 2) Entrar a vtysh y mostrar vecinos OSPF"
+    - name: "TEST OSPF — 2) Mostrar vecinos OSPF"
       ansible.builtin.command: vtysh -c 'show ip ospf neighbor'
       changed_when: false
       register: ospf_neighbors
-      failed_when: false
 
-    - name: "TEST OSPF — Vecinos OSPF encontrados"
+    - name: "TEST OSPF — Vecinos"
       ansible.builtin.debug:
         msg: "{{ ospf_neighbors.stdout }}"
 
-    - name: "TEST OSPF — 3) Verificar que existe至少un vecino FULL"
+    - name: "TEST OSPF — 3) Hay vecino FULL?"
       ansible.builtin.assert:
-        that:
-          - "'Full' in ospf_neighbors.stdout or 'FULL' in ospf_neighbors.stdout"
-        fail_msg: |
-          ERROR: No se encontró vecino OSPF en estado FULL.
-          Revisar:
-          1) ¿El interlink (br30) está funcionando?
-          2) ¿El otro core tiene FRR corriendo?
-          3) Ver logs: sudo vtysh -c 'show ip ospf neighbor detail'
-        success_msg: "OK: Vecino OSPF en estado FULL detectado"
+        that: "('Full' in ospf_neighbors.stdout or 'FULL' in ospf_neighbors.stdout)"
+        fail_msg: "ERROR: No hay vecino OSPF FULL. Revisar interlink br30 y que FRR esté corriendo."
+        success_msg: "OK: Vecino OSPF en estado FULL"
 
-    - name: "TEST OSPF — 4) Mostrar base de datos OSPF"
-      ansible.builtin.command: vtysh -c 'show ip ospf database'
-      changed_when: false
-      register: ospf_db
-      failed_when: false
-
-    - name: "TEST OSPF — Base de datos OSPF"
-      ansible.builtin.debug:
-        msg: "{{ ospf_db.stdout }}"
-
-    - name: "TEST OSPF — 5) Mostrar rutas OSPF aprendidas"
+    - name: "TEST OSPF — 4) Rutas aprendidas"
       ansible.builtin.command: vtysh -c 'show ip ospf route'
       changed_when: false
       register: ospf_routes
-      failed_when: false
 
-    - name: "TEST OSPF — Rutas OSPF"
+    - name: "TEST OSPF — Rutas"
       ansible.builtin.debug:
         msg: "{{ ospf_routes.stdout }}"
 
-    - name: "TEST OSPF — 6) Ping al peer OSPF por el interlink"
+    - name: "TEST OSPF — 5) Ping al peer OSPF por br30"
       ansible.builtin.ping:
         dest: "{{ ospf_peer_ip }}"
       ignore_errors: true
       register: ping_peer
 
-    - name: "TEST OSPF — Resultado del ping al peer"
+    - name: "TEST OSPF — Ping result"
       ansible.builtin.debug:
-        msg: "Ping a {{ ospf_peer_ip }}: {{ 'OK' if ping_peer.ping is defined and ping_peer.ping != 'pong' else 'FALLO' }}"
+        msg: "Ping a {{ ospf_peer_ip }}: {{ 'OK' if ping_peer.ping | default('fail') != 'fail' else 'FALLO' }}"
 
-    - name: "TEST OSPF — RESULTADO FINAL"
+    - name: "TEST OSPF — RESULTADO"
       ansible.builtin.debug:
-        msg: |
-          ╔═══════════════════════════════════════════════════════════╗
-          ║  TEST OSPF COMPLETADO                                       ║
-          ║  Peer esperado: {{ ospf_peer_ip }}                             ║
-          ║  Revisar output arriba para ver estado de vecino y rutas ║
-          ╚═══════════════════════════════════════════════════════════╝
+        msg: "TEST OSPF COMPLETADO para {{ core_id | upper }}"

@@ -14,89 +14,60 @@
 
   vars:
     expected_bridges:
-      - name: "br10"
-        ip_prefix: "192.168.11."
-        vlan: 10
-      - name: "br20"
-        ip_prefix: "192.168.12."
-        vlan: 20
-      - name: "br21"
-        ip_prefix: "192.168.21."
-        vlan: 21
-      - name: "br30"
-        ip_prefix: "192.168.13."
-        vlan: 30
-      - name: "br40"
-        ip_prefix: "192.168.14."
-        vlan: 40
-      - name: "br50"
-        ip_prefix: "192.168.15."
-        vlan: 50
-      - name: "br60"
-        ip_prefix: "192.168.16."
-        vlan: 60
-      - name: "br70"
-        ip_prefix: "192.168.17."
-        vlan: 70
+      - {name: "br10", ip_prefix: "192.168.11.", vlan: 10}
+      - {name: "br20", ip_prefix: "192.168.12.", vlan: 20}
+      - {name: "br21", ip_prefix: "192.168.21.", vlan: 21}
+      - {name: "br30", ip_prefix: "192.168.13.", vlan: 30}
+      - {name: "br40", ip_prefix: "192.168.14.", vlan: 40}
+      - {name: "br50", ip_prefix: "192.168.15.", vlan: 50}
+      - {name: "br60", ip_prefix: "192.168.16.", vlan: 60}
+      - {name: "br70", ip_prefix: "192.168.17.", vlan: 70}
 
-    # IP esperada según el core (core1 = .4, core2 = .5)
-    # Se pasa como: ansible-playbook test_bridges.yml -e "core_id=core1"
+    # Se pasa como: -e "core_id=core1" → suffix=4, core2 → suffix=5
     core_id: "core1"
-    core_suffix: "{{ '4' if core_id == 'core1' else '5' }}"
 
   tasks:
-    - name: "TEST — 1) Obtener estado de interfaces"
+    - name: "TEST — 1) Estado de interfaces"
       ansible.builtin.command: ip -br a
       changed_when: false
       register: interfaces_raw
 
-    - name: "TEST — Mostrar estado de todas las interfaces"
+    - name: "TEST — Mostrar estado"
       ansible.builtin.debug:
         msg: "{{ interfaces_raw.stdout }}"
 
-    - name: "TEST — 2) Verificar que cada bridge existe y tiene IP correcta"
+    - name: "TEST — 2) Verificar que cada bridge existe"
       ansible.builtin.assert:
         that:
           - "item.name in interfaces_raw.stdout"
-          - "item.ip_prefix + core_suffix in interfaces_raw.stdout"
-        fail_msg: "BRIDGE FALLO: {{ item.name }} no existe o tiene IP incorrecta"
-        success_msg: "OK: {{ item.name }} = {{ item.ip_prefix }}{{ core_suffix }}"
+        fail_msg: "BRIDGE FALLO: {{ item.name }} no existe"
+        success_msg: "OK: {{ item.name }}"
       loop: "{{ expected_bridges }}"
 
-    - name: "TEST — 3) Verificar que los bridges tienen STP activo"
-      ansible.builtin.shell: |
-        bridge -j link | jq -r '.[] | select(.ifname | startswith("br")) | {ifname, stp_state}'
-      changed_when: false
-      register: stp_status
-      ignore_errors: true
+    - name: "TEST — 3) Verificar IP correcta del core en cada bridge"
+      ansible.builtin.assert:
+        that:
+          - "item.ip_prefix + ('4' if core_id == 'core1' else '5') in interfaces_raw.stdout"
+        fail_msg: "{{ item.name }}: IP incorrecta. Esperado: {{ item.ip_prefix }}{{ '4' if core_id == 'core1' else '5' }}"
+        success_msg: "{{ item.name }}: IP correcta"
+      loop: "{{ expected_bridges }}"
 
-    - name: "TEST — Mostrar estado STP de bridges"
-      ansible.builtin.debug:
-        msg: "{{ stp_status.stdout | default('No se pudo leer STP') }}"
-
-    - name: "TEST — 4) Verificar VLANs sub-interfaces"
+    - name: "TEST — 4) Verificar VLAN sub-interfaces"
       ansible.builtin.command: ip -br a
       changed_when: false
       register: vlan_check
 
-    - name: "TEST — Verificar que todas las VLANs (10-70) existen como sub-interfaces"
+    - name: "TEST — Todas las VLANs (10-70) presentes"
       ansible.builtin.assert:
         that: "item in vlan_check.stdout"
-        fail_msg: "VLAN {{ item }} no encontrada como sub-interface"
-        success_msg: "OK: VLAN {{ item }} presente"
+        fail_msg: "VLAN {{ item }} no encontrada"
+        success_msg: "OK: VLAN {{ item }}"
       loop: [10, 20, 21, 30, 40, 50, 60, 70]
-
-    - name: "TEST — 5) Test de conectividad dentro de cada VLAN"
-      ansible.builtin.ping:
-      ignore_errors: true
-      register: ping_test
 
     - name: "TEST — RESULTADO FINAL"
       ansible.builtin.debug:
         msg: |
-          ╔═══════════════════════════════════════════════════════════╗
-          ║  TEST DE REDES COMPLETADO                                ║
-          ║  Core: {{ core_id | upper }} ({{ inventory_hostname }})                   ║
-          ║  Sufijo de IP esperado: .{{ core_suffix }}                                  ║
-          ║  Bridges: {{ expected_bridges | map(attribute='name') | list }}
-          ╚═══════════════════════════════════════════════════════════╝
+          TEST DE REDES COMPLETADO
+          Core: {{ core_id | upper }}
+          Esperado: .{{ '4' if core_id == 'core1' else '5' }}
+          Bridges: {{ expected_bridges | map(attribute='name') | list }}
