@@ -16,8 +16,7 @@
   gather_facts: true
 
   vars:
-    core_state: "MASTER"
-    expected_priority: "{{ '200' if core_state == 'MASTER' else '100' }}"
+    # No necesita external vars — auto-detecta
 
   tasks:
     - name: "TEST VRRP — 1) Keepalived corriendo"

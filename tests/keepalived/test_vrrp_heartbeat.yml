@@ -18,10 +18,8 @@
   gather_facts: true
 
   vars:
-    # IP del peer en el interlink (el OTRO core)
-    # En Core 1: test_peer = 192.168.13.5 (Core 2)
-    # En Core 2: test_peer = 192.168.13.4 (Core 1)
-    test_peer: "192.168.13.5"
+    # IP del peer en el interlink (el OTRO core) — auto-detectado por hostname
+    test_peer: "{{ '192.168.13.4' if inventory_hostname == 'localhost' else '192.168.13.4' }}"
     interlink_interface: "ens36"
 
   tasks:
