@@ -1,0 +1,171 @@
+---
+# ============================================================================
+# playbooks/probar_vrrp.yml
+# ============================================================================
+# Diagnóstico completo de VRRP en AMBOS cores
+# Ejecuta: ansible-playbook playbooks/probar_vrrp.yml
+# ============================================================================
+
+- name: "VRRP — Diagnóstico completo"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    # Core1 → peer interlink es 10.0.0.2
+    # Core2 → peer interlink es 10.0.0.1
+    test_peer: "{{ '10.0.0.2' }}"
+
+  tasks:
+
+    - name: "=== DIAGNÓSTICO VRRP ==="
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════
+          VRRP DIAGNÓSTICO — Core={{ inventory_hostname }}
+          Peer interlink: {{ test_peer }}
+          ════════════════════════════════════════════════
+
+    # -------------------------------------------------------------------------
+    # 1 — Captura VRRP en interlink (ambos sentidos)
+    # -------------------------------------------------------------------------
+
+    - name: "1) Captura VRRP en interlink (5 segundos)"
+      ansible.builtin.shell: |
+        echo "=== CAPTURA VRRP en ens36 (5s) ==="
+        sudo timeout 5 tcpdump -i ens36 -nn 'ip[9] == 112' -v 2>&1 | tee /tmp/vrrp_capture.log
+        echo "=== RESULTADO ==="
+        cat /tmp/vrrp_capture.log
+      changed_when: false
+      register: vrrp_cap
+      failed_when: false
+
+    - name: "1) Resultado captura"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_cap.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 2 — Ping al peer por interlink
+    # -------------------------------------------------------------------------
+
+    - name: "2) Ping al peer por interlink"
+      ansible.builtin.command: "ping -c 3 -W 2 -I ens36 {{ test_peer }}"
+      changed_when: false
+      register: ping_peer
+      failed_when: false
+
+    - name: "2) Ping"
+      ansible.builtin.debug:
+        msg: "Ping a {{ test_peer }}: {{ 'OK' if ping_peer.rc == 0 else 'FALLO' }}"
+
+    # -------------------------------------------------------------------------
+    # 3 — Estado de keepalived
+    # -------------------------------------------------------------------------
+
+    - name: "3) Estado keepalived"
+      ansible.builtin.systemd:
+        name: keepalived
+      register: kal
+
+    - name: "3) Estado"
+      ansible.builtin.debug:
+        msg: "{{ kal.status.ActiveState | default('unknown') }}"
+
+    # -------------------------------------------------------------------------
+    # 4 — Logs de elección VRRP
+    # -------------------------------------------------------------------------
+
+    - name: "4) Logs de prioridad VRRP"
+      ansible.builtin.shell: |
+        echo "=== CAMBIOS DE PRIORIDAD ==="
+        sudo grep -E 'priority|effective priority' /var/log/syslog | tail -10
+        echo ""
+        echo "=== ELECCIONES (advertisement/higher/lower) ==="
+        sudo grep -E 'advertisement|higher priority|lower priority|received' /var/log/syslog | tail -10
+        echo ""
+        echo "=== TRANSICIONES MASTER/BACKUP ==="
+        sudo grep -E 'become master|entering master|entering backup|backup' /var/log/syslog | tail -10
+      changed_when: false
+      register: vrrp_logs
+      failed_when: false
+
+    - name: "4) Logs VRRP"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_logs.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 5 — Configuración actual de keepalived
+    # -------------------------------------------------------------------------
+
+    - name: "5) Prioridades en config"
+      ansible.builtin.shell: sudo grep -A5 'vrrp_instance' /etc/keepalived/keepalived.conf | grep -E 'vrrp_instance|state|priority|unicast|interface' | head -40
+      changed_when: false
+      register: vrrp_conf
+      failed_when: false
+
+    - name: "5) Config VRRP"
+      ansible.builtin.debug:
+        msg: "{{ vrrp_conf.stdout }}"
+
+    # -------------------------------------------------------------------------
+    # 6 — IPs actuales en bridges (VIPs .1)
+    # -------------------------------------------------------------------------
+
+    - name: "6) IPs en bridges"
+      ansible.builtin.command: ip -br a
+      changed_when: false
+      register: bridges
+
+    - name: "6) Bridges"
+      ansible.builtin.debug:
+        msg: "{{ bridges.stdout }}"
+
+    - name: "6) VIPs activas (.1)"
+      ansible.builtin.shell: ip -br a | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.1/[0-9]+'
+      changed_when: false
+      register: vips
+      failed_when: false
+
+    - name: "6) VIPs"
+      ansible.builtin.debug:
+        msg: "{{ vips.stdout | default('NINGUNA') }}"
+
+    # -------------------------------------------------------------------------
+    # 7 — Firewall proto 112
+    # -------------------------------------------------------------------------
+
+    - name: "7) Firewall INPUT proto 112"
+      ansible.builtin.shell: sudo iptables -L INPUT -n | grep -E '112|DROP|REJECT' || echo "Sin reglas 112 en INPUT"
+      changed_when: false
+      register: fw_in
+      failed_when: false
+
+    - name: "7) Firewall OUTPUT proto 112"
+      ansible.builtin.shell: sudo iptables -L OUTPUT -n | grep -E '112|DROP|REJECT' || echo "Sin reglas 112 en OUTPUT"
+      changed_when: false
+      register: fw_out
+      failed_when: false
+
+    - name: "7) Firewall"
+      ansible.builtin.debug:
+        msg: |
+          INPUT: {{ fw_in.stdout }}
+          OUTPUT: {{ fw_out.stdout }}
+
+    # -------------------------------------------------------------------------
+    # RESUMEN
+    # -------------------------------------------------------------------------
+
+    - name: "=== RESUMEN FINAL ==="
+      ansible.builtin.debug:
+        msg: |
+          ════════════════════════════════════════════════
+          Keepalived: {{ kal.status.ActiveState | default('unknown') }}
+          Ping peer: {{ 'OK' if ping_peer.rc == 0 else 'FALLO' }}
+          VIPs (.1): {{ vips.stdout | default('NINGUNA') }}
+          Firewall 112: INPUT={{ fw_in.stdout_lines | length > 0 }} OUTPUT={{ fw_out.stdout_lines | length > 0 }}
+          ════════════════════════════════════════════════
+          VEREDICTO:
+          {{ 'SPLIT-BRAIN: Ambos cores tienen VIPs' if (vips.stdout_lines | length) > 1 else 'OK: Un solo MASTER' }}
+          ════════════════════════════════════════════════
