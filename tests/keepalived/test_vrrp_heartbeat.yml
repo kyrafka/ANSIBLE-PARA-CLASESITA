@@ -37,18 +37,18 @@
         msg: "{{ interfaces_raw.stdout }}"
 
     - name: "TEST HB — 1.2) Ping al peer por interlink (sin VRRP)"
-      ansible.builtin.ping:
-        dest: "{{ test_peer }}"
-      ignore_errors: true
+      ansible.builtin.command: "ping -c 3 -W 2 -I ens36 {{ test_peer }}"
+      changed_when: false
       register: ping_test
+      failed_when: false
 
     - name: "TEST HB — Ping al peer"
       ansible.builtin.debug:
-        msg: "Ping a {{ test_peer }}: {{ 'OK' if ping_test.ping | default('') != '' else 'FALLO' }}"
+        msg: "Ping a {{ test_peer }}: {{ 'OK' if ping_test.rc == 0 else 'FALLO' }}"
 
     - name: "TEST HB — Ping FALLA?"
       ansible.builtin.assert:
-        that: "ping_test.ping | default('') != ''"
+        that: "ping_test.rc == 0"
         fail_msg: "ERROR: El interlink no funciona. Revisar cable/físico."
         success_msg: "OK: Interlink funciona"
 

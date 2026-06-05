@@ -52,14 +52,14 @@
         msg: "{{ ospf_routes.stdout }}"
 
     - name: "TEST OSPF — 5) Ping al peer OSPF por br30"
-      ansible.builtin.ping:
-        dest: "{{ ospf_peer_ip }}"
-      ignore_errors: true
+      ansible.builtin.command: "ping -c 3 -W 2 {{ ospf_peer_ip }}"
+      changed_when: false
       register: ping_peer
+      failed_when: false
 
     - name: "TEST OSPF — Ping result"
       ansible.builtin.debug:
-        msg: "Ping a {{ ospf_peer_ip }}: {{ 'OK' if ping_peer.ping | default('fail') != 'fail' else 'FALLO' }}"
+        msg: "Ping a {{ ospf_peer_ip }}: {{ 'OK' if ping_peer.rc == 0 else 'FALLO' }}"
 
     - name: "TEST OSPF — RESULTADO"
       ansible.builtin.debug:
