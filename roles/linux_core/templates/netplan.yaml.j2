@@ -20,6 +20,9 @@ network:
     v{{ vlan.id }}-fw:
       id: {{ vlan.id }}
       link: {{ nic_fw }}
+    v{{ vlan.id }}-int:
+      id: {{ vlan.id }}
+      link: {{ nic_int }}
 {% endfor %}
 
   bridges:
@@ -27,6 +30,7 @@ network:
     br{{ vlan.id }}:
       interfaces:
         - v{{ vlan.id }}-fw
+        - v{{ vlan.id }}-int
       addresses:
         - "{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}"
       parameters:

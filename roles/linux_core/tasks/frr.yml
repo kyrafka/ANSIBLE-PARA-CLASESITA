@@ -1,31 +1,25 @@
 ---
 # linux_core/tasks/frr.yml — Configuración de FRR (OSPF)
-# ---------------------------------------------------------------------------
+# ============================================================================
 
-- name: "FRR — FORZAR ACTUALIZACIÓN: Eliminar archivos de enrutamiento antiguos"
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "{{ frr_config_file }}"
-    - "{{ frr_daemons_file }}"
-
-- name: "FRR — Renderizar configuración frr.conf"
+- name: "FRR — Renderizar configuración frr.conf (sobrescribe si existe)"
   ansible.builtin.template:
     src: "frr.conf.j2"
-    dest: "{{ frr_config_file }}"
+    dest: "{{ frr_config_file | default('/etc/frr/frr.conf') }}"
     owner: frr
     group: frr
     mode: "0640"
+    force: yes
     backup: yes
 
 - name: "FRR — Renderizar configuración daemons (habilitar ospfd)"
   ansible.builtin.template:
     src: "daemons.j2"
-    dest: "{{ frr_daemons_file }}"
+    dest: "{{ frr_daemons_file | default('/etc/frr/daemons') }}"
     owner: frr
     group: frr
     mode: "0640"
+    force: yes
     backup: yes
 
 - name: "FRR — Crear directorio de log si no existe"
@@ -36,20 +30,9 @@
     group: frr
     mode: "0755"
 
-- name: "FRR — Reiniciar y habilitar servicio frr"
+- name: "FRR — Asegurar que FRR está corriendo y habilitado"
   ansible.builtin.systemd:
     name: frr
     state: restarted
     enabled: yes
     daemon_reload: yes
-
-- name: "FRR — Verificar estado del servicio"
-  ansible.builtin.systemd:
-    name: frr
-    state: started
-    enabled: yes
-  register: frr_status
-
-- name: "FRR — Debug estado"
-  ansible.builtin.debug:
-    msg: "FRR Status: {{ frr_status.status.ActiveState | default('Unknown') }}"

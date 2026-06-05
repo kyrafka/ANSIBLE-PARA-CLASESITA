@@ -1,50 +1,31 @@
 ---
-- name: "KAL — FORZAR ACTUALIZACIÓN: Eliminar configuración VRRP previa"
-  ansible.builtin.file:
-    path: "{{ keepalived_config_file }}"
-    state: absent
+# linux_core/tasks/keepalived.yml — Configuración de Keepalived (HA VIPs)
+# ============================================================================
 
-- name: "KAL — Renderizar configuración keepalived.conf"
+- name: "KAL — Renderizar keepalived.conf (sobrescribe si existe)"
   ansible.builtin.template:
     src: "keepalived.conf.j2"
-    dest: "{{ keepalived_config_file }}"
+    dest: "{{ keepalived_config_file | default('/etc/keepalived/keepalived.conf') }}"
     owner: root
     group: root
     mode: "0644"
+    force: yes
     backup: yes
 
-- name: "KAL — Reiniciar y habilitar keepalived"
+- name: "KAL — Asegurar que keepalived está corriendo y habilitado"
   ansible.builtin.systemd:
     name: keepalived
     state: restarted
     enabled: yes
     daemon_reload: yes
 
-- name: "KAL — Esperar a que Keepalived de ESXi se estabilice"
+- name: "KAL — Esperar a que el servicio estabilice"
   ansible.builtin.pause:
-    seconds: 10
-
-- name: "KAL — Esperar VIP activa en MASTER"
-  ansible.builtin.shell: "ip -4 addr show br10 | grep -q 'inet '"
-  register: vip_check
-  retries: 15
-  delay: 2
-  until: vip_check.rc == 0
-  changed_when: false
-  when: core_state == 'MASTER'
-
-- name: "KAL — Verificar servicio activo en BACKUP"
-  ansible.builtin.shell: "systemctl is-active keepalived"
-  register: svc_check
-  retries: 5
-  delay: 2
-  until: svc_check.rc == 0
-  changed_when: false
-  when: core_state == 'BACKUP'
+    seconds: 5
 
 - name: "KAL — Debug estado"
   ansible.builtin.debug:
     msg:
-      - "Configuración de Keepalived aplicada."
-      - "Rol actual: {{ core_state }}"
+      - "Keepalived configurado."
+      - "Rol: {{ core_state }}"
       - "Prioridad: {{ core_priority }}"
