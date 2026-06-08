@@ -27,7 +27,7 @@ vrrp_script check_peer_link {
 {% for vlan in vlans %}
 vrrp_instance VI_VLAN{{ vlan.id }} {
     state {{ core_state }}
-    interface br{{ vlan.id }}
+    interface {{ nic_int }}
     virtual_router_id {{ vlan.vrid }}
     priority {{ core_priority }}
     advert_int 1
@@ -54,7 +54,7 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
     }
 
     virtual_ipaddress {
-        {{ vlan.vip }} dev br{{ vlan.id }}
+        {{ vlan.vip }} dev {{ nic_int }}
     }
 }
 {% endfor %}
