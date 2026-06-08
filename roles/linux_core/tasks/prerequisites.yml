@@ -54,16 +54,23 @@
       ansible.builtin.debug:
         msg: "WARNING: No se pudieron cargar módulos 8021q/bridge. Verifica si están ya cargados."
 
-- name: "PRE — Habilitar IP Forwarding v4"
+- name: "PRE — IP Forwarding"
   ansible.builtin.lineinfile:
     path: /etc/sysctl.conf
     regexp: "^#?net.ipv4.ip_forward"
     line: "net.ipv4.ip_forward=1"
     state: present
 
+- name: "PRE — Limpiar sysctl bridge lines problematicas"
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.conf
+    regexp: "^net.bridge.*"
+    state: absent
+
 - name: "PRE — Aplicar sysctl"
   ansible.builtin.command: "sysctl -p"
   changed_when: true
+  failed_when: false
 
 - name: "PRE — Instalar paquetes requeridos"
   ansible.builtin.apt:
