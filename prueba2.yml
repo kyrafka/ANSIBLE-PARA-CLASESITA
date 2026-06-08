@@ -1,0 +1,52 @@
+---
+- name: "Test multicast snooping"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "List all bridges"
+      ansible.builtin.shell: ls /sys/class/net/ | grep -E '^br'
+      changed_when: false
+      register: bridges
+
+    - name: "Bridges found"
+      ansible.builtin.debug:
+        msg: "{{ bridges.stdout_lines }}"
+
+    - name: "Show multicast_snooping for each bridge"
+      ansible.builtin.shell: |
+        for f in /sys/class/net/br*/bridge/multicast_snooping; do
+          echo "$f = $(cat $f 2>/dev/null || echo 'not found')"
+        done
+      changed_when: false
+      register: snooping
+
+    - name: "Snooping status"
+      ansible.builtin.debug:
+        msg: "{{ snooping.stdout }}"
+
+    - name: "Try to disable with sudo"
+      ansible.builtin.shell: |
+        for f in /sys/class/net/br*/bridge/multicast_snooping; do
+          echo 0 | sudo tee "$f" || echo "FAILED: $f"
+        done
+      changed_when: false
+      register: disable_result
+
+    - name: "Disable result"
+      ansible.builtin.debug:
+        msg: "{{ disable_result.stdout }}"
+
+    - name: "Verify after"
+      ansible.builtin.shell: |
+        for f in /sys/class/net/br*/bridge/multicast_snooping; do
+          echo "$f = $(cat $f)"
+        done
+      changed_when: false
+      register: after
+
+    - name: "After disable"
+      ansible.builtin.debug:
+        msg: "{{ after.stdout }}"

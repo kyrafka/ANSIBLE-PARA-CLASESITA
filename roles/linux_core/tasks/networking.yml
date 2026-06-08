@@ -42,7 +42,7 @@
 
 - name: "NET — Desactivar multicast-snooping en todos los bridges"
   ansible.builtin.shell: |
-    for f in /sys/class/net/br*/bridge/multicast-snooping; do
+    for f in /sys/class/net/br*/bridge/multicast_snooping; do
       echo 0 | sudo tee "$f" > /dev/null 2>&1 || true
     done
   changed_when: false
