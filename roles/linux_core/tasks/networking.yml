@@ -39,3 +39,14 @@
     name: systemd-networkd
     state: restarted
     enabled: yes
+
+- name: "NET — Desactivar multicast-snooping en todos los bridges"
+  ansible.builtin.shell: |
+    for br in $(ls /sys/class/net/ | grep -E '^br[0-9]+' 2>/dev/null); do
+      snoop_path="/sys/class/net/$br/bridge/multicast-snooping"
+      if [ -w "$snoop_path" ]; then
+        echo 0 | sudo tee "$snoop_path" > /dev/null 2>&1 || true
+      fi
+    done
+  changed_when: false
+  failed_when: false
