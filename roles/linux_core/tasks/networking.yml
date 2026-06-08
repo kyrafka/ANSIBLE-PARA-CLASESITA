@@ -40,11 +40,11 @@
     state: restarted
     enabled: yes
 
-- name: "NET — Mostrar estado de interfaces"
-  ansible.builtin.command: "ip -br a"
+- name: "NET - Desactivar multicast-snooping en bridges (sysctl)"
+  ansible.builtin.shell: |
+    for br in $(ls /sys/class/net/ | grep -E '^br[0-9]+'); do
+      echo 0 > /sys/class/net/$br/bridge/multicast-snooping 2>/dev/null || true
+    done
+    echo "net.bridge.bridge-multicast-snooping = 0" >> /etc/sysctl.conf
   changed_when: false
-  register: ip_addr_result
-
-- name: "NET — Debug de interfaces"
-  ansible.builtin.debug:
-    msg: "{{ ip_addr_result.stdout_lines }}"
+  failed_when: false
