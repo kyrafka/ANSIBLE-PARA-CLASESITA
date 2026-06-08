@@ -34,19 +34,8 @@
   register: netplan_apply
   failed_when: netplan_apply.rc != 0
 
-- name: "NET — Asegurar que systemd-networkd está corriendo"
+- name: "NET — Asegurar que systemd-networkd esta corriendo"
   ansible.builtin.systemd:
     name: systemd-networkd
     state: restarted
     enabled: yes
-
-- name: "NET - Desactivar multicast-snooping en bridges (sysctl)"
-  ansible.builtin.shell: |
-    for br in $(ls /sys/class/net/ | grep -E '^br[0-9]+'); do
-      path="/sys/class/net/$br/bridge/multicast-snooping"
-      if [ -d "/sys/class/net/$br/bridge" ]; then
-        echo 0 | sudo tee "$path" > /dev/null 2>&1 || true
-      fi
-    done
-  changed_when: false
-  failed_when: false
