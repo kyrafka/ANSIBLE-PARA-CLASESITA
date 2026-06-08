@@ -12,6 +12,39 @@
     force: yes
     backup: yes
 
+- name: "KAL — Permitir VRRP/CARP (proto 112) en interfaces de HA"
+  ansible.posix.iptables:
+    proto: 112
+    jump: ACCEPT
+    chain: INPUT
+    in_interface: "{{ item }}"
+  loop:
+    - "{{ nic_int }}"
+    - "{{ nic_fw }}"
+    - lo
+  when: ansible_os_family == "Debian"
+
+- name: "KAL — Permitir VRRP/CARP (proto 112) OUTPUT"
+  ansible.posix.iptables:
+    proto: 112
+    jump: ACCEPT
+    chain: OUTPUT
+    out_interface: "{{ item }}"
+  loop:
+    - "{{ nic_int }}"
+    - "{{ nic_fw }}"
+    - lo
+  when: ansible_os_family == "Debian"
+
+- name: "KAL — Hacer reglas iptables permanentes"
+  community.general.debconf:
+    name: iptables-persistent/autosave_v4
+    value: "true"
+    vtype: boolean
+  changed_when: false
+  failed_when: false
+  when: ansible_os_family == "Debian"
+
 - name: "KAL — Asegurar que keepalived está corriendo y habilitado"
   ansible.builtin.systemd:
     name: keepalived
