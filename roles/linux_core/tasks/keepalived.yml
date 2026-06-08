@@ -1,8 +1,8 @@
 ---
-# linux_core/tasks/keepalived.yml — Configuración de Keepalived (HA VIPs)
+# linux_core/tasks/keepalived.yml — Configuracion de Keepalived (HA VIPs)
 # ============================================================================
 
-- name: "KAL — Renderizar keepalived.conf (sobrescribe si existe)"
+- name: "KAL - Renderizar keepalived.conf (sobrescribe si existe)"
   ansible.builtin.template:
     src: "keepalived.conf.j2"
     dest: "{{ keepalived_config_file | default('/etc/keepalived/keepalived.conf') }}"
@@ -12,51 +12,39 @@
     force: yes
     backup: yes
 
-- name: "KAL — Permitir VRRP/CARP (proto 112) en interfaces de HA"
-  ansible.posix.iptables:
-    proto: 112
-    jump: ACCEPT
-    chain: INPUT
-    in_interface: "{{ item }}"
-  loop:
-    - "{{ nic_int }}"
-    - "{{ nic_fw }}"
-    - lo
-  when: ansible_os_family == "Debian"
-
-- name: "KAL — Permitir VRRP/CARP (proto 112) OUTPUT"
-  ansible.posix.iptables:
-    proto: 112
-    jump: ACCEPT
-    chain: OUTPUT
-    out_interface: "{{ item }}"
-  loop:
-    - "{{ nic_int }}"
-    - "{{ nic_fw }}"
-    - lo
-  when: ansible_os_family == "Debian"
-
-- name: "KAL — Hacer reglas iptables permanentes"
-  community.general.debconf:
-    name: iptables-persistent/autosave_v4
-    value: "true"
-    vtype: boolean
+- name: "KAL - Permitir CARP/VRRP (proto 112) en INPUT"
+  ansible.builtin.shell: |
+    sudo iptables -C INPUT -p 112 -j ACCEPT 2>/dev/null || \
+    sudo iptables -I INPUT -p 112 -j ACCEPT
   changed_when: false
   failed_when: false
-  when: ansible_os_family == "Debian"
 
-- name: "KAL — Asegurar que keepalived está corriendo y habilitado"
+- name: "KAL - Permitir CARP/VRRP (proto 112) en OUTPUT"
+  ansible.builtin.shell: |
+    sudo iptables -C OUTPUT -p 112 -j ACCEPT 2>/dev/null || \
+    sudo iptables -I OUTPUT -p 112 -j ACCEPT
+  changed_when: false
+  failed_when: false
+
+- name: "KAL - Hacer reglas iptables permanentes"
+  ansible.builtin.shell: |
+    sudo apt-get install -y iptables-persistent netfilter-persistent 2>/dev/null || true
+    sudo netfilter-persistent save 2>/dev/null || true
+  changed_when: false
+  failed_when: false
+
+- name: "KAL - Asegurar que keepalived esta corriendo y habilitado"
   ansible.builtin.systemd:
     name: keepalived
     state: restarted
     enabled: yes
     daemon_reload: yes
 
-- name: "KAL — Esperar a que el servicio estabilice"
+- name: "KAL - Esperar a que el servicio estabilice"
   ansible.builtin.pause:
     seconds: 5
 
-- name: "KAL — Debug estado"
+- name: "KAL - Debug estado"
   ansible.builtin.debug:
     msg:
       - "Keepalived configurado."
