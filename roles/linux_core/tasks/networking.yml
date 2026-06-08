@@ -45,9 +45,8 @@
     for br in $(ls /sys/class/net/ | grep -E '^br[0-9]+'); do
       path="/sys/class/net/$br/bridge/multicast-snooping"
       if [ -d "/sys/class/net/$br/bridge" ]; then
-        echo 0 > "$path" 2>/dev/null || true
+        echo 0 | sudo tee "$path" > /dev/null 2>&1 || true
       fi
     done
-    echo "net.bridge.bridge-multicast-snooping=0" >> /etc/sysctl.conf 2>/dev/null || true
   changed_when: false
   failed_when: false
