@@ -16,6 +16,7 @@
   ansible.builtin.shell: |
     sudo iptables -C INPUT -p 112 -j ACCEPT 2>/dev/null || \
     sudo iptables -I INPUT -p 112 -j ACCEPT
+    echo "done"
   changed_when: false
   failed_when: false
 
@@ -23,6 +24,7 @@
   ansible.builtin.shell: |
     sudo iptables -C OUTPUT -p 112 -j ACCEPT 2>/dev/null || \
     sudo iptables -I OUTPUT -p 112 -j ACCEPT
+    echo "done"
   changed_when: false
   failed_when: false
 
@@ -30,6 +32,7 @@
   ansible.builtin.shell: |
     sudo apt-get install -y iptables-persistent netfilter-persistent 2>/dev/null || true
     sudo netfilter-persistent save 2>/dev/null || true
+    echo "done"
   changed_when: false
   failed_when: false
 
