@@ -1,7 +1,7 @@
 # ============================================================================
-# Configuración de Netplan para Linux Core ({{ core_id | upper }})
+# Configuracion de Netplan para Linux Core ({{ core_id | upper }})
 # ============================================================================
-# Generado automáticamente por Ansible — NO EDITAR A MANO
+# Generado automaticamente por Ansible — NO EDITAR A MANO
 # ============================================================================
 
 network:
@@ -14,12 +14,17 @@ network:
       dhcp4: no
       addresses:
         - {{ core_unicast_src_ip }}/30
+    {{ nic_trunk2 }}:
+      dhcp4: no
 
   vlans:
 {% for vlan in vlans %}
     v{{ vlan.id }}-fw:
       id: {{ vlan.id }}
       link: {{ nic_fw }}
+    v{{ vlan.id }}-trunk2:
+      id: {{ vlan.id }}
+      link: {{ nic_trunk2 }}
     v{{ vlan.id }}-int:
       id: {{ vlan.id }}
       link: {{ nic_int }}
@@ -30,6 +35,7 @@ network:
     br{{ vlan.id }}:
       interfaces:
         - v{{ vlan.id }}-fw
+        - v{{ vlan.id }}-trunk2
         - v{{ vlan.id }}-int
       addresses:
         - "{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}"

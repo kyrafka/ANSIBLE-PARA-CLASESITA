@@ -22,19 +22,19 @@
     core_state: "MASTER"
     core_priority: 200
     core_ip_suffix: 4
-    
+
     # INTERFACES REALES (Mapeadas de tu ESXi):
-    nic_fw: "ens34"         # Tu Trunk 1 (Hacia pfSense Master)
-    nic_acc: "ens35"        # Tu puerto de Acceso
-    nic_int: "ens36"        # Tu Interlink físico (Cruce directo al Core 2)
-    nic_internet: "ens37"   # Tu Internet momentáneo en Core 1
-    
+    nic_fw: "ens34"         # Trunk 1 (Hacia pfSense Master)
+    nic_acc: "ens35"        # Puerto de Acceso
+    nic_int: "ens36"        # Interlink fisico (Cruce directo al Core 2)
+    nic_internet: "ens37"   # Internet momentaneo en Core 1
+    nic_trunk2: "ens40"     # Trunk 2 (Hacia pfSense Backup) - para HA
+
     # LATIDOS KEEPALIVED (VRRP UNICAST):
-    # Viajan directo por el cable físico ens36 usando tus IPs fijas /30
-    core_unicast_src_ip: "10.0.0.1"   # IP física de este Core 1
-    core_unicast_peer_ip: "10.0.0.2"  # IP física del vecino Core 2
-    
-    # IDENTIDAD OSPF (Router ID estable)
+    core_unicast_src_ip: "10.0.0.1"
+    core_unicast_peer_ip: "10.0.0.2"
+
+    # IDENTIDAD OSPF
     core_router_id: "10.0.0.1"
 
   roles:
