@@ -253,11 +253,42 @@
         mode: "0640"
       notify: "Restart bind9"
 
-    - name: "DNS — Habilitar e iniciar bind9"
+    - name: "DNS — Verificar configuración de named.conf.options"
+      ansible.builtin.shell: |
+        named-checkconf /etc/bind/named.conf.options 2>&1
+        echo "CHECK_EXIT_CODE: $?"
+      changed_when: false
+      register: named_check_opts
+
+    - name: "DNS — Mostrar resultado de verificación options"
+      ansible.builtin.debug:
+        msg: "{{ named_check_opts.stdout }}"
+
+    - name: "DNS — Verificar configuración completa de named.conf"
+      ansible.builtin.shell: |
+        named-checkconf 2>&1
+        echo "CHECK_EXIT_CODE: $?"
+      changed_when: false
+      register: named_check_full
+
+    - name: "DNS — Mostrar resultado de verificación completa"
+      ansible.builtin.debug:
+        msg: "{{ named_check_full.stdout }}"
+
+    - name: "DNS — Habilitar e iniciar bind9 (con manejo de error)"
       ansible.builtin.systemd:
         name: bind9
         state: started
         enabled: yes
+      register: bind9_start
+
+    - name: "DNS — Si bind9 falló, mostrar logs"
+      ansible.builtin.shell: |
+        echo "=== Logs de bind9 ===" && journalctl -u bind9 --no-pager -n 20
+        echo "=== Estado de bind9 ===" && systemctl status bind9 --no-pager
+      changed_when: false
+      failed_when: false
+      when: bind9_start is failed
 
     # =========================================================================
     # 6. KERBEROS - Configurar para que funcione con AD
