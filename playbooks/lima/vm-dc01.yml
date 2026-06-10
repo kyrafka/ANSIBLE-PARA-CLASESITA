@@ -270,8 +270,9 @@
         echo "Prueba DNS:"
         dig @127.0.0.1 google.com +short || echo "DNS falló"
         echo "=========================================="
-      changed_when: false
-`n  handlers:
+changed_when: false
+
+  handlers:
     - name: "Restart bind9"
       ansible.builtin.systemd:
         name: bind9
