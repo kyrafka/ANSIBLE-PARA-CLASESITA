@@ -1,0 +1,182 @@
+---
+# ============================================================================
+# playbooks/lima/vm-dc01_servicios.yml — Solo servicios, sin tocar red
+# ============================================================================
+# Usar este playbook PRIMERO para instalar servicios
+# La red se configura manualmente después si es necesario
+# ============================================================================
+
+- name: "Configura servicios en vm-dc01 — Samba + DNS + DHCP"
+  hosts: vm-dc01
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AJ.local"
+    realm: "AJ.LOCAL"
+    netbios_name: "AJ"
+    domain_pass: "Admin123"
+    server_ip: "192.168.16.10"
+    server_gateway: "192.168.16.1"
+    dns_forwarders:
+      - "8.8.8.8"
+      - "8.8.4.4"
+
+  tasks:
+    # =========================================================================
+    # 1. INSTALAR PAQUETES
+    # =========================================================================
+    - name: "PRE — Actualizar APT"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "PRE — Instalar paquetes"
+      ansible.builtin.apt:
+        name:
+          - samba
+          - bind9
+          - bind9-utils
+          - bind9-doc
+          - isc-dhcp-server
+          - isc-dhcp-common
+          - krb5-user
+          - libpam-krb5
+          - winbind
+          - libpam-winbind
+          - libnss-winbind
+        state: present
+
+    # =========================================================================
+    # 2. CONFIGURAR BIND9 (DNS)
+    # =========================================================================
+    - name: "DNS — Crear configuración named.conf.options"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.options
+        content: |
+          options {
+              directory "/var/cache/bind";
+              forwarders {
+                  8.8.8.8;
+                  8.8.4.4;
+              };
+              dnssec-validation no;
+              auth-nxdomain no;
+              listen-on { any; };
+              allow-query { any; };
+              recursion yes;
+          };
+        owner: root
+        group: bind
+        mode: "0640"
+
+    - name: "DNS — Verificar configuración bind9"
+      ansible.builtin.shell: "named-checkconf 2>&1 || echo 'ERROR_IN_CONFIG'"
+      changed_when: false
+      register: dns_check
+
+    - name: "DNS — Mostrar resultado verificación"
+      ansible.builtin.debug:
+        msg: "{{ dns_check.stdout }}"
+
+    - name: "DNS — Iniciar bind9"
+      ansible.builtin.systemd:
+        name: bind9
+        state: started
+        enabled: yes
+      register: bind9_start
+
+    - name: "DNS — Si falla bind9, mostrar estado"
+      ansible.builtin.shell: "systemctl status bind9 --no-pager -l; journalctl -u bind9 --no-pager -n 30"
+      changed_when: false
+      failed_when: false
+      when: bind9_start is failed
+
+    # =========================================================================
+    # 3. PROVISIONAR SAMBA 4 AD
+    # =========================================================================
+    - name: "SAMBA — Detener servicios"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - smbd
+        - nmbd
+        - winbind
+      failed_when: false
+
+    - name: "SAMBA — Provisionar dominio (si no existe)"
+      ansible.builtin.shell: |
+        samba-tool domain provision \
+          --realm={{ realm }} \
+          --domain={{ domain_name }} \
+          --server-role=dc \
+          --dns-backend=BIND9_DLZ \
+          --adminpass='{{ domain_pass }}' \
+          --use-rfc2307 \
+          --quiet 2>&1
+        echo "SAMBA_PROVISION_DONE:$?"
+      args:
+        creates: /etc/samba/smb.conf
+      register: samba_prov
+
+    - name: "SAMBA — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ samba_prov.stdout }}"
+
+    - name: "SAMBA — Iniciar servicios"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - smbd
+        - nmbd
+        - winbind
+
+    # =========================================================================
+    # 4. CONFIGURAR DHCP
+    # =========================================================================
+    - name: "DHCP — Crear dhcpd.conf básico"
+      ansible.builtin.copy:
+        dest: /etc/dhcp/dhcpd.conf
+        content: |
+          ddns-update-style none;
+          authoritative;
+          log-facility local7;
+
+          subnet 192.168.12.0 netmask 255.255.255.0 {
+              option routers 192.168.12.1;
+              option subnet-mask 255.255.255.0;
+              option domain-name "{{ domain_name }}";
+              option domain-name-servers {{ server_ip }};
+              range 192.168.12.81 192.168.12.200;
+          }
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "DHCP — Configurar interfaces"
+      ansible.builtin.lineinfile:
+        path: /etc/default/isc-dhcp-server
+        regexp: "^INTERFACESv4="
+        line: 'INTERFACESv4="eth0"'
+        state: present
+
+    - name: "DHCP — Iniciar DHCP"
+      ansible.builtin.systemd:
+        name: isc-dhcp-server
+        state: started
+        enabled: yes
+
+    # =========================================================================
+    # 5. VERIFICACIÓN FINAL
+    # =========================================================================
+    - name: "FINAL — Estado de servicios"
+      ansible.builtin.shell: |
+        echo "=== bind9 ===" && systemctl is-active bind9
+        echo "=== smbd ===" && systemctl is-active smbd
+        echo "=== dhcp ===" && systemctl is-active isc-dhcp-server
+        echo "=== DNS test ===" && dig @127.0.0.1 google.com +short || echo "DNS not working"
+      changed_when: false
