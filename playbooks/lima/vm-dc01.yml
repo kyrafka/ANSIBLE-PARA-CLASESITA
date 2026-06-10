@@ -4,9 +4,7 @@
 # ============================================================================
 # VLAN: 60 (gestion)
 # IP: 192.168.16.10/27
-# Dominio: AJ.local
-# Realm: AJ.LOCAL
-# HA: Bonding ens34 + ens35 (active-backup)
+# Dominio: AJ.local | Realm: AJ.LOCAL
 # DHCP: Sirve a VLAN 20 via pfSense DHCP Relay
 # ============================================================================
 
@@ -16,109 +14,28 @@
   gather_facts: true
 
   vars:
-    # Identidad del dominio
     domain_name: "AJ.local"
     realm: "AJ.LOCAL"
     netbios_name: "AJ"
-    domain_pass: "D0mainP@ss2026!"  # Cambiar en producción
-
-    # Interfaces HA (bonding active-backup)
-    # ens34 → pfSense Master (LANT-1)
-    # ens35 → pfSense Backup (LANT-2)
-    bond_name: "bond0"
-    nic_primary: "ens34"
-    nic_secondary: "ens35"
-
-    # Configuración de red
+    domain_pass: "Admin123"
     server_ip: "192.168.16.10"
-    server_mask: "255.255.255.224"    # /27
-    server_gateway: "192.168.16.1"
-    dns_forwarders:
-      - "8.8.8.8"
-      - "8.8.4.4"
-
-    # DNS del dominio (propio + Google)
-    nameservers:
-      - "192.168.16.10"
-      - "8.8.8.8"
-
-    # Configuración DHCP
-    # Todos los pools para VLAN 20 (usuarios) 192.168.12.0/25
-    dhcp_subnets:
-      - name: "usuarios_vlan20"
-        network: "192.168.12.0"
-        netmask: "255.255.255.0"
-        gateway: "192.168.12.1"
-        broadcast: "192.168.12.255"
-        dns_server: "192.168.16.4"
-        domain_name: "{{ domain_name }}"
-        pools:
-          - name: "admins_devs"
-            range_start: "192.168.12.5"
-            range_end: "192.168.12.14"
-            description: "Admins y Devs - acceso total"
-            options:
-              - "option routers 192.168.12.1"
-              - "option subnet-mask 255.255.255.0"
-              - "option domain-name-servers 192.168.16.4"
-
-          - name: "pool_devs"
-            range_start: "192.168.12.15"
-            range_end: "192.168.12.30"
-            description: "Desarrollo"
-            options:
-              - "option routers 192.168.12.1"
-              - "option subnet-mask 255.255.255.0"
-              - "option domain-name-servers 192.168.16.4"
-
-          - name: "pool_rrhh_finanzas"
-            range_start: "192.168.12.31"
-            range_end: "192.168.12.50"
-            description: "RRHH y Finanzas"
-            options:
-              - "option routers 192.168.12.1"
-              - "option subnet-mask 255.255.255.0"
-              - "option domain-name-servers 192.168.16.4"
-
-          - name: "pool_operaciones"
-            range_start: "192.168.12.51"
-            range_end: "192.168.12.80"
-            description: "Operaciones"
-            options:
-              - "option routers 192.168.12.1"
-              - "option subnet-mask 255.255.255.0"
-              - "option domain-name-servers 192.168.16.4"
-
-          - name: "pool_general"
-            range_start: "192.168.12.81"
-            range_end: "192.168.12.200"
-            description: "Usuarios generales"
-            options:
-              - "option routers 192.168.12.1"
-              - "option subnet-mask 255.255.255.0"
-              - "option domain-name-servers 192.168.16.4"
 
   tasks:
     # =========================================================================
-    # 1. PRERREQUISITOS
+    # 1. INSTALAR PAQUETES
     # =========================================================================
     - name: "PRE — Actualizar APT"
       ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: "PRE — Instalar Samba 4, Bind9, ISC-DHCP y dependencias"
+    - name: "PRE — Instalar paquetes"
       ansible.builtin.apt:
         name:
           - samba
           - bind9
           - bind9-utils
-          - bind9-doc
           - isc-dhcp-server
-          - isc-dhcp-common
-          - ntp
-          - ntpdate
-          - dnsutils
           - krb5-user
           - libpam-krb5
           - winbind
@@ -127,9 +44,17 @@
         state: present
 
     # =========================================================================
-    # 2. CONFIGURAR DNS (Bind9)
+    # 2. CONFIGURAR BIND9 (DNS) - REEMPLAZAR archivos completos
     # =========================================================================
-    - name: "DNS — Crear configuración named.conf.options"
+    - name: "DNS — Respaldar y limpiar configuración bind9 anterior"
+      ansible.builtin.shell: |
+        [ -f /etc/bind/named.conf ] && mv /etc/bind/named.conf /etc/bind/named.conf.bak-$(date +%Y%m%d)
+        [ -f /etc/bind/named.conf.options ] && mv /etc/bind/named.conf.options /etc/bind/named.conf.options.bak-$(date +%Y%m%d)
+        [ -f /etc/bind/named.conf.local ] && mv /etc/bind/named.conf.local /etc/bind/named.conf.local.bak-$(date +%Y%m%d)
+        echo "Backup done"
+      changed_when: false
+
+    - name: "DNS — Crear named.conf.options limpio"
       ansible.builtin.copy:
         dest: /etc/bind/named.conf.options
         content: |
@@ -141,60 +66,63 @@
               };
               dnssec-validation no;
               auth-nxdomain no;
-              listen-on { any; };
-              allow-query { any; };
-              recursion yes;
+              listen-on-v6 { any; };
           };
         owner: root
         group: bind
         mode: "0640"
+        force: yes
+
+    - name: "DNS — Crear named.conf.local básico"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          // Zonas locales vacías por ahora
+        owner: root
+        group: bind
+        mode: "0644"
+        force: yes
+
+    - name: "DNS — Crear named.conf principal (sin DLZ aún)"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf
+        content: |
+          // named.conf principal - generado por Ansible
+          include "/etc/bind/named.conf.options";
+          include "/etc/bind/named.conf.local";
+        owner: root
+        group: bind
+        mode: "0644"
+        force: yes
 
     - name: "DNS — Verificar configuración bind9"
-      ansible.builtin.shell: "named-checkconf 2>&1 || echo 'ERROR'"
+      ansible.builtin.shell: "named-checkconf 2>&1; echo 'EXIT_CODE:'$?"
       changed_when: false
       register: dns_check
 
-    - name: "DNS — Mostrar resultado"
+    - name: "DNS — Mostrar resultado verificación"
       ansible.builtin.debug:
-        msg: "{{ dns_check.stdout }}"
+        msg: "{{ dns_check.stdout_lines }}"
 
     - name: "DNS — Iniciar bind9"
       ansible.builtin.systemd:
         name: bind9
         state: started
         enabled: yes
-      register: bind9_start
+      register: bind9_result
 
-    - name: "DNS — Si falla, mostrar estado"
-      ansible.builtin.shell: "systemctl status bind9 --no-pager -l; journalctl -u bind9 --no-pager -n 30"
+    - name: "DNS — Si falla, mostrar error"
+      ansible.builtin.shell: |
+        echo "=== Estado ===" && systemctl status bind9 --no-pager -l
+        echo "=== Logs ===" && journalctl -u bind9 --no-pager -n 30
       changed_when: false
       failed_when: false
-      when: bind9_start is failed
+      when: bind9_result is failed
 
     # =========================================================================
-    # 3. NTP — Sincronización de hora (crítico para Kerberos)
+    # 3. PROVISIONAR SAMBA 4 AD
     # =========================================================================
-    - name: "NTP — Configurar timezone America/Lima"
-      community.general.timezone:
-        name: America/Lima
-
-    - name: "NTP — Instalar y configurar NTP"
-      ansible.builtin.apt:
-        name:
-          - chrony
-        state: present
-
-    - name: "NTP — Configurar chrony"
-      ansible.builtin.template:
-        src: "chrony.conf.j2"
-        dest: /etc/chrony/chrony.conf
-        mode: "0644"
-      notify: "Restart chrony"
-
-    # =========================================================================
-    # 4. SAMBA 4 COMO ACTIVE DIRECTORY DOMAIN CONTROLLER
-    # =========================================================================
-    - name: "SAMBA — Detener servicios existentes antes de provisioning"
+    - name: "SAMBA — Detener servicios existentes"
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
@@ -205,29 +133,34 @@
         - winbind
       failed_when: false
 
-    - name: "SAMBA — Respaldar configuración previa"
-      ansible.builtin.shell: |
-        [ -f /etc/samba/smb.conf ] && cp /etc/samba/smb.conf /etc/samba/smb.conf.bak-$(date +%Y%m%d)
-        echo "Backup done"
-      changed_when: false
-
-    - name: "SAMBA — Provisionar dominio AD (solo si no existe)"
+    - name: "SAMBA — Provisionar dominio AD (si no existe)"
       ansible.builtin.shell: |
         samba-tool domain provision \
-          --server-role=dc \
           --realm={{ realm }} \
           --domain={{ domain_name }} \
-          --netbios-name={{ netbios_name }} \
-          --adminpass='{{ domain_pass }}' \
+          --server-role=dc \
           --dns-backend=BIND9_DLZ \
+          --adminpass='{{ domain_pass }}' \
           --use-rfc2307 \
-          --quiet
-        echo "Domain provisioned"
+          --quiet 2>&1
+        echo "DONE:$?"
       args:
         creates: /etc/samba/smb.conf
-      register: samba_provision
+      register: samba_result
 
-    - name: "SAMBA — Habilitar e iniciar servicios"
+    - name: "SAMBA — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ samba_result.stdout }}"
+
+    - name: "SAMBA — Agregar include DLZ si existe archivo"
+      ansible.builtin.lineinfile:
+        path: /etc/bind/named.conf
+        line: 'include "/var/lib/samba/bind-dns/named.conf";'
+        state: present
+      when: true
+      failed_when: false
+
+    - name: "SAMBA — Iniciar servicios"
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: started
@@ -237,211 +170,82 @@
         - nmbd
         - winbind
 
-# =========================================================================
-    # 5. CONFIGURAR BIND9 (DNS básico - sin DLZ aún)
-    # =========================================================================
-    - name: "DNS — Configurar named.conf.options"
-      ansible.builtin.template:
-        src: "named.conf.options.j2"
-        dest: /etc/bind/named.conf.options
-        owner: root
-        group: bind
-        mode: "0640"
-      notify: "Restart bind9"
-
-    - name: "DNS — Verificar configuración de named.conf.options"
-      ansible.builtin.shell: |
-        named-checkconf /etc/bind/named.conf.options 2>&1
-        echo "CHECK_EXIT_CODE: $?"
+    - name: "SAMBA — Verificar dominio"
+      ansible.builtin.shell: "samba-tool domain info 127.0.0.1 2>&1 || echo 'DOMAIN_NOT_READY'"
       changed_when: false
-      register: named_check_opts
+      register: domain_info
 
-    - name: "DNS — Mostrar resultado de verificación options"
+    - name: "SAMBA — Mostrar info del dominio"
       ansible.builtin.debug:
-        msg: "{{ named_check_opts.stdout }}"
+        msg: "{{ domain_info.stdout }}"
 
-    - name: "DNS — Verificar configuración completa de named.conf"
+    # =========================================================================
+    # 4. CONFIGURAR DHCP
+    # =========================================================================
+    - name: "DHCP — Respaldar configuración anterior"
       ansible.builtin.shell: |
-        named-checkconf 2>&1
-        echo "CHECK_EXIT_CODE: $?"
+        [ -f /etc/dhcp/dhcpd.conf ] && mv /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.bak-$(date +%Y%m%d)
+        echo "Backup done"
       changed_when: false
-      register: named_check_full
 
-    - name: "DNS — Mostrar resultado de verificación completa"
-      ansible.builtin.debug:
-        msg: "{{ named_check_full.stdout }}"
-
-    - name: "DNS — Habilitar e iniciar bind9 (con manejo de error)"
-      ansible.builtin.systemd:
-        name: bind9
-        state: started
-        enabled: yes
-      register: bind9_start
-
-    - name: "DNS — Si bind9 falló, mostrar logs"
-      ansible.builtin.shell: |
-        echo "=== Logs de bind9 ===" && journalctl -u bind9 --no-pager -n 20
-        echo "=== Estado de bind9 ===" && systemctl status bind9 --no-pager
-      changed_when: false
-      failed_when: false
-      when: bind9_start is failed
-
-    # =========================================================================
-    # 6. KERBEROS - Configurar para que funcione con AD
-    # =========================================================================
-    - name: "KERBEROS — Configurar krb5.conf"
-      ansible.builtin.template:
-        src: "krb5.conf.j2"
-        dest: /etc/krb5.conf
-        owner: root
-        group: root
-        mode: "0644"
-      notify: "Restart winbind"
-
-    # =========================================================================
-    # 7. CONFIGURAR DHCP SERVER CON POOLS POR ROL
-    # =========================================================================
-    - name: "DHCP — Detener DHCP antes de configurar"
-      ansible.builtin.systemd:
-        name: isc-dhcp-server
-        state: stopped
-
-    - name: "DHCP — Configurar dhcpd.conf con pools por rol"
-      ansible.builtin.template:
-        src: "dhcpd.conf.j2"
+    - name: "DHCP — Crear dhcpd.conf básico"
+      ansible.builtin.copy:
         dest: /etc/dhcp/dhcpd.conf
+        content: |
+          ddns-update-style none;
+          authoritative;
+          log-facility local7;
+
+          option domain-name "{{ domain_name }}";
+          option domain-name-servers {{ server_ip }};
+
+          subnet 192.168.12.0 netmask 255.255.255.0 {
+              option routers 192.168.12.1;
+              option subnet-mask 255.255.255.0;
+              option broadcast-address 192.168.12.255;
+              option domain-name-servers {{ server_ip }};
+              range 192.168.12.81 192.168.12.200;
+          }
         owner: root
         group: root
         mode: "0644"
         force: yes
-      notify: "Restart dhcpd"
 
-    - name: "DHCP — Configurar interfaces de escucha (solo VLAN 60)"
-      ansible.builtin.lineinfile:
-        path: /etc/default/isc-dhcp-server
-        regexp: "^INTERFACESv4="
-        line: 'INTERFACESv4="eth0"'
-        state: present
+    - name: "DHCP — Configurar interfaces"
+      ansible.builtin.copy:
+        dest: /etc/default/isc-dhcp-server
+        content: |
+          INTERFACESv4="eth0"
+        force: yes
 
-    - name: "DHCP — Habilitar e iniciar"
+    - name: "DHCP — Iniciar DHCP"
       ansible.builtin.systemd:
         name: isc-dhcp-server
         state: started
         enabled: yes
+      register: dhcp_result
 
-    # =========================================================================
-    # 8. USUARIOS Y GRUPOS INICIALES DEL DOMINIO
-    # =========================================================================
-    - name: "AD — Crear grupos por rol"
+    - name: "DHCP — Si falla, mostrar error"
       ansible.builtin.shell: |
-        samba-tool group add "{{ item.name }}" --description="{{ item.description }}" 2>/dev/null || echo "Group may exist"
-      loop:
-        - { name: "Domain Admins", description: "Administradores del dominio" }
-        - { name: "Domain Users", description: "Usuarios del dominio" }
-        - { name: "Domain Computers", description: "Equipos del dominio" }
-        - { name: "GG_Devs", description: "Grupo de Desarrollo" }
-        - { name: "GG_RRHH", description: "Grupo de RRHH y Finanzas" }
-        - { name: "GG_Operaciones", description: "Grupo de Operaciones" }
-        - { name: "GG_Gerencia", description: "Grupo de Gerencia" }
-      register: ad_groups
+        systemctl status isc-dhcp-server --no-pager -l
+        journalctl -u isc-dhcp-server --no-pager -n 20
+      changed_when: false
+      failed_when: false
+      when: dhcp_result is failed
 
-    - name: "AD — Crear usuario administrador inicial"
+    # =========================================================================
+    # 5. VERIFICACIÓN FINAL
+    # =========================================================================
+    - name: "FINAL — Estado de servicios"
       ansible.builtin.shell: |
-        samba-tool user create admin '{{ domain_pass }}' \
-          --given-name="Administrator" \
-          --surname="Admin" \
-          --description="Administrator del dominio" \
-          2>/dev/null || echo "User may exist"
-        samba-tool group addmembers "Domain Admins" admin 2>/dev/null || echo "Already member"
-        echo "Admin user created"
-      register: ad_admin_user
-
-    # =========================================================================
-    # 9. CUIDADOS FINALES
-    # =========================================================================
-    - name: "FINAL — Verificar que Samba está corriendo"
-      ansible.builtin.command: "smbstatus --version"
+        echo "=========================================="
+        echo "Estado de bind9:     $(systemctl is-active bind9)"
+        echo "Estado de smbd:      $(systemctl is-active smbd)"
+        echo "Estado de nmbd:      $(systemctl is-active nmbd)"
+        echo "Estado de winbind:   $(systemctl is-active winbind)"
+        echo "Estado de DHCP:      $(systemctl is-active isc-dhcp-server)"
+        echo "=========================================="
+        echo "Prueba DNS:"
+        dig @127.0.0.1 google.com +short || echo "DNS falló"
+        echo "=========================================="
       changed_when: false
-      register: smb_version
-
-    - name: "FINAL — Verificar DNS"
-      ansible.builtin.command: "host -t SRV _kerberos._tcp.{{ domain_name }}"
-      changed_when: false
-      register: dns_check
-      failed_when: false
-
-    - name: "FINAL — Probar Kerberos"
-      ansible.builtin.command: "kinit -k -t /var/lib/samba/private/secrets.keytab HOST/dc01.{{ domain_name }}"
-      changed_when: false
-      register: kinit_check
-      failed_when: false
-
-    - name: "FINAL — Mostrar resumen"
-      ansible.builtin.debug:
-        msg:
-          - "=============================================="
-          - "vm-dc01 configurado exitosamente!"
-          - "=============================================="
-          - "Dominio: {{ domain_name }}"
-          - "Realm: {{ realm }}"
-          - "IP: {{ server_ip }}/27"
-          - "Gateway: {{ server_gateway }}"
-          - "=============================================="
-          - "Servicios activos:"
-          - "  - Samba AD DC: $(systemctl is-active smbd)"
-          - "  - Bind9 DNS: $(systemctl is-active bind9)"
-          - "  - ISC-DHCP: $(systemctl is-active isc-dhcp-server)"
-          - "  - Chrony NTP: $(systemctl is-active chrony)"
-          - "=============================================="
-          - "POOLs DHCP configurados:"
-          - "  - admins_devs: 192.168.12.5-14"
-          - "  - pool_devs: 192.168.12.15-30"
-          - "  - pool_rrhh_finanzas: 192.168.12.31-50"
-          - "  - pool_operaciones: 192.168.12.51-80"
-          - "  - pool_general: 192.168.12.81-200"
-          - "=============================================="
-
-    # =========================================================================
-    # 9. INICIAR SERVICIOS AL FINAL (después de Samba provisioning)
-    # =========================================================================
-    - name: "FINAL — Iniciar Bind9 DNS (después de Samba)"
-      ansible.builtin.systemd:
-        name: bind9
-        state: started
-        enabled: yes
-
-    - name: "FINAL — Verificar si archivo DLZ existe (luego de provisioning)"
-      ansible.builtin.stat:
-        path: /var/lib/samba/bind-dns/named.conf
-      register: dlz_file_check
-
-    - name: "FINAL — Agregar include DLZ solo si existe"
-      ansible.builtin.lineinfile:
-        path: /etc/bind/named.conf
-        line: 'include "/var/lib/samba/bind-dns/named.conf";'
-        state: present
-      when: dlz_file_check.stat.exists
-      notify: "Restart bind9"
-
-  handlers:
-    - name: "Restart bind9"
-      ansible.builtin.systemd:
-        name: bind9
-        state: restarted
-
-    - name: "Restart dhcpd"
-      ansible.builtin.systemd:
-        name: isc-dhcp-server
-        state: restarted
-
-    - name: "Restart chrony"
-      ansible.builtin.systemd:
-        name: chrony
-        state: restarted
-
-    - name: "Restart winbind"
-      ansible.builtin.systemd:
-        name: winbind
-        state: restarted
-
-  # Handlers removed: Restart networking (not used anymore)
