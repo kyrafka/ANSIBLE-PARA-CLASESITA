@@ -32,7 +32,7 @@ iface {{ nic_secondary }} inet manual
 # =============================================================================
 auto {{ bond_name }}
 iface {{ bond_name }} inet static
-    address {{ server_ip }}/{{ server_mask | ansible.netaddr.prefix2len if server_mask | ansible.netaddr.is_netmask else '27' }}
+    address {{ server_ip }}/27
     gateway {{ server_gateway }}
 
     # Configuración del bond
