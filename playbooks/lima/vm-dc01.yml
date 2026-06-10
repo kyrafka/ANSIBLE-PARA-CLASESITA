@@ -158,11 +158,11 @@
         mode: "0644"
         force: yes
 
-    - name: "DHCP — Configurar interfaces"
+    - name: "DHCP — Configurar interfaces (bond0 si existe, sino todas)"
       ansible.builtin.copy:
         dest: /etc/default/isc-dhcp-server
         content: |
-          INTERFACESv4="eth0"
+          INTERFACESv4="bond0"
         force: yes
 
     - name: "DHCP — Iniciar"
