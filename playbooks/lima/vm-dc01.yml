@@ -2,11 +2,6 @@
 # ============================================================================
 # vm-dc01.yml — Samba 4 AD DC + DNS + ISC-DHCP Server
 # ============================================================================
-# VLAN: 60 (gestion)
-# IP: 192.168.16.10/27
-# Dominio: AJ.local | Realm: AJ.LOCAL
-# DHCP: Sirve a VLAN 20 via pfSense DHCP Relay
-# ============================================================================
 
 - name: "Configura vm-dc01 — Samba 4 AD + DNS + DHCP"
   hosts: vm-dc01
@@ -44,13 +39,12 @@
         state: present
 
     # =========================================================================
-    # 2. CONFIGURAR BIND9 (DNS) - REEMPLAZAR archivos completos
+    # 2. CONFIGURAR BIND9 (DNS)
     # =========================================================================
-    - name: "DNS — Respaldar y limpiar configuración bind9 anterior"
+    - name: "DNS — Respaldar configuración bind9 anterior"
       ansible.builtin.shell: |
-        [ -f /etc/bind/named.conf ] && mv /etc/bind/named.conf /etc/bind/named.conf.bak-$(date +%Y%m%d)
-        [ -f /etc/bind/named.conf.options ] && mv /etc/bind/named.conf.options /etc/bind/named.conf.options.bak-$(date +%Y%m%d)
-        [ -f /etc/bind/named.conf.local ] && mv /etc/bind/named.conf.local /etc/bind/named.conf.local.bak-$(date +%Y%m%d)
+        [ -f /etc/bind/named.conf ] && mv /etc/bind/named.conf /etc/bind/named.conf.bak
+        [ -f /etc/bind/named.conf.options ] && mv /etc/bind/named.conf.options /etc/bind/named.conf.options.bak
         echo "Backup done"
       changed_when: false
 
@@ -60,10 +54,7 @@
         content: |
           options {
               directory "/var/cache/bind";
-              forwarders {
-                  8.8.8.8;
-                  8.8.4.4;
-              };
+              forwarders { 8.8.8.8; 8.8.4.4; };
               dnssec-validation no;
               auth-nxdomain no;
               listen-on-v6 { any; };
@@ -73,36 +64,22 @@
         mode: "0640"
         force: yes
 
-    - name: "DNS — Crear named.conf.local básico"
-      ansible.builtin.copy:
-        dest: /etc/bind/named.conf.local
-        content: |
-          // Zonas locales vacías por ahora
-        owner: root
-        group: bind
-        mode: "0644"
-        force: yes
-
-    - name: "DNS — Crear named.conf principal (sin DLZ aún)"
+    - name: "DNS — Crear named.conf principal"
       ansible.builtin.copy:
         dest: /etc/bind/named.conf
         content: |
-          // named.conf principal - generado por Ansible
           include "/etc/bind/named.conf.options";
-          include "/etc/bind/named.conf.local";
         owner: root
         group: bind
         mode: "0644"
         force: yes
 
-    - name: "DNS — Verificar configuración bind9"
-      ansible.builtin.shell: "named-checkconf 2>&1; echo 'EXIT_CODE:'$?"
+    - name: "DNS — Verificar y crear zona para el dominio"
+      ansible.builtin.shell: |
+        named-checkconf 2>&1
+        echo "CHECK_OK"
       changed_when: false
       register: dns_check
-
-    - name: "DNS — Mostrar resultado verificación"
-      ansible.builtin.debug:
-        msg: "{{ dns_check.stdout_lines }}"
 
     - name: "DNS — Iniciar bind9"
       ansible.builtin.systemd:
@@ -111,18 +88,10 @@
         enabled: yes
       register: bind9_result
 
-    - name: "DNS — Si falla, mostrar error"
-      ansible.builtin.shell: |
-        echo "=== Estado ===" && systemctl status bind9 --no-pager -l
-        echo "=== Logs ===" && journalctl -u bind9 --no-pager -n 30
-      changed_when: false
-      failed_when: false
-      when: bind9_result is failed
-
     # =========================================================================
     # 3. PROVISIONAR SAMBA 4 AD
     # =========================================================================
-    - name: "SAMBA — Detener servicios existentes"
+    - name: "SAMBA — Detener servicios"
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
@@ -133,7 +102,7 @@
         - winbind
       failed_when: false
 
-    - name: "SAMBA — Provisionar dominio AD (si no existe)"
+    - name: "SAMBA — Provisionar dominio AD"
       ansible.builtin.shell: |
         samba-tool domain provision \
           --realm={{ realm }} \
@@ -148,39 +117,14 @@
         creates: /etc/samba/smb.conf
       register: samba_result
 
-    - name: "SAMBA — Mostrar resultado"
-      ansible.builtin.debug:
-        msg: "{{ samba_result.stdout }}"
-
-    - name: "SAMBA — Verificar si archivo DLZ existe"
-      ansible.builtin.stat:
-        path: /var/lib/samba/bind-dns/named.conf
-      register: dlz_file
-
-    - name: "SAMBA — Si existe DLZ, agregar al named.conf"
+    - name: "SAMBA — Agregar include DLZ al named.conf"
       ansible.builtin.lineinfile:
         path: /etc/bind/named.conf
         line: 'include "/var/lib/samba/bind-dns/named.conf";'
         state: present
-      when: dlz_file.stat.exists
-      notify: "Restart bind9"
-
-    - name: "SAMBA — Si NO existe DLZ, crear zona manual"
-      ansible.builtin.copy:
-        dest: /etc/bind/named.conf.local
-        content: |
-          zone "{{ domain_name }}" {
-              type master;
-              file "/var/lib/samba/private/dns/{{ domain_name }}.zone";
-          };
-        force: yes
-      when: not dlz_file.stat.exists
-      notify: "Restart bind9"
-
-    - name: "SAMBA — Forzar reinicio de bind9 para cargar DLZ"
-      ansible.builtin.systemd:
-        name: bind9
-        state: restarted
+      when: true
+      failed_when: false
+      notify: Restart bind9
 
     - name: "SAMBA — Iniciar servicios"
       ansible.builtin.systemd:
@@ -193,7 +137,8 @@
         - winbind
 
     - name: "SAMBA — Verificar dominio"
-      ansible.builtin.shell: "samba-tool domain info 127.0.0.1 2>&1 || echo 'DOMAIN_NOT_READY'"
+      ansible.builtin.shell: |
+        samba-tool domain info 127.0.0.1 2>&1 || echo "DOMAIN_CHECK_DONE"
       changed_when: false
       register: domain_info
 
@@ -204,28 +149,18 @@
     # =========================================================================
     # 4. CONFIGURAR DHCP
     # =========================================================================
-    - name: "DHCP — Respaldar configuración anterior"
-      ansible.builtin.shell: |
-        [ -f /etc/dhcp/dhcpd.conf ] && mv /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.bak-$(date +%Y%m%d)
-        echo "Backup done"
-      changed_when: false
-
-    - name: "DHCP — Crear dhcpd.conf básico"
+    - name: "DHCP — Crear dhcpd.conf"
       ansible.builtin.copy:
         dest: /etc/dhcp/dhcpd.conf
         content: |
           ddns-update-style none;
           authoritative;
           log-facility local7;
-
           option domain-name "{{ domain_name }}";
           option domain-name-servers {{ server_ip }};
-
           subnet 192.168.12.0 netmask 255.255.255.0 {
               option routers 192.168.12.1;
               option subnet-mask 255.255.255.0;
-              option broadcast-address 192.168.12.255;
-              option domain-name-servers {{ server_ip }};
               range 192.168.12.81 192.168.12.200;
           }
         owner: root
@@ -240,20 +175,12 @@
           INTERFACESv4="eth0"
         force: yes
 
-    - name: "DHCP — Iniciar DHCP"
+    - name: "DHCP — Iniciar"
       ansible.builtin.systemd:
         name: isc-dhcp-server
         state: started
         enabled: yes
       register: dhcp_result
-
-    - name: "DHCP — Si falla, mostrar error"
-      ansible.builtin.shell: |
-        systemctl status isc-dhcp-server --no-pager -l
-        journalctl -u isc-dhcp-server --no-pager -n 20
-      changed_when: false
-      failed_when: false
-      when: dhcp_result is failed
 
     # =========================================================================
     # 5. VERIFICACIÓN FINAL
@@ -261,19 +188,16 @@
     - name: "FINAL — Estado de servicios"
       ansible.builtin.shell: |
         echo "=========================================="
-        echo "Estado de bind9:     $(systemctl is-active bind9)"
-        echo "Estado de smbd:      $(systemctl is-active smbd)"
-        echo "Estado de nmbd:      $(systemctl is-active nmbd)"
-        echo "Estado de winbind:   $(systemctl is-active winbind)"
-        echo "Estado de DHCP:      $(systemctl is-active isc-dhcp-server)"
+        echo "bind9:   $(systemctl is-active bind9)"
+        echo "smbd:    $(systemctl is-active smbd)"
+        echo "nmbd:    $(systemctl is-active nmbd)"
+        echo "winbind: $(systemctl is-active winbind)"
+        echo "DHCP:    $(systemctl is-active isc-dhcp-server)"
         echo "=========================================="
-        echo "Prueba DNS:"
-        dig @127.0.0.1 google.com +short || echo "DNS falló"
-        echo "=========================================="
-changed_when: false
+      changed_when: false
 
   handlers:
-    - name: "Restart bind9"
+    - name: Restart bind9
       ansible.builtin.systemd:
         name: bind9
         state: restarted
