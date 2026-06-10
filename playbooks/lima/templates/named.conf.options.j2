@@ -1,0 +1,41 @@
+// named.conf.options — Bind9 DNS Server
+// Configurado para funcionar con Samba 4 AD DLZ
+
+options {
+    directory "/var/cache/bind";
+
+    // Reenviadores hacia afuera (Google DNS)
+    forwarders {
+        {{ dns_forwarders[0] }};
+        {{ dns_forwarders[1] }};
+    };
+
+    // Seguridad
+    dnssec-validation no;
+    auth-nxdomain no;
+
+    // Escuchar en todas las interfaces
+    listen-on { any; };
+
+    // Permitir consultas de la red local
+    allow-query {
+        192.168.0.0/16;
+        127.0.0.1;
+    };
+
+    // Permitir transferencia de zonas (solo hacia otros DCs si existieran)
+    allow-transfer {
+        none;
+    };
+
+    // Recursión
+    recursion yes;
+
+    // Log
+    querylog yes;
+    log-channel {
+        syslog local3;
+        category queries { log_channel; };
+        category default { log_channel; };
+    };
+};

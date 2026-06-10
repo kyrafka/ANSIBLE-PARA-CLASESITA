@@ -1,0 +1,26 @@
+---
+# ============================================================================
+# playbooks/site.yml — Playbook maestro para toda la infraestructura
+# ============================================================================
+# Ejecutar toda la infraestructura por sede:
+#   ansible-playbook playbooks/site.yml --tags lima
+#   ansible-playbook playbooks/site.yml --tags arequipa
+#   ansible-playbook playbooks/site.yml --tags trujillo
+#   ansible-playbook playbooks/site.yml --tags all
+# ============================================================================
+
+- name: "Infraestructura Lima (Sede Maestra — HA)"
+  import_playbook: lima/00_core_ha.yml
+  tags: [lima, all]
+
+- name: "Servicios Lima (Samba AD, DNS, DHCP, Web)"
+  import_playbook: lima/01_services.yml
+  tags: [lima, services, all]
+
+- name: "Infraestructura Arequipa (Sede Remota)"
+  import_playbook: arequipa/00_sede_base.yml
+  tags: [arequipa, all]
+
+- name: "Infraestructura Trujillo (Sede Remota)"
+  import_playbook: trujillo/00_sede_base.yml
+  tags: [trujillo, all]

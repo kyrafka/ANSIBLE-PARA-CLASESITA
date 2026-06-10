@@ -1,0 +1,37 @@
+---
+# sede_remota/tasks/dhcp.yml — DHCP server local para sede remota
+# ============================================================================
+# Cada sede tiene su propio DHCP server para sus VLANs locales
+# Los rangos y subnets están definidos en group_vars/arequipa.yml o trujillo.yml
+# ============================================================================
+
+- name: "DHCP — Instalar ISC DHCP server"
+  ansible.builtin.apt:
+    name:
+      - isc-dhcp-server
+    state: present
+
+- name: "DHCP — Configurar DHCP para las VLANs de la sede"
+  ansible.builtin.template:
+    src: "dhcpd.conf.j2"
+    dest: "{{ dhcp_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: yes
+    backup: yes
+  notify: Restart dhcpd
+
+- name: "DHCP — Configurar interfaz listen del DHCP"
+  ansible.builtin.lineinfile:
+    path: /etc/default/isc-dhcp-server
+    regexp: "^INTERFACESv4="
+    line: 'INTERFACESv4="{{ dhcp_interfaces }}"'
+    state: present
+
+- name: "DHCP — Habilitar e iniciar servicio"
+  ansible.builtin.systemd:
+    name: isc-dhcp-server
+    state: started
+    enabled: yes
+  failed_when: false

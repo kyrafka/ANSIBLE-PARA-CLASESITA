@@ -1,0 +1,84 @@
+---
+# sede_remota/tasks/networking.yml — netplan, bridges, VLANs para sede remota
+# ============================================================================
+# Sede remota sin HA: single core con bridges por VLAN
+# WAN: DHCP o estática del ISP
+# LAN: trunk hacia switches de acceso con bridges por VLAN
+# ============================================================================
+
+- name: "NET — Backup netplan previa"
+  ansible.builtin.copy:
+    src: "{{ netplan_config_file }}"
+    dest: "{{ netplan_config_file }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+    remote_src: yes
+    force: no
+  ignore_errors: yes
+
+- name: "NET — Renderizar netplan para sede remota"
+  ansible.builtin.template:
+    src: "netplan.yaml.j2"
+    dest: "{{ netplan_config_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: yes
+    backup: yes
+
+- name: "NET — Generar y aplicar netplan"
+  ansible.builtin.command: "netplan generate"
+  changed_when: true
+  register: _netplan_gen
+  failed_when: _netplan_gen.rc != 0
+
+- name: "NET — Aplicar netplan"
+  ansible.builtin.command: "netplan apply"
+  changed_when: true
+  register: _netplan_apply
+  failed_when: _netplan_apply.rc != 0
+
+- name: "NET — Asegurar systemd-networkd corriendo"
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: restarted
+    enabled: yes
+
+- name: "NET — Desactivar multicast-snooping en bridges"
+  ansible.builtin.shell: |
+    for f in /sys/class/net/br*/bridge/multicast_snooping; do
+      echo 0 | sudo tee "$f" > /dev/null 2>&1 || true
+    done
+  changed_when: false
+  failed_when: false
+
+- name: "NET — NAT para salida a internet"
+  ansible.builtin.iptables:
+    table: nat
+    chain: POSTROUTING
+    out_interface: "{{ nic_wan }}"
+    jump: MASQUERADE
+    state: present
+  ignore_errors: yes
+
+- name: "NET — Permitir forwarding entre LAN bridges y WAN"
+  ansible.builtin.iptables:
+    chain: FORWARD
+    in_interface: "{{ nic_lan }}"
+    out_interface: "{{ nic_wan }}"
+    jump: ACCEPT
+    state: present
+  ignore_errors: yes
+
+- name: "NET — Permitir tráfico establecidos"
+  ansible.builtin.iptables:
+    chain: FORWARD
+    ct_state: ESTABLISHED,RELATED
+    jump: ACCEPT
+    state: present
+  ignore_errors: yes
+
+- name: "NET — Guardar reglas iptables"
+  ansible.builtin.shell: |
+    iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+    echo "done"
+  changed_when: false
+  failed_when: false

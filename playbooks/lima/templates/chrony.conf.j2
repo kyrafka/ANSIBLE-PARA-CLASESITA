@@ -1,0 +1,23 @@
+# chrony.conf — Servidor NTP para el dominio
+# Asegura que la hora esté sincronizada (crítico para Kerberos)
+
+# Servidores NTP públicos
+server 0.pool.ntp.org iburst
+server 1.pool.ntp.org iburst
+server 2.pool.ntp.org iburst
+server 3.pool.ntp.org iburst
+
+# Permitir clientes de la red local
+allow 192.168.0.0/16
+
+# Escuchar en todas las interfaces
+bindaddress 0.0.0.0
+
+# Drift file
+driftfile /var/lib/chrony/chrony.drift
+
+# Log
+log tracking measurements
+
+# Correcciones stepwise en lugar de slewing
+makestep 1.0 3

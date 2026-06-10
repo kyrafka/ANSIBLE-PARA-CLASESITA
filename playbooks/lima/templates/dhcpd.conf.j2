@@ -1,0 +1,129 @@
+# =============================================================================
+# dhcpd.conf — ISC DHCP Server con pools por rol
+# Dominio: {{ domain_name }}
+# Servidor: {{ server_ip }}
+# =============================================================================
+
+ddns-update-style none;
+authoritative;
+log-facility local7;
+
+# Opciones globales
+option domain-name "{{ domain_name }}";
+option domain-name-servers {{ server_ip }};
+
+# =============================================================================
+# SUBNET: 192.168.12.0/24 (VLAN 20 - Usuarios)
+# Gateway: 192.168.12.1
+# =============================================================================
+subnet 192.168.12.0 netmask 255.255.255.0 {
+
+    option routers 192.168.12.1;
+    option subnet-mask 255.255.255.0;
+    option broadcast-address 192.168.12.255;
+    option domain-name-servers {{ server_ip }};
+
+    # -------------------------------------------------------------------
+    # POOL 1: admins_devs (Reservado)
+    # Rango: 192.168.12.5 - 192.168.12.14 (10 IPs)
+    # Para: Administradores, Devs, personal técnico con acceso total
+    # -------------------------------------------------------------------
+    pool {
+        range 192.168.12.5 192.168.12.14;
+
+        # Clases dinámicas para separar pools
+        allow members of "admins_devs";
+
+        option routers 192.168.12.1;
+        option subnet-mask 255.255.255.0;
+        option domain-name-servers {{ server_ip }};
+    }
+
+    # -------------------------------------------------------------------
+    # POOL 2: pool_devs
+    # Rango: 192.168.12.15 - 192.168.12.30 (16 IPs)
+    # Para: Departamento de Desarrollo
+    # -------------------------------------------------------------------
+    pool {
+        range 192.168.12.15 192.168.12.30;
+
+        allow members of "pool_devs";
+
+        option routers 192.168.12.1;
+        option subnet-mask 255.255.255.0;
+        option domain-name-servers {{ server_ip }};
+    }
+
+    # -------------------------------------------------------------------
+    # POOL 3: pool_rrhh_finanzas
+    # Rango: 192.168.12.31 - 192.168.12.50 (20 IPs)
+    # Para: RRHH, Finanzas, Contabilidad
+    # -------------------------------------------------------------------
+    pool {
+        range 192.168.12.31 192.168.12.50;
+
+        allow members of "pool_rrhh";
+
+        option routers 192.168.12.1;
+        option subnet-mask 255.255.255.0;
+        option domain-name-servers {{ server_ip }};
+    }
+
+    # -------------------------------------------------------------------
+    # POOL 4: pool_operaciones
+    # Rango: 192.168.12.51 - 192.168.12.80 (30 IPs)
+    # Para: Operaciones, Logística, Soporte técnico
+    # -------------------------------------------------------------------
+    pool {
+        range 192.168.12.51 192.168.12.80;
+
+        allow members of "pool_operaciones";
+
+        option routers 192.168.12.1;
+        option subnet-mask 255.255.255.0;
+        option domain-name-servers {{ server_ip }};
+    }
+
+    # -------------------------------------------------------------------
+    # POOL 5: pool_general (DEFAULT)
+    # Rango: 192.168.12.81 - 192.168.12.200 (120 IPs)
+    # Para: Usuarios generales, invitados, dispositivos varios
+    # -------------------------------------------------------------------
+    pool {
+        range 192.168.12.81 192.168.12.200;
+
+        deny members of "admins_devs";
+        deny members of "pool_devs";
+        deny members of "pool_rrhh";
+        deny members of "pool_operaciones";
+
+        option routers 192.168.12.1;
+        option subnet-mask 255.255.255.0;
+        option domain-name-servers {{ server_ip }};
+    }
+}
+
+# =============================================================================
+# RESERVAS ESTÁTICAS POR MAC (para servers y equipos fijos)
+# =============================================================================
+# Formato:
+# host nombre-equipo {
+#     hardware ethernet XX:XX:XX:XX:XX:XX;
+#     fixed-address YYY.YYY.YYY.YYY;
+# }
+
+# Ejemplo (descomentar y editar):
+# host vm-services01 {
+#     hardware ethernet 00:0c:29:aa:bb:cc;
+#     fixed-address 192.168.30.11;
+# }
+
+# host vm-web01 {
+#     hardware ethernet 00:0c:29:dd:ee:ff;
+#     fixed-address 192.168.11.11;
+# }
+
+# host vm-monitor01 {
+#     hardware ethernet 00:0c:29:11:22:33;
+#     fixed-address 192.168.17.11;
+# }

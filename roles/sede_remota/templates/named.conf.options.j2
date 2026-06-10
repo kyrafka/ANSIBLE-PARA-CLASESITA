@@ -1,0 +1,21 @@
+// ============================================================================
+// Bind9 Options — Sede {{ sede | upper }}
+// ============================================================================
+// Generado automáticamente por Ansible
+// ============================================================================
+
+options {
+    directory "/var/cache/bind";
+
+    forwarders {
+{% for dns in dns_forwarders %}
+        {{ dns }};
+{% endfor %}
+    };
+
+    dnssec-validation no;
+    auth-nxdomain no;
+    listen-on { any; };
+    allow-query { any; };
+    recursion yes;
+};

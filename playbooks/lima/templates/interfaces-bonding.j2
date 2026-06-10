@@ -1,0 +1,48 @@
+# =============================================================================
+# /etc/network/interfaces — Bonding HA para vm-dc01
+# =============================================================================
+# ens34 → pfSense Master (LANT-1)
+# ens35 → pfSense Backup (LANT-2)
+# bond0 → IP flotante 192.168.16.10/27
+# Mode: active-backup ( failover automático )
+# =============================================================================
+
+# Loopback
+auto lo
+iface lo inet loopback
+
+# =============================================================================
+# Interfaz primaria - Slave del bond
+# =============================================================================
+auto {{ nic_primary }}
+iface {{ nic_primary }} inet manual
+    bond-master bond0
+    bond-mode active-backup
+
+# =============================================================================
+# Interfaz secundaria - Slave del bond
+# =============================================================================
+auto {{ nic_secondary }}
+iface {{ nic_secondary }} inet manual
+    bond-master bond0
+    bond-mode active-backup
+
+# =============================================================================
+# Bond0 - Interface lógica con IP
+# =============================================================================
+auto {{ bond_name }}
+iface {{ bond_name }} inet static
+    address {{ server_ip }}/{{ server_mask | ansible.netaddr.prefix2len if server_mask | ansible.netaddr.is_netmask else '27' }}
+    gateway {{ server_gateway }}
+
+    # Configuración del bond
+    bond-mode active-backup
+    bond-slaves {{ nic_primary }} {{ nic_secondary }}
+    bond-miimon 100
+    bond-downdelay 200
+    bond-updelay 200
+
+    # DNS
+    dns-nameserver {{ server_ip }}
+    dns-nameserver {{ dns_forwarders[0] }}
+    dns-search {{ domain_name }}

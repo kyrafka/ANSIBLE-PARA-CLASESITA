@@ -1,0 +1,66 @@
+---
+# ============================================================================
+# group_vars/arequipa.yml — Variables específicas de la sede Arequipa
+# ============================================================================
+
+sede: "arequipa"
+sede_id: 2
+site_code: "AQP"
+
+# --- Interfaces del Core de Arequipa ---
+core_interfaces:
+  nic_wan: "ens34"        # WAN hacia ISP (pública / DHCP del proveedor)
+  nic_lan: "ens35"        # LAN interna (trunk con switches de acceso)
+
+# --- IP WAN (DHCP o estática del ISP) ---
+wan_ip_type: "dhcp"       # o "static" si es IP fija
+# wan_ip_static: "203.0.113.10/29"
+# wan_gateway: "203.0.113.9"
+
+# --- VLANs de Arequipa (Subnets propios) ---
+vlans_arequipa:
+  - id: 20
+    name: "usuarios"
+    subnet: "192.168.82.0/25"
+    gateway: "192.168.82.1"
+    dhcp_range_start: "192.168.82.50"
+    dhcp_range_end: "192.168.82.200"
+    dns_servers: ["192.168.16.4", "8.8.8.8"]
+    vrid: 20
+  - id: 60
+    name: "gestion"
+    subnet: "192.168.87.0/27"
+    gateway: "192.168.87.1"
+    dhcp_range_start: "192.168.87.10"
+    dhcp_range_end: "192.168.87.20"
+    dns_servers: ["192.168.16.4", "8.8.8.8"]
+    vrid: 60
+
+# --- IP del Core en cada VLAN ---
+core_vlan_ips:
+  - vlan: 20
+    ip: "192.168.82.2/25"
+  - vlan: 60
+    ip: "192.168.87.2/27"
+
+# --- VPN hacia Lima ---
+vpn_client:
+  enabled: true
+  server_public_ip: "{{ hostvars['lima-vpn']['public_ip'] | default('IP_PUBLICA_LIMA') }}"
+  local_subnet: "192.168.82.0/25,192.168.87.0/27"
+  remote_subnet: "192.168.0.0/16"
+  protocol: "wireguard"   # wireguard o strongswan
+  
+# --- DNS Forwarder ---
+dns_forwarders:
+  - "192.168.16.4"        # DNS Master en Lima
+  - "8.8.8.8"             # Google DNS (fallback)
+
+# --- Rutas estáticas hacia Lima (via VPN) ---
+static_routes:
+  - dest: "192.168.11.0/27"     # Web/DMZ en Lima
+    via: "vpn_tunnel"
+  - dest: "192.168.16.0/27"     # AD/Gestión en Lima
+    via: "vpn_tunnel"
+  - dest: "192.168.17.0/27"     # Monitoreo en Lima
+    via: "vpn_tunnel"

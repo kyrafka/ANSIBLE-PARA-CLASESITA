@@ -1,0 +1,57 @@
+---
+# sede_remota/tasks/dns.yml — DNS forwarder hacia Lima
+# ============================================================================
+# bind9 como DNS forwarder: resuelve lo que pueda localmente y reenvía
+# el resto a los DNS de Lima (192.168.16.4) y fallback (8.8.8.8)
+# ============================================================================
+
+- name: "DNS — Instalar bind9"
+  ansible.builtin.apt:
+    name:
+      - bind9
+      - bind9utils
+      - bind9-doc
+    state: present
+
+- name: "DNS — Configurar opciones de bind9 (forwarders)"
+  ansible.builtin.template:
+    src: "named.conf.options.j2"
+    dest: "{{ bind_config_file }}"
+    owner: root
+    group: bind
+    mode: "0640"
+    force: yes
+    backup: yes
+  notify: Restart named
+
+- name: "DNS — Configurar zonas locales (forward para AJ.local)"
+  ansible.builtin.template:
+    src: "named.conf.local.j2"
+    dest: "{{ bind_local_zones_file }}"
+    owner: root
+    group: bind
+    mode: "0640"
+    force: yes
+    backup: yes
+  notify: Restart named
+
+- name: "DNS — Habilitar e iniciar bind9"
+  ansible.builtin.systemd:
+    name: bind9
+    state: started
+    enabled: yes
+  failed_when: false
+
+- name: "DNS — Configurar resolv.conf con DNS de Lima"
+  ansible.builtin.lineinfile:
+    path: /etc/resolvconf/resolv.conf.d/head
+    line: "nameserver {{ dns_forwarders[0] }}"
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: "DNS — Regenerar resolv.conf"
+  ansible.builtin.shell: |
+   resolvconf -u 2>/dev/null || true
+    echo "nameserver {{ dns_forwarders[0] }}" > /etc/resolv.conf
+  changed_when: false
+  failed_when: false

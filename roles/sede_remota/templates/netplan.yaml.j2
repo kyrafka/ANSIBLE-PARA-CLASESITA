@@ -1,0 +1,38 @@
+# ============================================================================
+# Netplan para sede remota ({{ sede | upper }}) — Single core
+# ============================================================================
+# Generado automáticamente por Ansible — NO EDITAR A MANO
+# ============================================================================
+
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {{ nic_wan }}:
+      dhcp4: {{ wan_ip_type == 'dhcp' }}
+{% if wan_ip_type == 'static' %}
+      addresses:
+        - {{ wan_ip_static }}
+      gateway4: {{ wan_gateway }}
+{% endif %}
+    {{ nic_lan }}:
+      dhcp4: no
+
+  vlans:
+{% for vlan in sede_vlans %}
+    vlan{{ vlan.id }}:
+      id: {{ vlan.id }}
+      link: {{ nic_lan }}
+{% endfor %}
+
+  bridges:
+{% for vlan in sede_vlans %}
+    br{{ vlan.id }}:
+      interfaces:
+        - vlan{{ vlan.id }}
+      addresses:
+        - "{{ vlan.gateway | regex_replace('1$', '2') }}/{{ vlan.subnet | ansible.netaddr.network | ansible.netaddr.prefix2len }}"
+      parameters:
+        stp: true
+        forward-delay: 0
+{% endfor %}

@@ -1,0 +1,28 @@
+[libdefaults]
+    default_realm = {{ realm }}
+    dns_lookup_realm = true
+    dns_lookup_kdc = true
+    ticket_lifetime = 24h
+    renew_lifetime = 7d
+    forwardable = true
+    rdns = false
+
+[realms]
+    {{ realm }} = {
+        kdc = dc01.{{ domain_name }}
+        admin_server = dc01.{{ domain_name }}
+        default_domain = {{ domain_name }}
+    }
+
+[domain_realm]
+    .{{ domain_name | lower }} = {{ realm }}
+    {{ domain_name | lower }} = {{ realm }}
+
+[appdefaults]
+    pam = {
+        debug = false
+        ticket_lifetime = 36000
+        renew_lifetime = 36000
+        forwardable = true
+        krb4_convert = false
+    }

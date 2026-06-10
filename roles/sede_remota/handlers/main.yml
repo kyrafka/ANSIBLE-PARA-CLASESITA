@@ -1,0 +1,25 @@
+---
+# sede_remota/handlers/main.yml
+- name: "Restart networking"
+  ansible.builtin.systemd:
+    name: systemd-networkd
+    state: restarted
+
+- name: "Restart dhcpd"
+  ansible.builtin.systemd:
+    name: isc-dhcp-server
+    state: restarted
+
+- name: "Restart named"
+  ansible.builtin.systemd:
+    name: bind9
+    state: restarted
+
+- name: "Restart wireguard"
+  ansible.builtin.systemd:
+    name: wg-quick@wg0
+    state: restarted
+
+- name: "Reload sysctl"
+  ansible.builtin.command: "sysctl -p"
+  changed_when: true

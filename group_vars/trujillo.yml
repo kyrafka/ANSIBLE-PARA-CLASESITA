@@ -1,0 +1,50 @@
+---
+# ============================================================================
+# group_vars/trujillo.yml — Variables específicas de la sede Trujillo
+# ============================================================================
+
+sede: "trujillo"
+sede_id: 3
+site_code: "TRU"
+
+# --- Interfaces del Core de Trujillo ---
+core_interfaces:
+  nic_wan: "ens34"        # WAN hacia ISP
+  nic_lan: "ens35"        # LAN interna
+
+# --- IP WAN (DHCP o estática del ISP) ---
+wan_ip_type: "dhcp"
+
+# --- VLANs de Trujillo (Subnets propios) ---
+vlans_trujillo:
+  - id: 20
+    name: "usuarios"
+    subnet: "192.168.92.0/25"
+    gateway: "192.168.92.1"
+    dhcp_range_start: "192.168.92.50"
+    dhcp_range_end: "192.168.92.200"
+    dns_servers: ["192.168.16.4", "8.8.8.8"]
+    vrid: 20
+  - id: 60
+    name: "gestion"
+    subnet: "192.168.97.0/27"
+    gateway: "192.168.97.1"
+    dhcp_range_start: "192.168.97.10"
+    dhcp_range_end: "192.168.97.20"
+    dns_servers: ["192.168.16.4", "8.8.8.8"]
+    vrid: 60
+
+# --- IP del Core en cada VLAN ---
+core_vlan_ips:
+  - vlan: 20
+    ip: "192.168.92.2/25"
+  - vlan: 60
+    ip: "192.168.97.2/27"
+
+# --- VPN hacia Lima ---
+vpn_client:
+  enabled: true
+  server_public_ip: "{{ hostvars['lima-vpn']['public_ip'] | default('IP_PUBLICA_LIMA') }}"
+
+# --- DNS Forwarder ---
+dns_forwarders: ["192.168.16.4", "8.8.8.8"]

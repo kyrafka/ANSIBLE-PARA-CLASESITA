@@ -1,0 +1,57 @@
+---
+# ============================================================================
+# playbooks/trujillo/00_sede_base.yml — Core de distribución Trujillo
+# ============================================================================
+# - Single core (sin HA) con bridges por VLAN
+# - DHCP server local para VLANs 20 y 60
+# - DNS forwarder hacia Lima
+# - VPN WireGuard client hacia Lima
+# ============================================================================
+
+- name: "Configura Trujillo — Sede Remota con DHCP local y VPN"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    sede: "trujillo"
+    site_code: "TRU"
+    sede_id: 3
+
+    nic_wan: "ens34"
+    nic_lan: "ens35"
+    wan_ip_type: "dhcp"
+
+    # VLANs propias de Trujillo
+    sede_vlans:
+      - id: 20
+        name: "usuarios"
+        subnet: "192.168.92.0/25"
+        gateway: "192.168.92.1"
+        dhcp_range_start: "192.168.92.50"
+        dhcp_range_end: "192.168.92.200"
+      - id: 60
+        name: "gestion"
+        subnet: "192.168.97.0/27"
+        gateway: "192.168.97.1"
+        dhcp_range_start: "192.168.97.10"
+        dhcp_range_end: "192.168.97.20"
+
+    # DNS
+    dns_master: "192.168.16.4"
+    dns_forwarders:
+      - "192.168.16.4"
+      - "8.8.8.8"
+
+    # VPN WireGuard hacia Lima
+    vpn_local_ip: "10.200.1.2/30"
+    vpn_server_public_ip: "IP_PUBLICA_LIMA"
+    vpn_server_public_key: "SERVER_PUBLIC_KEY"
+    vpn_port: 51820
+
+    # Interfaz DHCP escucha
+    dhcp_interfaces: "br20 br60"
+
+  roles:
+    - sede_remota

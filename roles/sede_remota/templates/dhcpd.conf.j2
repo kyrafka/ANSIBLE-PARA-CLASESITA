@@ -1,0 +1,19 @@
+# ============================================================================
+# ISC DHCP Server — Sede {{ sede | upper }}
+# ============================================================================
+# Generado automáticamente por Ansible
+# ============================================================================
+
+ddns-update-style none;
+authoritative;
+log-facility local7;
+
+{% for vlan in sede_vlans %}
+subnet {{ vlan.subnet | ansible.netaddr.network }} netmask {{ vlan.subnet | ansible.netaddr.netmask }} {
+    option routers {{ vlan.gateway }};
+    option subnet-mask {{ vlan.subnet | ansible.netaddr.netmask }};
+    option domain-name "{{ domain_name }}";
+    option domain-name-servers {{ dns_forwarders | join(', ') }};
+    range {{ vlan.dhcp_range_start }} {{ vlan.dhcp_range_end }};
+}
+{% endfor %}

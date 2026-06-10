@@ -1,0 +1,44 @@
+---
+# ============================================================================
+# playbooks/common/00_prerequisites.yml — Paquetes comunes para todos los servers
+# ============================================================================
+
+- name: "Common — Prerrequisitos para todos los servidores Ubuntu"
+  hosts: all
+  become: true
+  gather_facts: true
+  tags: [common, prerequisites]
+
+  tasks:
+    - name: "Actualizar cache APT"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      changed_when: false
+
+    - name: "Instalar paquetes comunes"
+      ansible.builtin.apt:
+        name:
+          - vim
+          - htop
+          - net-tools
+          - curl
+          - wget
+          - git
+          - unzip
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+
+    - name: "Configurar timezone"
+      community.general.timezone:
+        name: America/Lima
+      when: ansible_os_family == "Debian"
+
+    - name: "Desactivar IPv6"
+      ansible.builtin.sysctl:
+        name: net.ipv6.conf.all.disable_ipv6
+        value: "1"
+        state: present
+      when: ansible_os_family == "Debian"

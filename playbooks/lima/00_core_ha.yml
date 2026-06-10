@@ -1,0 +1,62 @@
+---
+# ============================================================================
+# playbooks/lima/00_core_ha.yml — Core 1 y Core 2 en HA (Keepalived + OSPF)
+# ============================================================================
+# Lima: 2 cores en configuración Master/Backup con VRRP unicast y OSPF
+# ============================================================================
+
+- name: "Configura Core 1 — MASTER Keepalived"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - ../../vars/main.yml
+
+  vars:
+    core_id: "core1"
+    core_state: "MASTER"
+    core_priority: 200
+    core_ip_suffix: 4
+
+    nic_fw: "ens34"
+    nic_acc: "ens35"
+    nic_int: "ens36"
+    nic_internet: "ens37"
+    nic_trunk2: "ens40"
+
+    core_unicast_src_ip: "10.0.0.1"
+    core_unicast_peer_ip: "10.0.0.2"
+    core_router_id: "10.0.0.1"
+
+  roles:
+    - linux_core
+
+- name: "Configura Core 2 — BACKUP Keepalived"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - ../../vars/main.yml
+
+  vars:
+    core_id: "core2"
+    core_state: "BACKUP"
+    core_priority: 100
+    core_ip_suffix: 5
+
+    nic_fw: "ens34"
+    nic_acc: "ens35"
+    nic_int: "ens36"
+    nic_internet: "ens39"
+    nic_trunk2: "ens40"
+
+    core_unicast_src_ip: "10.0.0.2"
+    core_unicast_peer_ip: "10.0.0.1"
+    core_router_id: "10.0.0.2"
+
+  roles:
+    - linux_core

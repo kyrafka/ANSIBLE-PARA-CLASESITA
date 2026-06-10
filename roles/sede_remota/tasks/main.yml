@@ -1,0 +1,30 @@
+---
+# sede_remota/tasks/main.yml — Orquestador principal del role
+# ============================================================================
+# Ejecuta en orden:
+#   1. Prerrequisitos (paquetes, kernel, sysctl)
+#   2. Redes (netplan, bridges, VLANs)
+#   3. DHCP server local
+#   4. DNS forwarder
+#   5. VPN client hacia Lima
+# ============================================================================
+
+- name: "=====> Sede Remota — Prerrequisitos"
+  ansible.builtin.import_tasks: prerequisites.yml
+  tags: [prerequisites, all]
+
+- name: "=====> Sede Remota — Configuración de redes"
+  ansible.builtin.import_tasks: networking.yml
+  tags: [networking, netplan, all]
+
+- name: "=====> Sede Remota — DHCP server local"
+  ansible.builtin.import_tasks: dhcp.yml
+  tags: [dhcp, all]
+
+- name: "=====> Sede Remota — DNS forwarder"
+  ansible.builtin.import_tasks: dns.yml
+  tags: [dns, all]
+
+- name: "=====> Sede Remota — VPN client"
+  ansible.builtin.import_tasks: vpn_client.yml
+  tags: [vpn, all]

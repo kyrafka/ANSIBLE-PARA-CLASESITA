@@ -1,0 +1,35 @@
+---
+# ============================================================================
+# playbooks/lima/01_services.yml — Servicios centrales en Lima
+# ============================================================================
+#vm-services01: Samba AD + DNS + DHCP (ya existe, manual vm-dc01)
+#vm-web01: Nginx + Proxy inverso
+#vm-monitor01: Zabbix + Grafana
+# ============================================================================
+
+- name: "Servicios Lima — Samba AD (vm-services01)"
+  hosts: vm-services01
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: samba_ad
+      tags: [samba, lima, services]
+
+- name: "Servicios Lima — Web (vm-web01)"
+  hosts: vm-web01
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: nginx_reverse_proxy
+      tags: [nginx, web, lima, services]
+
+- name: "Servicios Lima — Monitoreo (vm-monitor01)"
+  hosts: vm-monitor01
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: zabbix_server
+      tags: [zabbix, monitoreo, lima, services]

@@ -1,0 +1,42 @@
+---
+# sede_remota/defaults/main.yml — Valores por defecto del role
+# ---------------------------------------------------------------------------
+
+# Nombres de interfaces por defecto
+nic_wan: "ens34"
+nic_lan: "ens35"
+
+# Configuración de netplan
+netplan_config_file: "/etc/netplan/50-cloud-init.yaml"
+
+# Paquetes requeridos
+required_packages:
+  - bridge-utils
+  - vlan
+  - frr
+  - netplan.io
+  - iptables-persistent
+  - isc-dhcp-server
+  - bind9
+  - bind9utils
+  - bind9-doc
+  - wireguard
+  - wireguard-tools
+  - openresolv
+  - tcpdump
+  - curl
+  - vim
+
+# DHCP
+dhcp_config_file: "/etc/dhcp/dhcpd.conf"
+
+# DNS
+bind_config_file: "/etc/bind/named.conf.options"
+bind_local_zones_file: "/etc/bind/named.conf.local"
+
+# VPN
+vpn_config_dir: "/etc/wireguard"
+vpn_interface: "wg0"
+
+# Firewall
+iptables_persistent_file: "/etc/iptables/rules.v4"

@@ -1,0 +1,17 @@
+// ============================================================================
+// Bind9 Local Zones — Sede {{ sede | upper }}
+// ============================================================================
+// Forward zones hacia el DNS master en Lima
+// ============================================================================
+
+zone "{{ domain_name }}" {
+    type forward;
+    forward only;
+    forwarders { {{ dns_master }}; };
+};
+
+zone "{{ site_code | lower }}.{{ domain_name }}" {
+    type forward;
+    forward only;
+    forwarders { {{ dns_master }}; };
+};

@@ -1,0 +1,57 @@
+---
+# sede_remota/tasks/vpn_client.yml — WireGuard VPN client hacia Lima
+# ============================================================================
+# Connect each remote site to Lima via WireGuard tunnel
+# ============================================================================
+
+- name: "VPN — Instalar wireguard"
+  ansible.builtin.apt:
+    name:
+      - wireguard
+      - wireguard-tools
+      - openresolv
+    state: present
+
+- name: "VPN — Generar claves WireGuard (si no existen)"
+  community.general.wireguard_key_pair:
+    dest_pub_key_file: "/etc/wireguard/wg0.pub"
+    dest_priv_key_file: "/etc/wireguard/wg0.conf"
+  ignore_errors: yes
+
+- name: "VPN — Crear directorio wireguard"
+  ansible.builtin.file:
+    path: "{{ vpn_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: "VPN — Renderizar configuración wg0.conf"
+  ansible.builtin.template:
+    src: "wg0.conf.j2"
+    dest: "{{ vpn_config_dir }}/wg0.conf"
+    owner: root
+    group: root
+    mode: "0600"
+    force: yes
+    backup: yes
+  notify: Restart wireguard
+
+- name: "VPN — Activar IP forwarding para tunnel"
+  ansible.builtin.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    state: present
+
+- name: "VPN — Habilitar y arrancar wg0"
+  ansible.builtin.systemd:
+    name: wg-quick@wg0
+    state: started
+    enabled: yes
+  failed_when: false
+
+- name: "VPN — Verificar estado del túnel"
+  ansible.builtin.command: "wg show"
+  changed_when: false
+  register: wg_status
+  failed_when: false

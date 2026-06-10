@@ -1,0 +1,16 @@
+# ============================================================================
+# WireGuard VPN — Cliente sede {{ sede | upper }} hacia Lima
+# ============================================================================
+# Generado automáticamente por Ansible
+# ============================================================================
+
+[Interface]
+Address = {{ vpn_local_ip | default('10.200.0.2/30') }}
+PrivateKey = {{ vpn_local_private_key }}
+DNS = {{ dns_master }}
+
+[Peer]
+PublicKey = {{ vpn_server_public_key }}
+Endpoint = {{ vpn_server_public_ip }}:{{ vpn_port | default(51820) }}
+AllowedIPs = {{ vpn_allowed_ips | default('192.168.0.0/16,10.0.0.0/8') }}
+PersistentKeepalive = 25

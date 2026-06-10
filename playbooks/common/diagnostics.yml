@@ -1,0 +1,91 @@
+---
+# ============================================================================
+# playbooks/common/diagnostics.yml — Verificación de estado de la red
+# ============================================================================
+# Tags: [network, dhcp, dns, vpn, all]
+# ============================================================================
+
+- name: "Diagnósticos — Verificar configuración de red"
+  hosts: "{{ target_sites | default('all') }}"
+  become: true
+  gather_facts: true
+  tags: [network, diagnostics]
+
+  tasks:
+    - name: "Interfaces activas"
+      ansible.builtin.command: "ip -br a"
+      changed_when: false
+      register: _ip_br
+
+    - name: "Bridges configurados"
+      ansible.builtin.command: "bridge link show"
+      changed_when: false
+      register: _bridges
+      failed_when: false
+
+    - name: "Rutas IP"
+      ansible.builtin.command: "ip route show"
+      changed_when: false
+      register: _routes
+
+    - name: "Mostrar resultados"
+      ansible.builtin.debug:
+        msg:
+          - "=== IP Addresses ==="
+          - "{{ _ip_br.stdout }}"
+          - "=== Bridges ==="
+          - "{{ _bridges.stdout | default('N/A') }}"
+          - "=== Routes ==="
+          - "{{ _routes.stdout }}"
+
+- name: "Diagnósticos — Verificar DHCP"
+  hosts: "{{ target_sites | default('all') }}"
+  become: true
+  tags: [dhcp, diagnostics]
+
+  tasks:
+    - name: "Estado DHCP server"
+      ansible.builtin.systemd:
+        name: isc-dhcp-server
+      register: _dhcp_status
+      failed_when: false
+
+    - name: "Logs DHCP recientes"
+      ansible.builtin.command: "journalctl -u isc-dhcp-server --no-pager -n 20"
+      changed_when: false
+      failed_when: false
+
+- name: "Diagnósticos — Verificar DNS"
+  hosts: "{{ target_sites | default('all') }}"
+  become: true
+  tags: [dns, diagnostics]
+
+  tasks:
+    - name: "Estado bind9"
+      ansible.builtin.systemd:
+        name: bind9
+      register: _bind_status
+      failed_when: false
+
+    - name: "Test resolución"
+      ansible.builtin.command: "dig @127.0.0.1 google.com +short"
+      changed_when: false
+      register: _dig_test
+      failed_when: false
+
+- name: "Diagnósticos — Verificar VPN"
+  hosts: "{{ target_sites | default('all') }}"
+  become: true
+  tags: [vpn, diagnostics]
+
+  tasks:
+    - name: "Estado WireGuard"
+      ansible.builtin.command: "wg show"
+      changed_when: false
+      register: _wg_status
+      failed_when: false
+
+    - name: "Tunnels activos"
+      ansible.builtin.command: "ip tunnel show"
+      changed_when: false
+      failed_when: false

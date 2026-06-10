@@ -1,0 +1,66 @@
+---
+# ============================================================================
+# group_vars/all.yml — Variables globales compartidas entre todas las sedes
+# ============================================================================
+# Ubuntu 24 Server con Netplan
+# ============================================================================
+
+# --- DNS central en Lima ---
+dns_master: "192.168.16.4"
+dns_backup: "192.168.16.5"
+
+# --- Dominio corporativo ---
+domain_name: "AJ.local"
+
+# --- Servicios centrales en Lima ---
+lima_services:
+  web: "192.168.11.11"
+  samba_ad: "192.168.16.4"
+  zabbix: "192.168.17.11"
+  ntp: "192.168.16.4"
+
+# --- VLANs corporativas (definición base) ---
+corporate_vlans:
+  - id: 10
+    name: "dmz"
+    description: "Web servers publicly accessible"
+  - id: 20
+    name: "usuarios"
+    description: "End user workstations and devices"
+  - id: 21
+    name: "administracion"
+    description: "Administrative staff network"
+  - id: 30
+    name: "virtualizacion"
+    description: "Virtualization infrastructure"
+  - id: 40
+    name: "storage"
+    description: "Storage network and backups"
+  - id: 50
+    name: "voip"
+    description: "Voice over IP / PBX"
+  - id: 60
+    name: "gestion"
+    description: "Management and monitoring"
+  - id: 70
+    name: "monitoreo"
+    description: "Monitoring and alerting systems"
+  - id: 999
+    name: "ha_sync"
+    description: "High Availability synchronization"
+
+# --- Puerto VPN ---
+vpn_port: 51820
+
+# --- Paquetes comunes en todas las sedes ---
+common_packages:
+  - vim
+  - htop
+  - net-tools
+  - bridge-utils
+  - vlan
+  - netplan.io
+  - dnsutils
+  - tcpdump
+  - curl
+  - wget
