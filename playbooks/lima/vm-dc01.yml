@@ -237,7 +237,6 @@
         state: started
         enabled: yes
       loop:
-        - samba
         - smbd
         - nmbd
         - winbind
@@ -370,7 +369,7 @@
           - "Gateway: {{ server_gateway }}"
           - "=============================================="
           - "Servicios activos:"
-          - "  - Samba AD DC: $(systemctl is-active samba)"
+          - "  - Samba AD DC: $(systemctl is-active smbd)"
           - "  - Bind9 DNS: $(systemctl is-active bind9)"
           - "  - ISC-DHCP: $(systemctl is-active isc-dhcp-server)"
           - "  - Chrony NTP: $(systemctl is-active chrony)"
