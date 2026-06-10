@@ -62,10 +62,10 @@
         state: started
         enabled: yes
       loop:
-        - samba
         - smbd
         - nmbd
         - winbind
+        - bind9
 
     - name: "VERIFICAR que el dominio existe"
       ansible.builtin.shell: |
