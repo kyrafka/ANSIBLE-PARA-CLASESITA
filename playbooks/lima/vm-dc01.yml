@@ -111,7 +111,6 @@
       ansible.builtin.apt:
         name:
           - samba
-          - samba-vampire-quirk
           - bind9
           - bind9-utils
           - bind9-doc
