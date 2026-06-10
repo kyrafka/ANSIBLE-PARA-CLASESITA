@@ -30,12 +30,4 @@ options {
 
     // Recursión
     recursion yes;
-
-    // Log
-    querylog yes;
-    log-channel {
-        syslog local3;
-        category queries { log_channel; };
-        category default { log_channel; };
-    };
 };
