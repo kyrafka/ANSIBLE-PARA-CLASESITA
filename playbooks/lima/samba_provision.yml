@@ -1,0 +1,91 @@
+---
+# ============================================================================
+# playbooks/lima/samba_provision.yml — Re-provisionar Samba 4 AD Domain Controller
+# ============================================================================
+# Usa este playbook si el dominio no se creó correctamente
+# ============================================================================
+
+- name: "Re-provisionar Samba 4 AD"
+  hosts: vm-dc01
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AJ.local"
+    realm: "AJ.LOCAL"
+    netbios_name: "AJ"
+    domain_pass: "Admin123"
+
+  tasks:
+    - name: "DETENER servicios Samba antes de re-provisionar"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - samba
+        - smbd
+        - nmbd
+        - winbind
+      failed_when: false
+
+    - name: "RESPALDAR configuración anterior"
+      ansible.builtin.shell: |
+        [ -f /etc/samba/smb.conf ] && mv /etc/samba/smb.conf /etc/samba/smb.conf.bak-$(date +%Y%m%d%H%M%S)
+        rm -rf /var/lib/samba/bind-dns 2>/dev/null || true
+        rm -rf /var/lib/samba/private 2>/dev/null || true
+        echo "Backup done"
+      changed_when: false
+
+    - name: "PROVISIONAR dominio AD"
+      ansible.builtin.shell: |
+        samba-tool domain provision \
+          --realm={{ realm }} \
+          --domain={{ domain_name }} \
+          --server-role=dc \
+          --dns-backend=BIND9_DLZ \
+          --adminpass='{{ domain_pass }}' \
+          --use-rfc2307 \
+          --quiet 2>&1
+        echo "PROVISION_DONE"
+      args:
+        creates: /etc/samba/smb.conf
+      register: provision_result
+
+    - name: "MOSTRAR resultado de provisión"
+      ansible.builtin.debug:
+        msg: "{{ provision_result.stdout_lines }}"
+
+    - name: "INICIAR servicios Samba"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - samba
+        - smbd
+        - nmbd
+        - winbind
+
+    - name: "VERIFICAR que el dominio existe"
+      ansible.builtin.shell: |
+        samba-tool domain info 127.0.0.1
+      register: domain_info
+
+    - name: "MOSTRAR información del dominio"
+      ansible.builtin.debug:
+        msg: "{{ domain_info.stdout }}"
+
+    - name: "INICIAR bind9"
+      ansible.builtin.systemd:
+        name: bind9
+        state: started
+        enabled: yes
+
+    - name: "VERIFICAR servicios"
+      ansible.builtin.shell: |
+        echo "=== Estado de servicios ===" && \
+        systemctl is-active samba bind9 isc-dhcp-server && \
+        echo "=== DNS test ===" && \
+        host google.com 127.0.0.1
+      changed_when: false
