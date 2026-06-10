@@ -127,53 +127,49 @@
         state: present
 
     # =========================================================================
-    # 2. CONFIGURACIÓN DE RED CON BONDING (HA)
+    # 2. CONFIGURAR DNS (Bind9)
     # =========================================================================
-    - name: "NET — Crear archivo de configuración de bonding"
-      ansible.builtin.lineinfile:
-        path: /etc/modules
-        line: "bonding"
-        state: present
+    - name: "DNS — Crear configuración named.conf.options"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.options
+        content: |
+          options {
+              directory "/var/cache/bind";
+              forwarders {
+                  8.8.8.8;
+                  8.8.4.4;
+              };
+              dnssec-validation no;
+              auth-nxdomain no;
+              listen-on { any; };
+              allow-query { any; };
+              recursion yes;
+          };
+        owner: root
+        group: bind
+        mode: "0640"
+
+    - name: "DNS — Verificar configuración bind9"
+      ansible.builtin.shell: "named-checkconf 2>&1 || echo 'ERROR'"
       changed_when: false
+      register: dns_check
 
-    - name: "NET — Detener NetworkManager (si existe)"
+    - name: "DNS — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ dns_check.stdout }}"
+
+    - name: "DNS — Iniciar bind9"
       ansible.builtin.systemd:
-        name: NetworkManager
-        state: stopped
-        enabled: no
-      failed_when: false
+        name: bind9
+        state: started
+        enabled: yes
+      register: bind9_start
 
-    - name: "NET — Configurar interfaces ens34 y ens35 como slaves del bond"
-      ansible.builtin.template:
-        src: "interfaces-bonding.j2"
-        dest: /etc/network/interfaces
-        mode: "0644"
-        force: yes
-      notify: "Restart networking"
-
-    - name: "NET — Configurar resolv.conf"
-      ansible.builtin.lineinfile:
-        path: /etc/resolv.conf
-        regexp: "^domain|^search|^nameserver"
-        state: absent
+    - name: "DNS — Si falla, mostrar estado"
+      ansible.builtin.shell: "systemctl status bind9 --no-pager -l; journalctl -u bind9 --no-pager -n 30"
       changed_when: false
-
-    - name: "NET — Establecer search domain y nameserver"
-      ansible.builtin.blockinfile:
-        path: /etc/resolv.conf
-        block: |
-          search {{ domain_name }}
-          nameserver {{ server_ip }}
-          nameserver {{ dns_forwarders[0] }}
-        marker: "# {mark} Ansible managed"
-        state: present
-
-    - name: "NET — Desactivar systemd-resolved"
-      ansible.builtin.systemd:
-        name: systemd-resolved
-        state: stopped
-        enabled: no
       failed_when: false
+      when: bind9_start is failed
 
     # =========================================================================
     # 3. NTP — Sincronización de hora (crítico para Kerberos)
@@ -448,10 +444,4 @@
         name: winbind
         state: restarted
 
-    - name: "Restart networking"
-      ansible.builtin.shell: |
-        ifdown --force {{ nic_primary }} 2>/dev/null || true
-        ifdown --force {{ nic_secondary }} 2>/dev/null || true
-        ifup {{ bond_name }}
-        echo "Networking restarted"
-      changed_when: true
+  # Handlers removed: Restart networking (not used anymore)
