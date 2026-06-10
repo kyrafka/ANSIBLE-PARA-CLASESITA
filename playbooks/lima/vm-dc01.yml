@@ -152,13 +152,35 @@
       ansible.builtin.debug:
         msg: "{{ samba_result.stdout }}"
 
-    - name: "SAMBA — Agregar include DLZ si existe archivo"
+    - name: "SAMBA — Verificar si archivo DLZ existe"
+      ansible.builtin.stat:
+        path: /var/lib/samba/bind-dns/named.conf
+      register: dlz_file
+
+    - name: "SAMBA — Si existe DLZ, agregar al named.conf"
       ansible.builtin.lineinfile:
         path: /etc/bind/named.conf
         line: 'include "/var/lib/samba/bind-dns/named.conf";'
         state: present
-      when: true
-      failed_when: false
+      when: dlz_file.stat.exists
+      notify: "Restart bind9"
+
+    - name: "SAMBA — Si NO existe DLZ, crear zona manual"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          zone "{{ domain_name }}" {
+              type master;
+              file "/var/lib/samba/private/dns/{{ domain_name }}.zone";
+          };
+        force: yes
+      when: not dlz_file.stat.exists
+      notify: "Restart bind9"
+
+    - name: "SAMBA — Forzar reinicio de bind9 para cargar DLZ"
+      ansible.builtin.systemd:
+        name: bind9
+        state: restarted
 
     - name: "SAMBA — Iniciar servicios"
       ansible.builtin.systemd:
@@ -249,3 +271,8 @@
         dig @127.0.0.1 google.com +short || echo "DNS falló"
         echo "=========================================="
       changed_when: false
+`n  handlers:
+    - name: "Restart bind9"
+      ansible.builtin.systemd:
+        name: bind9
+        state: restarted
