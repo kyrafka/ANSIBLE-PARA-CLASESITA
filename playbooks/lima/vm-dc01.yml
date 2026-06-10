@@ -254,18 +254,19 @@
         mode: "0640"
       notify: "Restart bind9"
 
-    - name: "DNS — Configurar named.conf para Samba DLZ"
+    - name: "DNS — Verificar si archivo DLZ de Samba existe"
+      ansible.builtin.stat:
+        path: /var/lib/samba/bind-dns/named.conf
+      register: samba_dlz_check
+
+    - name: "DNS — Configurar named.conf para Samba DLZ (solo si existe archivo)"
       ansible.builtin.lineinfile:
         path: /etc/bind/named.conf
         line: 'include "/var/lib/samba/bind-dns/named.conf";'
         state: present
-      when: ansible_os_family == "Debian"
-
-    - name: "DNS — Habilitar e iniciar bind9"
-      ansible.builtin.systemd:
-        name: bind9
-        state: started
-        enabled: yes
+      when:
+        - ansible_os_family == "Debian"
+        - samba_dlz_check.stat.exists
 
     # =========================================================================
     # 6. KERBEROS - Configurar para que funcione con AD
@@ -381,6 +382,23 @@
           - "  - pool_operaciones: 192.168.12.51-80"
           - "  - pool_general: 192.168.12.81-200"
           - "=============================================="
+
+    # =========================================================================
+    # 9. INICIAR SERVICIOS AL FINAL (después de Samba provisioning)
+    # =========================================================================
+    - name: "FINAL — Iniciar Bind9 DNS (después de Samba)"
+      ansible.builtin.systemd:
+        name: bind9
+        state: started
+        enabled: yes
+
+    - name: "FINAL — Verificar archivo DLZ y agregar include si existe"
+      ansible.builtin.lineinfile:
+        path: /etc/bind/named.conf
+        line: 'include "/var/lib/samba/bind-dns/named.conf";'
+        state: present
+      when: samba_dlz_check.stat.exists
+      notify: "Restart bind9"
 
   handlers:
     - name: "Restart bind9"
