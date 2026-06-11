@@ -14,7 +14,69 @@
     server_ip: "192.168.16.10"
 
   tasks:
-    # 1. INSTALAR PAQUETES
+    # 1. CONFIGURAR RED (BONDING CON NETPLAN)
+    - name: "NET — Detener NetworkManager si existe"
+      ansible.builtin.systemd:
+        name: NetworkManager
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: "NET — Respaldar configuración netplan actual"
+      ansible.builtin.shell: |
+        [ -f /etc/netplan/*.yaml ] && cp /etc/netplan/*.yaml /tmp/netplan.bak
+        echo "Backup done"
+      changed_when: false
+
+    - name: "NET — Crear configuración netplan para bonding"
+      ansible.builtin.copy:
+        dest: /etc/netplan/60-bonding.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                addresses: [192.168.16.10/27]
+                gateway4: 192.168.16.1
+                nameservers:
+                  addresses: [192.168.16.10, 8.8.8.8]
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+            ethernets:
+              ens34:
+                dhcp4: false
+              ens35:
+                dhcp4: false
+        force: yes
+
+    - name: "NET — Generar y aplicar netplan"
+      ansible.builtin.shell: |
+        sudo netplan generate
+        sudo netplan apply
+        echo "NETPLAN_DONE"
+      changed_when: true
+      register: netplan_result
+
+    - name: "NET — Verificar que bond0 existe"
+      ansible.builtin.wait_for:
+        timeout: 10
+        delay: 2
+        sleep: 2
+      changed_when: false
+
+    - name: "NET — Mostrar estado de interfaces"
+      ansible.builtin.shell: "ip a show bond0 2>&1 || ip a"
+      changed_when: false
+      register: bond_status
+
+    - name: "NET — Debug bond0 status"
+      ansible.builtin.debug:
+        msg: "{{ bond_status.stdout }}"
+
+    # 2. INSTALAR PAQUETES
     - name: "PRE — Actualizar APT"
       ansible.builtin.apt:
         update_cache: yes
@@ -158,7 +220,7 @@
         mode: "0644"
         force: yes
 
-    - name: "DHCP — Configurar interfaces (bond0 si existe, sino todas)"
+    - name: "DHCP — Configurar interfaces (bond0)"
       ansible.builtin.copy:
         dest: /etc/default/isc-dhcp-server
         content: |
