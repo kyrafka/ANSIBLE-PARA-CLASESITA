@@ -1,0 +1,103 @@
+---
+# ============================================================================
+# playbooks/common/arreglar_usuarios.yml — Arreglar red de VMs de usuarios
+# ============================================================================
+# - Desactiva systemd-resolved
+# - Configura DNS correcto (192.168.16.10)
+# - Verifica conectividad
+# ============================================================================
+
+- name: "Arreglar configuración de red en VMs de usuarios"
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    # =========================================================================
+    # 1. ARREGLAR DNS
+    # =========================================================================
+    - name: "DNS — Desactivar systemd-resolved"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      failed_when: false
+
+    - name: "DNS — Respaldar resolv.conf actual"
+      ansible.builtin.shell: |
+        [ -f /etc/resolv.conf ] && cp /etc/resolv.conf /etc/resolv.conf.bak-$(date +%Y%m%d)
+        echo "Backup done"
+      changed_when: false
+
+    - name: "DNS — Configurar resolv.conf con DNS de Lima"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 192.168.16.10
+          search AJ.local
+        mode: "0644"
+        force: yes
+
+    # =========================================================================
+    # 2. VERIFICAR CONECTIVIDAD
+    # =========================================================================
+    - name: "NET — Verificar IP actual"
+      ansible.builtin.shell: "ip a | grep 'inet '"
+      changed_when: false
+      register: ip_check
+
+    - name: "NET — Mostrar IP"
+      ansible.builtin.debug:
+        msg: "{{ ip_check.stdout }}"
+
+    - name: "NET — Probar ping al gateway"
+      ansible.builtin.shell: "ping -c 3 192.168.12.1 2>&1 | tail -5"
+      changed_when: false
+      register: ping_gateway
+
+    - name: "NET — Mostrar resultado del gateway"
+      ansible.builtin.debug:
+        msg: "{{ ping_gateway.stdout }}"
+
+    - name: "NET — Probar ping a DNS (192.168.16.10)"
+      ansible.builtin.shell: "ping -c 3 192.168.16.10 2>&1 | tail -5"
+      changed_when: false
+      register: ping_dns
+
+    - name: "NET — Mostrar resultado DNS"
+      ansible.builtin.debug:
+        msg: "{{ ping_dns.stdout }}"
+
+    - name: "NET — Probar ping a internet (8.8.8.8)"
+      ansible.builtin.shell: "ping -c 3 8.8.8.8 2>&1 | tail -5"
+      changed_when: false
+      register: ping_internet
+
+    - name: "NET — Mostrar resultado internet"
+      ansible.builtin.debug:
+        msg: "{{ ping_internet.stdout }}"
+
+    # =========================================================================
+    # 3. VERIFICAR DNS
+    # =========================================================================
+    - name: "DNS — Probar resolución google.com"
+      ansible.builtin.shell: "nslookup google.com 2>&1 | tail -5"
+      changed_when: false
+      register: dns_test
+
+    - name: "DNS — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ dns_test.stdout }}"
+
+    # =========================================================================
+    # 4. RESULTADO FINAL
+    # =========================================================================
+    - name: "FINAL — Resumen"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Configuración de red completada"
+          - "=========================================="
+          - "DNS configurado: 192.168.16.10"
+          - "Dominio: AJ.local"
+          - "=========================================="
