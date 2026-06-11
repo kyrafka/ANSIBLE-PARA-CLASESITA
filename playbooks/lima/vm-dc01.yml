@@ -143,7 +143,7 @@
 
     - name: "DNS — Iniciar bind9"
       ansible.builtin.systemd:
-        name: bind9
+        name: named
         state: started
         enabled: yes
 
@@ -203,7 +203,7 @@
 
     - name: "SAMBA — Reiniciar bind9 para cargar DLZ (si existe)"
       ansible.builtin.systemd:
-        name: bind9
+        name: named
         state: restarted
       when: dlz_check.stat.exists
       failed_when: false
@@ -251,7 +251,7 @@
     # 5. VERIFICACION FINAL
     - name: "FINAL — Estado de servicios"
       ansible.builtin.shell: |
-        echo "bind9:   $(systemctl is-active bind9)"
+        echo "named:   $(systemctl is-active named)"
         echo "smbd:    $(systemctl is-active smbd)"
         echo "nmbd:    $(systemctl is-active nmbd)"
         echo "DHCP:    $(systemctl is-active isc-dhcp-server)"
