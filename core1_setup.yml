@@ -25,10 +25,14 @@
 
     # INTERFACES REALES (Mapeadas de tu ESXi):
     nic_fw: "ens34"         # Trunk 1 (Hacia pfSense Master)
-    nic_acc: "ens35"        # Puerto de Acceso
+    nic_acc: "ens35"        # Puerto de Acceso (NO USAR)
     nic_int: "ens36"        # Interlink fisico (Cruce directo al Core 2)
-    nic_internet: "ens37"   # Internet momentaneo en Core 1
+    nic_internet: "ens37"   # LAN pfSense Master (192.168.10.x) - Gateway internet
     nic_trunk2: "ens40"     # Trunk 2 (Hacia pfSense Backup) - para HA
+
+    # Configuración LAN para internet
+    lan_ip: "192.168.10.20/24"
+    lan_gateway: "192.168.10.1"
 
     # LATIDOS KEEPALIVED (VRRP UNICAST):
     core_unicast_src_ip: "10.0.0.1"
