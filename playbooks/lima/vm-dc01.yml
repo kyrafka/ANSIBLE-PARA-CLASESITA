@@ -201,7 +201,7 @@
       failed_when: false
 
     # 4. CONFIGURAR DHCP
-    - name: "DHCP — Crear dhcpd.conf"
+    - name: "DHCP — Crear dhcpd.conf (con subnet local para bond0)"
       ansible.builtin.copy:
         dest: /etc/dhcp/dhcpd.conf
         content: |
@@ -210,6 +210,13 @@
           log-facility local7;
           option domain-name "{{ domain_name }}";
           option domain-name-servers {{ server_ip }};
+
+          # Subnet local (bond0 - VLAN 60)
+          subnet 192.168.16.0 netmask 255.255.255.224 {
+              option routers 192.168.16.1;
+          }
+
+          # Subnet usuarios (VLAN 20 -via pfSense relay)
           subnet 192.168.12.0 netmask 255.255.255.0 {
               option routers 192.168.12.1;
               option subnet-mask 255.255.255.0;
