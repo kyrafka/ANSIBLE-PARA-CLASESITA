@@ -1,0 +1,149 @@
+---
+# ============================================================================
+# playbooks/common/diagnostico_usuario.yml — Diagnóstico completo de red
+# ============================================================================
+# Ejecuta en la VM de usuario para identificar problemas de conectividad
+# ============================================================================
+
+- name: "Diagnóstico completo de red en VM de usuario"
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    dns_server: "192.168.16.10"
+    gateway: "192.168.12.1"
+
+  tasks:
+    # =========================================================================
+    # 1. INFORMACIÓN BÁSICA
+    # =========================================================================
+    - name: "INFO — Mostrar hostname e IP"
+      ansible.builtin.shell: "hostname -I | awk '{print $1}'"
+      changed_when: false
+      register: my_ip
+
+    - name: "INFO — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "IP de esta VM: {{ my_ip.stdout }}"
+
+    # =========================================================================
+    # 2. VERIFICAR DNS
+    # =========================================================================
+    - name: "DNS — Ver resolv.conf"
+      ansible.builtin.shell: "cat /etc/resolv.conf"
+      changed_when: false
+      register: resolv_conf
+
+    - name: "DNS — Mostrar resolv.conf"
+      ansible.builtin.debug:
+        msg: "{{ resolv_conf.stdout }}"
+
+    - name: "DNS — Probar resolución DNS local"
+      ansible.builtin.shell: "nslookup dc01.AJ.local {{ dns_server }} 2>&1"
+      changed_when: false
+      register: dns_local
+
+    - name: "DNS — Mostrar resultado DNS local"
+      ansible.builtin.debug:
+        msg: "DNS Local: {{ dns_local.stdout }}"
+
+    - name: "DNS — Probar resolución google.com"
+      ansible.builtin.shell: "nslookup google.com 2>&1"
+      changed_when: false
+      register: dns_google
+
+    - name: "DNS — Mostrar resultado DNS google"
+      ansible.builtin.debug:
+        msg: "DNS Google: {{ dns_google.stdout }}"
+
+    # =========================================================================
+    # 3. VERIFICAR CONECTIVIDAD
+    # =========================================================================
+    - name: "NET — Ver tabla de rutas"
+      ansible.builtin.shell: "ip route show"
+      changed_when: false
+      register: routes
+
+    - name: "NET — Mostrar rutas"
+      ansible.builtin.debug:
+        msg: "{{ routes.stdout }}"
+
+    - name: "NET — Ping al gateway"
+      ansible.builtin.shell: "ping -c 4 {{ gateway }} 2>&1 | tail -10"
+      changed_when: false
+      register: ping_gw
+
+    - name: "NET — Mostrar ping gateway"
+      ansible.builtin.debug:
+        msg: "Ping Gateway ({{ gateway }}): {{ ping_gw.stdout }}"
+
+    - name: "NET — Ping al DNS server"
+      ansible.builtin.shell: "ping -c 4 {{ dns_server }} 2>&1 | tail -10"
+      changed_when: false
+      register: ping_dns
+
+    - name: "NET — Mostrar ping DNS"
+      ansible.builtin.debug:
+        msg: "Ping DNS ({{ dns_server }}): {{ ping_dns.stdout }}"
+
+    - name: "NET — Ping a internet (8.8.8.8)"
+      ansible.builtin.shell: "ping -c 4 8.8.8.8 2>&1 | tail -10"
+      changed_when: false
+      register: ping_inet
+
+    - name: "NET — Mostrar ping internet"
+      ansible.builtin.debug:
+        msg: "Ping Internet (8.8.8.8): {{ ping_inet.stdout }}"
+
+    - name: "NET — Ping a google.com"
+      ansible.builtin.shell: "ping -c 4 google.com 2>&1 | tail -10"
+      changed_when: false
+      register: ping_google
+
+    - name: "NET — Mostrar ping google.com"
+      ansible.builtin.debug:
+        msg: "Ping google.com: {{ ping_google.stdout }}"
+
+    # =========================================================================
+    # 4. VERIFICAR SERVICIOS
+    # =========================================================================
+    - name: "SVC — Ver servicios de red"
+      ansible.builtin.shell: "systemctl is-active systemd-resolved NetworkManager 2>&1"
+      changed_when: false
+      register: services
+
+    - name: "SVC — Mostrar estado servicios"
+      ansible.builtin.debug:
+        msg: "Servicios: {{ services.stdout }}"
+
+    # =========================================================================
+    # 5. TEST DE VELOCIDAD
+    # =========================================================================
+    - name: "TEST — Descargar archivo de prueba (1MB)"
+      ansible.builtin.shell: |
+        curl -s -o /dev/null -w "Speed: %{speed_download} bytes/s\nTime: %{time_total}s\n" http://192.168.16.10/ 2>&1 || echo "No hay respuesta del DNS server"
+      changed_when: false
+      register: speed_test
+
+    - name: "TEST — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ speed_test.stdout }}"
+
+    # =========================================================================
+    # 6. RESULTADO FINAL
+    # =========================================================================
+    - name: "FINAL — Resumen de diagnóstico"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "DIAGNÓSTICO COMPLETO"
+          - "=========================================="
+          - "IP VM: {{ my_ip.stdout }}"
+          - "DNS Config: {{ resolv_conf.stdout_lines | first }}"
+          - "Gateway: {{ gateway }}"
+          - "DNS Server: {{ dns_server }}"
+          - "=========================================="
+          - "Revisar los resultados arriba para"
+          - "identificar dónde está el problema"
+          - "=========================================="
