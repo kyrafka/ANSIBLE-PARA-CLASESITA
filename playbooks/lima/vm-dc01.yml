@@ -111,7 +111,7 @@
         [ -f /etc/bind/named.conf.options ] && mv /etc/bind/named.conf.options /etc/bind/named.conf.options.bak
       changed_when: false
 
-    - name: "DNS — Crear named.conf.options"
+    - name: "DNS — Crear named.conf.options (con IPv6 deshabilitado)"
       ansible.builtin.copy:
         dest: /etc/bind/named.conf.options
         content: |
@@ -120,7 +120,7 @@
               forwarders { 8.8.8.8; 8.8.4.4; };
               dnssec-validation no;
               auth-nxdomain no;
-              listen-on-v6 { any; };
+              listen-on-v6 { none; };
           };
         owner: root
         group: bind
