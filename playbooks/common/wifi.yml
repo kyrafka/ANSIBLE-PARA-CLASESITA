@@ -1,0 +1,112 @@
+---
+# ============================================================================
+# playbooks/common/wifi.yml — Configurar interfaz de internet (ens37)
+# ============================================================================
+# - Configura ens37 con DHCP para tener internet de respaldo
+# - Útil cuando la conexión principal (VLAN usuarios) no tiene internet
+# ============================================================================
+
+- name: "Configurar interfaz de internet (ens37)"
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    internet_interface: "ens37"
+
+  tasks:
+    # =========================================================================
+    # 1. VERIFICAR QUE LA INTERFAZ EXISTE
+    # =========================================================================
+    - name: "WIFI — Verificar que ens37 existe"
+      ansible.builtin.shell: "ip link show {{ internet_interface }} 2>&1 | grep -q UP && echo 'EXISTS' || echo 'NOT_FOUND'"
+      changed_when: false
+      register: iface_check
+
+    - name: "WIFI — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "Ens37: {{ iface_check.stdout }}"
+
+    # =========================================================================
+    # 2. CONFIGURAR NETPLAN PARA ENS37 (DHCP)
+    # =========================================================================
+    - name: "WIFI — Respaldar netplan actual"
+      ansible.builtin.shell: "[ -f /etc/netplan/*.yaml ] && cp /etc/netplan/*.yaml /tmp/netplan.bak; echo 'Backup done'"
+      changed_when: false
+
+    - name: "WIFI — Crear configuración netplan para ens37"
+      ansible.builtin.copy:
+        dest: "/etc/netplan/70-internet.yaml"
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              {{ internet_interface }}:
+                dhcp4: true
+                optional: true
+        mode: "0644"
+        force: yes
+      when: iface_check.stdout == "EXISTS"
+
+    - name: "WIFI — Aplicar netplan"
+      ansible.builtin.shell: "netplan generate && netplan apply 2>&1"
+      changed_when: true
+      when: iface_check.stdout == "EXISTS"
+      register: netplan_result
+
+    - name: "WIFI — Mostrar resultado netplan"
+      ansible.builtin.debug:
+        msg: "{{ netplan_result.stdout }}"
+
+    # =========================================================================
+    # 3. VERIFICAR QUE OBTUVO IP
+    # =========================================================================
+    - name: "WIFI — Esperar a que obtenga IP (10 segundos)"
+      ansible.builtin.wait_for:
+        timeout: 10
+      changed_when: false
+
+    - name: "WIFI — Verificar IP de ens37"
+      ansible.builtin.shell: "ip a show {{ internet_interface }} | grep 'inet '"
+      changed_when: false
+      register: wifi_ip
+
+    - name: "WIFI — Mostrar IP"
+      ansible.builtin.debug:
+        msg: "{{ wifi_ip.stdout | default('Sin IP aún') }}"
+
+    # =========================================================================
+    # 4. PROBAR CONECTIVIDAD
+    # =========================================================================
+    - name: "WIFI — Probar ping a internet"
+      ansible.builtin.shell: "ping -c 3 8.8.8.8 2>&1 | tail -5"
+      changed_when: false
+      register: ping_test
+
+    - name: "WIFI — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ ping_test.stdout }}"
+
+    # =========================================================================
+    # 5. ASEGURAR QUE SYSTEMD-RESOLVED ESTÁ ACTIVO (por si se cae)
+    # =========================================================================
+    - name: "WIFI — Asegurar que systemd-resolved está corriendo"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: started
+        enabled: yes
+      failed_when: false
+
+    # =========================================================================
+    # 6. RESULTADO
+    # =========================================================================
+    - name: "FINAL — Resumen"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Configuración WiFi/Internet"
+          - "=========================================="
+          - "Interfaz: {{ internet_interface }}"
+          - "IP: {{ wifi_ip.stdout | default('Verificando...') }}"
+          - "=========================================="

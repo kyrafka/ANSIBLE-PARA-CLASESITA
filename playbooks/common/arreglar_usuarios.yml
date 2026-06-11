@@ -2,7 +2,7 @@
 # ============================================================================
 # playbooks/common/arreglar_usuarios.yml — Arreglar red de VMs de usuarios
 # ============================================================================
-# - Desactiva systemd-resolved
+# - Desactiva systemd-resolved permanentemente
 # - Configura DNS correcto (192.168.16.10)
 # - Verifica conectividad
 # ============================================================================
@@ -14,22 +14,20 @@
 
   tasks:
     # =========================================================================
-    # 1. ARREGLAR DNS
+    # 1. DESACTIVAR systemd-resolved PERMANENTEMENTE
     # =========================================================================
-    - name: "DNS — Desactivar systemd-resolved"
+    - name: "DNS — Desactivar systemd-resolved permanentemente"
       ansible.builtin.systemd:
         name: systemd-resolved
         state: stopped
         enabled: no
-      failed_when: false
 
-    - name: "DNS — Respaldar resolv.conf actual"
-      ansible.builtin.shell: |
-        [ -f /etc/resolv.conf ] && cp /etc/resolv.conf /etc/resolv.conf.bak-$(date +%Y%m%d)
-        echo "Backup done"
-      changed_when: false
+    - name: "DNS — Eliminar link de resolv.conf si existe"
+      ansible.builtin.file:
+        path: /etc/resolv.conf
+        state: absent
 
-    - name: "DNS — Configurar resolv.conf con DNS de Lima"
+    - name: "DNS — Crear resolv.conf nuevo manualmente"
       ansible.builtin.copy:
         dest: /etc/resolv.conf
         content: |
@@ -98,6 +96,7 @@
           - "=========================================="
           - "Configuración de red completada"
           - "=========================================="
+          - "systemd-resolved: DESACTIVADO"
           - "DNS configurado: 192.168.16.10"
           - "Dominio: AJ.local"
           - "=========================================="
