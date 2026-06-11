@@ -28,7 +28,31 @@
         msg: "Ens37: {{ iface_check.stdout }}"
 
     # =========================================================================
-    # 2. CONFIGURAR NETPLAN PARA ENS37 (DHCP)
+    # 2. ELIMINAR ENS34 DEL NETPLAN ANTERIOR (50-cloud-init.yaml)
+    # =========================================================================
+    - name: "WIFI — Respaldar y eliminar ens34 del netplan anterior"
+      ansible.builtin.shell: |
+        # Respaldar
+        [ -f /etc/netplan/50-cloud-init.yaml ] && cp /etc/netplan/50-cloud-init.yaml /tmp/50-cloud-init.yaml.bak
+        
+        # Eliminar ens34 del archivo si existe
+        if [ -f /etc/netplan/50-cloud-init.yaml ]; then
+          # Crear versión limpia sin ens34
+          grep -v 'ens34' /etc/netplan/50-cloud-init.yaml > /tmp/50-cloud-init-clean.yaml || true
+          cat /tmp/50-cloud-init-clean.yaml > /etc/netplan/50-cloud-init.yaml || true
+          echo "ENS34_REMOVED"
+        else
+          echo "NO_50_CLOUD_INIT"
+        fi
+      changed_when: false
+      register: remove_ens34
+
+    - name: "WIFI — Mostrar resultado de limpieza"
+      ansible.builtin.debug:
+        msg: "{{ remove_ens34.stdout }}"
+
+    # =========================================================================
+    # 3. CONFIGURAR NETPLAN PARA ENS37 (DHCP)
     # =========================================================================
     - name: "WIFI — Respaldar netplan actual"
       ansible.builtin.shell: "[ -f /etc/netplan/*.yaml ] && cp /etc/netplan/*.yaml /tmp/netplan.bak; echo 'Backup done'"
@@ -60,7 +84,7 @@
         msg: "{{ netplan_result.stdout }}"
 
     # =========================================================================
-    # 3. VERIFICAR QUE OBTUVO IP
+    # 4. VERIFICAR QUE OBTUVO IP
     # =========================================================================
     - name: "WIFI — Esperar a que obtenga IP (10 segundos)"
       ansible.builtin.wait_for:
@@ -77,7 +101,7 @@
         msg: "{{ wifi_ip.stdout | default('Sin IP aún') }}"
 
     # =========================================================================
-    # 4. PROBAR CONECTIVIDAD
+    # 5. PROBAR CONECTIVIDAD
     # =========================================================================
     - name: "WIFI — Probar ping a internet"
       ansible.builtin.shell: "ping -c 3 8.8.8.8 2>&1 | tail -5"
@@ -89,7 +113,7 @@
         msg: "{{ ping_test.stdout }}"
 
     # =========================================================================
-    # 5. ASEGURAR QUE SYSTEMD-RESOLVED ESTÁ ACTIVO (por si se cae)
+    # 6. ASEGURAR QUE SYSTEMD-RESOLVED ESTÁ ACTIVO (por si se cae)
     # =========================================================================
     - name: "WIFI — Asegurar que systemd-resolved está corriendo"
       ansible.builtin.systemd:
@@ -99,7 +123,7 @@
       failed_when: false
 
     # =========================================================================
-    # 6. RESULTADO
+    # 7. RESULTADO
     # =========================================================================
     - name: "FINAL — Resumen"
       ansible.builtin.debug:
