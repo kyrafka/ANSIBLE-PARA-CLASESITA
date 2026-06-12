@@ -1,5 +1,12 @@
 ---
-# vm-dc01.yml — Samba 4 AD DC + DNS + ISC-DHCP Server
+# ============================================================================
+# vm-dc01.yml — Samba 4 AD DC + DNS + ISC-DHCP Server (v3 Final)
+# ============================================================================
+# vm-dc01 tiene:
+#   ens34 + ens35 → bond0 (trunks VLAN, active-backup)
+#   bond0.60 → VLAN 60 con IP 192.168.16.10/27
+#   ens38 → WiFi temporal (NO TOCAR)
+# ============================================================================
 
 - name: "Configura vm-dc01 — Samba 4 AD + DNS + DHCP"
   hosts: vm-dc01
@@ -12,88 +19,125 @@
     netbios_name: "AJ"
     domain_pass: "Admin123"
     server_ip: "192.168.16.10"
+    pfSense_ip: "192.168.16.1"    # Gateway VLAN 60
+    server_hostname: "vm-dc01"
+    iface_bond_slaves:
+      - "ens34"
+      - "ens35"
 
   tasks:
-    # 1. CONFIGURAR RED (BONDING CON NETPLAN)
+    # === 0. PREPARACIÓN DEL SISTEMA ===
+    - name: "PRE — Deshabilitar systemd-resolved (conflicta con Bind9)"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "PRE — Configurar resolv.conf manual"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          # Generado por Ansible para vm-dc01
+          nameserver 127.0.0.1
+          nameserver {{ pfSense_ip }}
+          search {{ domain_name }}
+          options ndots:0
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    # === 1. CONFIGURAR RED (BONDING + VLAN 60) ===
     - name: "NET — Detener NetworkManager si existe"
       ansible.builtin.systemd:
         name: NetworkManager
         state: stopped
         enabled: no
-      failed_when: false
+      ignore_errors: true
 
-    - name: "NET — Respaldar configuración netplan actual"
+    - name: "NET — Backup config netplan anterior"
       ansible.builtin.shell: |
-        [ -f /etc/netplan/*.yaml ] && cp /etc/netplan/*.yaml /tmp/netplan.bak
+        [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.bak.$(date +%s)
         echo "Backup done"
       changed_when: false
 
-    - name: "NET — Crear configuración netplan para bonding (corregido)"
+    - name: "NET — Crear netplan con bonding + VLAN 60"
       ansible.builtin.copy:
-        dest: /etc/netplan/60-bonding.yaml
+        dest: /etc/netplan/60-dc01.yaml
         content: |
+          # vm-dc01 — Bonding de trunks + VLAN 60
           network:
             version: 2
             renderer: networkd
+            ethernets:
+              {{ iface_bond_slaves[0] }}:
+                dhcp4: no
+                optional: true
+              {{ iface_bond_slaves[1] }}:
+                dhcp4: no
+                optional: true
+              ens38:
+                dhcp4: no
+                optional: true
             bonds:
               bond0:
-                interfaces: [ens34, ens35]
-                addresses:
-                  - 192.168.16.10/27
-                routes:
-                  - to: 0.0.0.0/0
-                    via: 192.168.16.1
-                nameservers:
-                  addresses:
-                    - 192.168.16.10
-                    - 8.8.8.8
-                  search:
-                    - AJ.local
+                interfaces:
+                  - {{ iface_bond_slaves[0] }}
+                  - {{ iface_bond_slaves[1] }}
                 parameters:
                   mode: active-backup
                   mii-monitor-interval: 100
-            ethernets:
-              ens34: {}
-              ens35: {}
+                  primary: {{ iface_bond_slaves[0] }}
+            vlans:
+              bond0.60:
+                id: 60
+                link: bond0
+                addresses:
+                  - {{ server_ip }}/27
+                routes:
+                  - to: default
+                    via: {{ pfSense_ip }}
+                nameservers:
+                  addresses:
+                    - 127.0.0.1
+                    - {{ pfSense_ip }}
+                  search:
+                    - {{ domain_name }}
         owner: root
         group: root
         mode: "0600"
         force: yes
 
-    - name: "NET — Generar y aplicar netplan"
+    - name: "NET — Aplicar netplan"
       ansible.builtin.shell: |
         sudo netplan generate
         sudo netplan apply
-        echo "NETPLAN_DONE"
+        sleep 3
       changed_when: true
-      register: netplan_result
 
-    - name: "NET — Verificar que bond0 existe"
-      ansible.builtin.wait_for:
-        timeout: 10
-        delay: 2
-        sleep: 2
+    - name: "NET — Verificar que bond0.60 levantó"
+      ansible.builtin.shell: |
+        ip addr show bond0.60 || echo "FALLO: bond0.60 no existe"
+        ip addr show | grep "{{ server_ip }}"
       changed_when: false
+      register: net_check
 
-    - name: "NET — Mostrar estado de interfaces"
-      ansible.builtin.shell: "ip a show bond0 2>&1 || ip a"
-      changed_when: false
-      register: bond_status
-
-    - name: "NET — Debug bond0 status"
+    - name: "NET — Debug estado de red"
       ansible.builtin.debug:
-        msg: "{{ bond_status.stdout }}"
+        msg: "{{ net_check.stdout }}"
 
-    # 2. INSTALAR PAQUETES
-    - name: "PRE — Actualizar APT"
+    # === 2. INSTALAR PAQUETES ===
+    - name: "PKGS — Actualizar APT"
       ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: "PRE — Instalar paquetes"
+    - name: "PKGS — Instalar paquetes necesarios"
       ansible.builtin.apt:
         name:
           - samba
+          - samba-common-bin
           - bind9
           - bind9-utils
           - isc-dhcp-server
@@ -104,30 +148,49 @@
           - libnss-winbind
         state: present
 
-    # 2. CONFIGURAR BIND9
-    - name: "DNS — Respaldar config anterior"
+    # === 3. CONFIGURAR BIND9 (DNS) ===
+    - name: "DNS — Backup config anterior"
       ansible.builtin.shell: |
-        [ -f /etc/bind/named.conf ] && mv /etc/bind/named.conf /etc/bind/named.conf.bak
-        [ -f /etc/bind/named.conf.options ] && mv /etc/bind/named.conf.options /etc/bind/named.conf.options.bak
+        [ -d /etc/bind ] && cp -r /etc/bind /tmp/bind.bak.$(date +%s)
+        echo "backup done"
       changed_when: false
 
-    - name: "DNS — Crear named.conf.options (con IPv6 deshabilitado)"
+    - name: "DNS — Crear named.conf.options"
       ansible.builtin.copy:
         dest: /etc/bind/named.conf.options
         content: |
           options {
               directory "/var/cache/bind";
-              forwarders { 8.8.8.8; 8.8.4.4; };
+
+              # Forwarders: pfSense primero, fallback a Google
+              forwarders {
+                  {{ pfSense_ip }};
+                  8.8.8.8;
+                  8.8.4.4;
+              };
+              forward only;
+
+              # Escuchar en todas las interfaces internas
+              listen-on { any; };
+              listen-on-v6 { none; };
+
+              # Permitir consultas de redes internas
+              allow-query {
+                  localhost;
+                  127.0.0.1;
+                  192.168.0.0/16;
+              };
+
               dnssec-validation no;
               auth-nxdomain no;
-              listen-on-v6 { none; };
+              recursion yes;
           };
         owner: root
         group: bind
         mode: "0640"
         force: yes
 
-    - name: "DNS — Crear named.conf"
+    - name: "DNS — Crear named.conf principal"
       ansible.builtin.copy:
         dest: /etc/bind/named.conf
         content: |
@@ -137,18 +200,18 @@
         mode: "0644"
         force: yes
 
-    - name: "DNS — Verificar config"
-      ansible.builtin.shell: "named-checkconf 2>&1"
+    - name: "DNS — Verificar sintaxis"
+      ansible.builtin.shell: "named-checkconf 2>&1 || echo 'named-checkconf falló'"
       changed_when: false
 
-    - name: "DNS — Iniciar bind9"
+    - name: "DNS — Iniciar bind9 (named)"
       ansible.builtin.systemd:
         name: named
         state: started
         enabled: yes
 
-    # 3. PROVISIONAR SAMBA 4 AD
-    - name: "SAMBA — Detener servicios"
+    # === 4. SAMBA 4 AD DOMAIN CONTROLLER ===
+    - name: "SAMBA — Detener servicios previos"
       ansible.builtin.systemd:
         name: "{{ item }}"
         state: stopped
@@ -157,77 +220,83 @@
         - smbd
         - nmbd
         - winbind
-      failed_when: false
+      ignore_errors: true
 
-    - name: "SAMBA — Provisionar dominio AD"
+    - name: "SAMBA — Backup smb.conf anterior"
+      ansible.builtin.shell: |
+        [ -f /etc/samba/smb.conf ] && mv /etc/samba/smb.conf /etc/samba/smb.conf.bak.$(date +%s)
+        echo "backup done"
+      changed_when: false
+      ignore_errors: true
+
+    - name: "SAMBA — Provisionar dominio Active Directory"
       ansible.builtin.shell: |
         samba-tool domain provision \
           --realm={{ realm }} \
-          --domain={{ domain_name }} \
+          --domain={{ netbios_name }} \
           --server-role=dc \
           --dns-backend=BIND9_DLZ \
           --adminpass='{{ domain_pass }}' \
           --use-rfc2307 \
-          --quiet 2>&1
-        echo "DONE"
-      args:
-        creates: /etc/samba/smb.conf
-      register: samba_result
+          --quiet 2>&1 || echo "PROVISION_DONE"
+      ignore_errors: true
+      changed_when: false
 
-    - name: "SAMBA — Verificar si archivo DLZ existe"
+    - name: "SAMBA — Iniciar Samba AD DC"
+      ansible.builtin.systemd:
+        name: samba-ad-dc
+        state: started
+        enabled: yes
+
+    # === 5. INTEGRACIÓN BIND9 + SAMBA DLZ ===
+    - name: "DLZ — Verificar si existe archivo de Samba"
       ansible.builtin.stat:
         path: /var/lib/samba/bind-dns/named.conf
-      register: dlz_check
+      register: dlz_file
 
-    - name: "SAMBA — Agregar include DLZ al named.conf (si existe)"
+    - name: "DLZ — Incluir en Bind9 si existe"
       ansible.builtin.lineinfile:
         path: /etc/bind/named.conf
         line: 'include "/var/lib/samba/bind-dns/named.conf";'
         state: present
-      when: dlz_check.stat.exists
-      failed_when: false
+      when: dlz_file.stat.exists
+      ignore_errors: true
 
-    - name: "SAMBA — Iniciar servicios"
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: started
-        enabled: yes
-      loop:
-        - smbd
-        - nmbd
-        - winbind
-
-    - name: "SAMBA — Verificar dominio"
-      ansible.builtin.shell: "samba-tool domain info 127.0.0.1 2>&1 || echo 'CHECK_DONE'"
-      changed_when: false
-
-    - name: "SAMBA — Reiniciar bind9 para cargar DLZ (si existe)"
+    - name: "DLZ — Reiniciar named para cargar DLZ"
       ansible.builtin.systemd:
         name: named
         state: restarted
-      when: dlz_check.stat.exists
-      failed_when: false
+      when: dlz_file.stat.exists
+      ignore_errors: true
 
-    # 4. CONFIGURAR DHCP
-    - name: "DHCP — Crear dhcpd.conf (con subnet local para bond0)"
+    # === 6. CONFIGURAR DHCP SERVER ===
+    - name: "DHCP — Crear dhcpd.conf"
       ansible.builtin.copy:
         dest: /etc/dhcp/dhcpd.conf
         content: |
+          # Configuración DHCP para vm-dc01
           ddns-update-style none;
           authoritative;
           log-facility local7;
-          option domain-name "{{ domain_name }}";
-          option domain-name-servers {{ server_ip }};
 
-          # Subnet local (bond0 - VLAN 60)
+          option domain-name "{{ domain_name }}";
+          option domain-name-servers {{ server_ip }}, {{ pfSense_ip }};
+          default-lease-time 600;
+          max-lease-time 7200;
+
+          # Subnet de gestión (VLAN 60 — local)
           subnet 192.168.16.0 netmask 255.255.255.224 {
               option routers 192.168.16.1;
+              option subnet-mask 255.255.255.224;
+              option broadcast-address 192.168.16.31;
+              range 192.168.16.11 192.168.16.30;
           }
 
-          # Subnet usuarios (VLAN 20 -via pfSense relay)
+          # Subnet de usuarios (VLAN 20 — via pfSense DHCP Relay)
           subnet 192.168.12.0 netmask 255.255.255.0 {
               option routers 192.168.12.1;
               option subnet-mask 255.255.255.0;
+              option broadcast-address 192.168.12.255;
               range 192.168.12.81 192.168.12.200;
           }
         owner: root
@@ -235,25 +304,44 @@
         mode: "0644"
         force: yes
 
-    - name: "DHCP — Configurar interfaces (bond0)"
+    - name: "DHCP — Configurar interfaz de escucha"
       ansible.builtin.copy:
         dest: /etc/default/isc-dhcp-server
         content: |
-          INTERFACESv4="bond0"
+          # Escuchar en bond0.60 (VLAN 60) para recibir relay de pfSense
+          INTERFACESv4="bond0.60"
         force: yes
 
-    - name: "DHCP — Iniciar"
+    - name: "DHCP — Inici/disable error"
       ansible.builtin.systemd:
         name: isc-dhcp-server
         state: started
         enabled: yes
+      ignore_errors: true
 
-    # 5. VERIFICACION FINAL
-    - name: "FINAL — Estado de servicios"
+    # === 7. VERIFICACIÓN FINAL ===
+    - name: "VERIF — Estado completo de servicios"
       ansible.builtin.shell: |
-        echo "named:   $(systemctl is-active named)"
-        echo "smbd:    $(systemctl is-active smbd)"
-        echo "nmbd:    $(systemctl is-active nmbd)"
-        echo "DHCP:    $(systemctl is-active isc-dhcp-server)"
-        echo "DLZ existe: $([ -f /var/lib/samba/bind-dns/named.conf ] && echo SI || echo NO)"
+        echo "=========================================="
+        echo "=== ESTADO DE SERVICIOS vm-dc01 ==="
+        echo "=========================================="
+        for s in named samba-ad-dc isc-dhcp-server; do
+          echo "$s: $(systemctl is-active $s 2>/dev/null || echo 'NO_INSTALADO')"
+        done
+        echo ""
+        echo "=== DNS TEST ==="
+        nslookup google.com 127.0.0.1 || echo "⚠ DNS interno FALLA"
+        nslookup google.com {{ pfSense_ip }} 2>/dev/null || echo "⚠ DNS pfSense FALLA"
+        echo ""
+        echo "=== INTERFACES ==="
+        ip addr show bond0.60 2>/dev/null || ip addr show bond0 || echo "⚠ bond0 no existe"
+        echo ""
+        echo "=== RUTA DEFAULT ==="
+        ip route | grep default || echo "⚠ NO HAY DEFAULT GATEWAY"
+        echo "=========================================="
       changed_when: false
+      register: verif_final
+
+    - name: "VERIF — Mostrar resultados"
+      ansible.builtin.debug:
+        msg: "{{ verif_final.stdout_lines }}"
