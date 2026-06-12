@@ -109,8 +109,7 @@
                 dhcp4: no
                 optional: true
               ens40:
-                dhcp4: no
-                optional: true
+                dhcp4: true
             bonds:
               bond0:
                 interfaces: [{{ bonded_nics | join(', ') }}]
