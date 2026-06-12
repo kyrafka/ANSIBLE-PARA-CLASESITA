@@ -2,7 +2,8 @@
 # ============================================================================
 # playbooks/lima/00_core_ha.yml — Core 1 y Core 2 en HA (Keepalived + OSPF)
 # ============================================================================
-# Lima: 2 cores en configuración Master/Backup con VRRP unicast y OSPF
+# Lima: 2 cores en configuración Master/Backup
+# SWITCH L2 sin IPs en bridges — todo gateway es pfSense
 # ============================================================================
 
 - name: "Configura Core 1 — MASTER Keepalived"
@@ -20,21 +21,41 @@
     core_priority: 200
     core_ip_suffix: 4
 
-    nic_trunk1: "ens34"
-    nic_trunk2: "ens42"
-    nic_int: "ens36"
+    nic_trunk1: "ens36"
+    nic_trunk2: "ens37"
+    nic_int: "ens38"
     bonded_nics:
-      - "ens37"
-      - "ens40"
+      - "ens34"
+      - "ens35"
     lan_ip: "192.168.10.20/24"
     lan_gateway: "192.168.10.1"
+
+    assign_bridge_ips: false
 
     core_unicast_src_ip: "10.0.0.1"
     core_unicast_peer_ip: "10.0.0.2"
     core_router_id: "10.0.0.1"
 
+  pre_tasks:
+    - name: "PRE-LIMPIEZA — Stop networkd y flush IPs viejas"
+      shell: |
+        systemctl stop systemd-networkd 2>/dev/null || true
+        for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{print $2}' | sed 's/://'); do
+          ip addr flush dev "$br" 2>/dev/null || true
+        done
+        echo "PRE-LIMPIO"
+      changed_when: false
+      ignore_errors: true
+
   roles:
     - linux_core
+
+  post_tasks:
+    - name: "POST-APPLY — Reiniciar systemd-networkd"
+      systemd:
+        name: systemd-networkd
+        state: restarted
+      ignore_errors: true
 
 - name: "Configura Core 2 — BACKUP Keepalived"
   hosts: localhost
@@ -51,18 +72,38 @@
     core_priority: 100
     core_ip_suffix: 5
 
-    nic_trunk1: "ens42"
-    nic_trunk2: "ens34"
-    nic_int: "ens36"
+    nic_trunk1: "ens36"
+    nic_trunk2: "ens37"
+    nic_int: "ens38"
     bonded_nics:
-      - "ens40"
-      - "ens39"
+      - "ens34"
+      - "ens35"
     lan_ip: "192.168.10.30/24"
     lan_gateway: "192.168.10.1"
+
+    assign_bridge_ips: false
 
     core_unicast_src_ip: "10.0.0.2"
     core_unicast_peer_ip: "10.0.0.1"
     core_router_id: "10.0.0.2"
 
+  pre_tasks:
+    - name: "PRE-LIMPIEZA — Stop networkd y flush IPs viejas"
+      shell: |
+        systemctl stop systemd-networkd 2>/dev/null || true
+        for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{print $2}' | sed 's/://'); do
+          ip addr flush dev "$br" 2>/dev/null || true
+        done
+        echo "PRE-LIMPIO"
+      changed_when: false
+      ignore_errors: true
+
   roles:
     - linux_core
+
+  post_tasks:
+    - name: "POST-APPLY — Reiniciar systemd-networkd"
+      systemd:
+        name: systemd-networkd
+        state: restarted
+      ignore_errors: true

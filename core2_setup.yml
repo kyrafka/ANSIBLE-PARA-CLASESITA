@@ -3,6 +3,7 @@
 # core2_setup.yml — Configurador de Core 2 (Keepalived BACKUP)
 # =============================================================================
 # Full HA: Bonded LANs + 2x Trunks + Interlink
+# SWITCH L2 sin IPs en bridges — todo gateway es pfSense
 # =============================================================================
 
 - name: "Configura Core 2 — Keepalived BACKUP"
@@ -21,8 +22,8 @@
     core_ip_suffix: 5
 
     # INTERFACES (Mapeo REAL de tu ESXi):
-    nic_trunk1: "ens36"     # Trunk 1 — pfSense
-    nic_trunk2: "ens37"     # Trunk 2 — pfSense
+    nic_trunk1: "ens36"     # Trunk 1 — pfSense Master
+    nic_trunk2: "ens37"     # Trunk 2 — pfSense Backup
     nic_int: "ens38"        # Interlink físico (Core 2 ↔ Core 1)
 
     # SWITCH L2: sin IPs en bridges, todo gateway es pfSense
@@ -43,14 +44,22 @@
     core_router_id: "10.0.0.2"
 
   pre_tasks:
-    - name: "LIMPIEZA — Flush IPs viejas de bridges antes de netplan"
+    - name: "PRE-LIMPIEZA — Stop networkd y flush IPs viejas de bridges"
       ansible.builtin.shell: |
+        systemctl stop systemd-networkd 2>/dev/null || true
         for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{print $2}' | sed 's/://'); do
           ip addr flush dev "$br" 2>/dev/null || true
         done
-        echo "LIMPIO"
+        echo "PRE-LIMPIO"
       changed_when: false
       ignore_errors: true
 
   roles:
     - linux_core
+
+  post_tasks:
+    - name: "POST-APPLY — Reiniciar systemd-networkd para limpiar caché"
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: restarted
+      ignore_errors: true
