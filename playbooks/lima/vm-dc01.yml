@@ -50,11 +50,11 @@
 
     # === 1. CONFIGURAR RED (BONDING + VLAN 60) ===
     - name: "NET — Detener NetworkManager si existe"
-      ansible.builtin.systemd:
-        name: NetworkManager
-        state: stopped
-        enabled: no
-      ignore_errors: true
+      ansible.builtin.shell: |
+        systemctl is-active NetworkManager >/dev/null 2>&1 && systemctl stop NetworkManager || true
+        systemctl is-enabled NetworkManager >/dev/null 2>&1 && systemctl disable NetworkManager || true
+        echo "OK"
+      changed_when: false
 
     - name: "NET — Backup config netplan anterior"
       ansible.builtin.shell: |
@@ -312,11 +312,14 @@
           INTERFACESv4="bond0.60"
         force: yes
 
-    - name: "DHCP — Inici/disable error"
-      ansible.builtin.systemd:
-        name: isc-dhcp-server
-        state: started
-        enabled: yes
+    - name: "DHCP — Iniciar isc-dhcp-server (con reintento si falla)"
+      ansible.builtin.shell: |
+        sleep 2  # Esperar a que bond0.60 esté listo
+        systemctl enable isc-dhcp-server
+        systemctl restart isc-dhcp-server || systemctl start isc-dhcp-server
+        systemctl is-active isc-dhcp-server
+      register: dhcp_result
+      changed_when: true
       ignore_errors: true
 
     # === 7. VERIFICACIÓN FINAL ===
