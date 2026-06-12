@@ -42,5 +42,15 @@
     # IDENTIDAD OSPF (solo para monitoreo LAN interna)
     core_router_id: "10.0.0.1"
 
+  pre_tasks:
+    - name: "LIMPIEZA — Flush IPs viejas de bridges antes de netplan"
+      ansible.builtin.shell: |
+        for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{print $2}' | sed 's/://'); do
+          ip addr flush dev "$br" 2>/dev/null || true
+        done
+        echo "LIMPIO"
+      changed_when: false
+      ignore_errors: true
+
   roles:
     - linux_core
