@@ -47,7 +47,7 @@
     - name: "NUCLEAR — Backup y destruir red actual completamente"
       ansible.builtin.shell: |
         # Backup
-        BKP="/听众/netplan-nuclear-$(date +%s)"
+        BKP="/tmp/netplan-nuclear-$(date +%s)"
         cp -r /etc/netplan "$BKP" 2>/dev/null || true
         echo "Backup en $BKP"
         
@@ -65,7 +65,6 @@
         # Borrar TODA config netplan vieja
         rm -f /etc/netplan/*.yaml
         rm -f /run/systemd/network/*.network 2>/dev/null || true
-        rm -f /etc/systemd/network/*.network 2>/dev/null || true
         
         # Reiniciar systemd para que olvide todo
         systemctl restart systemd-networkd 2>/dev/null || true
@@ -78,8 +77,102 @@
     - linux_core
 
   post_tasks:
-    - name: "POST-APPLY — Reiniciar systemd-networkd para limpiar caché"
+    - name: "POST — Sobrescribir netplan con version LIMPIA (sin IPs en bridges)"
+      ansible.builtin.copy:
+        dest: "/etc/netplan/50-cloud-init.yaml"
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+        content: |
+          # ============================================================================
+          # Netplan Limpio — {{ core_id | upper }}
+          # SOLO bonding + interlink. Los bridges son L2 puros.
+          # ============================================================================
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              {{ nic_trunk1 }}:
+                dhcp4: no
+              {{ nic_trunk2 }}:
+                dhcp4: no
+              {{ nic_int }}:
+                dhcp4: no
+                addresses:
+                  - {{ core_unicast_src_ip }}/30
+              {{ bonded_nics[0] }}:
+                dhcp4: no
+              {{ bonded_nics[1] }}:
+                dhcp4: no
+              ens39:
+                dhcp4: no
+                optional: true
+              ens40:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [{{ bonded_nics | join(', ') }}]
+                addresses: [{{ lan_ip }}]
+                routes:
+                  - to: default
+                    via: {{ lan_gateway }}
+                  - to: 10.0.0.0/8
+                    via: {{ lan_gateway }}
+                nameservers:
+                  addresses:
+                    - 8.8.8.8
+                    - 8.8.4.4
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: {{ bonded_nics[0] }}
+            vlans:
+            {% for vlan in vlans %}
+              v{{ vlan.id }}-trunk1: {id: {{ vlan.id }}, link: {{ nic_trunk1 }} }
+              v{{ vlan.id }}-trunk2: {id: {{ vlan.id }}, link: {{ nic_trunk2 }} }
+              v{{ vlan.id }}-int:    {id: {{ vlan.id }}, link: {{ nic_int }} }
+            {% endfor %}
+            bridges:
+            {% for vlan in vlans %}
+              br{{ vlan.id }}:
+                interfaces:
+                  - v{{ vlan.id }}-trunk1
+                  - v{{ vlan.id }}-trunk2
+                  - v{{ vlan.id }}-int
+                parameters: {stp: true, forward-delay: 4}
+            {% endfor %}
+
+    - name: "POST — Regenerar y aplicar netplan limpio"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        echo "Netplan LIMPIO aplicado correctamente"
+      register: post_netplan
+      changed_when: true
+
+    - name: "POST — Reiniciar systemd-networkd"
       ansible.builtin.systemd:
         name: systemd-networkd
         state: restarted
-      ignore_errors: true
+        enabled: yes
+
+    - name: "POST — Reiniciar keepalived"
+      ansible.builtin.systemd:
+        name: keepalived
+        state: restarted
+        enabled: yes
+
+    - name: "POST — Verificar bridges limpios"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ===" && ip addr show bond0 2>/dev/null || true
+        echo "=== INTERLINK ===" && ip addr show {{ nic_int }} 2>/dev/null || true
+        echo "=== BRIDGES ===" && for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do echo "--- $br ---"; ip addr show "$br" 2>/dev/null || true; done
+      changed_when: false
+
+    - name: "POST — Mostrar estado final"
+      ansible.builtin.debug:
+        msg:
+          - "Netplan LIMPIO aplicado en {{ core_id }}"
+          - "Revisa que los bridges NO tengan IPs con: ip addr show"
