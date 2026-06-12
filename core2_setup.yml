@@ -43,9 +43,6 @@
     # IDENTIDAD OSPF (solo para monitoreo LAN interna)
     core_router_id: "10.0.0.2"
 
-
-
-
   roles:
     - linux_core
 
@@ -101,20 +98,61 @@
                   mii-monitor-interval: 100
                   primary: {{ bonded_nics[0] }}
             vlans:
-            {% for vlan in vlans %}
-              v{{ vlan.id }}-trunk1: {id: {{ vlan.id }}, link: {{ nic_trunk1 }} }
-              v{{ vlan.id }}-trunk2: {id: {{ vlan.id }}, link: {{ nic_trunk2 }} }
-              v{{ vlan.id }}-int:    {id: {{ vlan.id }}, link: {{ nic_int }} }
-            {% endfor %}
+              v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}          
+              v10-trunk2: {id: 10, link: {{ nic_trunk2 }}}
+              v10-int:    {id: 10, link: {{ nic_int }}}              
+              v20-trunk1: {id: 20, link: {{ nic_trunk1 }}}
+              v20-trunk2: {id: 20, link: {{ nic_trunk2 }}}
+              v20-int:    {id: 20, link: {{ nic_int }}}
+              v21-trunk1: {id: 21, link: {{ nic_trunk1 }}}
+              v21-trunk2: {id: 21, link: {{ nic_trunk2 }}}
+              v21-int:    {id: 21, link: {{ nic_int }}}
+              v30-trunk1: {id: 30, link: {{ nic_trunk1 }}}          
+              v30-trunk2: {id: 30, link: {{ nic_trunk2 }}}
+              v30-int:    {id: 30, link: {{ nic_int }}}            
+              v40-trunk1: {id: 40, link: {{ nic_trunk1 }}}        
+              v40-trunk2: {id: 40, link: {{ nic_trunk2 }}}
+              v40-int:    {id: 40, link: {{ nic_int }}}
+              v50-trunk1: {id: 50, link: {{ nic_trunk1 }}}          
+              v50-trunk2: {id: 50, link: {{ nic_trunk2 }}}
+              v50-int:    {id: 50, link: {{ nic_int }}}
+              v60-trunk1: {id: 60, link: {{ nic_trunk1 }}}
+              v60-trunk2: {id: 60, link: {{ nic_trunk2 }}}          
+              v60-int:    {id: 60, link: {{ nic_int }}}             
+              v70-trunk1: {id: 70, link: {{ nic_trunk1 }}}          
+              v70-trunk2: {id: 70, link: {{ nic_trunk2 }}}
+              v70-int:    {id: 70, link: {{ nic_int }}}
+              v999-trunk1: {id: 999, link: {{ nic_trunk1 }}}      
+              v999-trunk2: {id: 999, link: {{ nic_trunk2 }}}
+              v999-int:    {id: 999, link: {{ nic_int }}}
             bridges:
-            {% for vlan in vlans %}
-              br{{ vlan.id }}:
-                interfaces:
-                  - v{{ vlan.id }}-trunk1
-                  - v{{ vlan.id }}-trunk2
-                  - v{{ vlan.id }}-int
+              br10:
+                interfaces: [v10-trunk1, v10-trunk2, v10-int]
                 parameters: {stp: true, forward-delay: 4}
-            {% endfor %}
+              br20:
+                interfaces: [v20-trunk1, v20-trunk2, v20-int]
+                parameters: {stp: true, forward-delay: 4}
+              br21:
+                interfaces: [v21-trunk1, v21-trunk2, v21-int]
+                parameters: {stp: true, forward-delay: 4}              
+              br30:
+                interfaces: [v30-trunk1, v30-trunk2, v30-int]
+                parameters: {stp: true, forward-delay: 4}
+              br40:
+                interfaces: [v40-trunk1, v40-trunk2, v40-int]
+                parameters: {stp: true, forward-delay: 4}
+              br50:
+                interfaces: [v50-trunk1, v50-trunk2, v50-int]      
+                parameters: {stp: true, forward-delay: 4}
+              br60:
+                interfaces: [v60-trunk1, v60-trunk2, v60-int]
+                parameters: {stp: true, forward-delay: 4}
+              br70:
+                interfaces: [v70-trunk1, v70-trunk2, v70-int]
+                parameters: {stp: true, forward-delay: 4}
+              br999:
+                interfaces: [v999-trunk1, v999-trunk2, v999-int]
+                parameters: {stp: true, forward-delay: 4}
 
     - name: "POST — Regenerar y aplicar netplan limpio"
       ansible.builtin.shell: |
