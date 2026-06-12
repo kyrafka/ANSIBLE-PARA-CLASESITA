@@ -1,0 +1,131 @@
+---
+# ============================================================================
+# verificar_core1.yml — Verificación completa de Core 1 (MASTER)
+# ============================================================================
+# Ejecutar con: sudo ansible-playbook verificar_core1.yml
+# ============================================================================
+
+- name: "Verificación HA — Core 1"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: no
+
+  vars:
+    core_id: "core1"
+    peer_ip: "10.0.0.2"
+    vips:
+      - "192.168.11.1"
+      - "192.168.12.1"
+      - "192.168.16.1"
+
+  tasks:
+    - name: "[1/8] Verificar bond0"
+      shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0
+        cat /proc/net/bonding/bond0 2>/dev/null || echo "bond0 no activo"
+      register: bond0_output
+      changed_when: false
+
+    - name: "[2/8] Verificar interlink"
+      shell: |
+        echo "=== INTERLINK ==="
+        ip addr show ens38
+        ping -c 2 {{ peer_ip }}
+      register: interlink_output
+      changed_when: false
+      ignore_errors: true
+
+    - name: "[3/8] Verificar bridges y STP"
+      shell: |
+        echo "=== BRIDGES ==="
+        ip link show type bridge
+        echo ""
+        echo "=== STP br10 ==="
+        cat /sys/class/net/br10/bridge/stp_state 2>/dev/null && echo "STP ON" || echo "STP OFF"
+      register: bridge_output
+      changed_when: false
+
+    - name: "[4/8] Verificar Keepalived"
+      shell: |
+        echo "=== KEEPALIVED ==="
+        systemctl is-active keepalived
+        systemctl is-enabled keepalived 2>/dev/null || echo "no enabled"
+        echo ""
+        echo "=== VIPs en este nodo ==="
+        ip addr | grep -E "{{ vips | join('|') }}" || echo "No soy MASTER (sin VIPs)"
+      register: keepalived_output
+      changed_when: false
+
+    - name: "[5/8] Verificar DNS e Internet"
+      shell: |
+        echo "=== DNS ==="
+        cat /etc/resolv.conf
+        echo ""
+        echo "=== PING DNS ==="
+        ping -c 2 google.com || echo "DNS FALLA"
+      register: dns_output
+      changed_when: false
+      ignore_errors: true
+
+    - name: "[6/8] Verificar rutas"
+      shell: |
+        echo "=== RUTAS ==="
+        ip route | head -10
+      register: route_output
+      changed_when: false
+
+    - name: "[7/8] Verificar VLAN interfaces"
+      shell: |
+        echo "=== VLAN INTERFACES ==="
+        ip link show | grep "v[0-9]" | head -20
+      register: vlan_output
+      changed_when: false
+
+    - name: "[8/8] Verificar FRR/OSPF"
+      shell: |
+        echo "=== FRR/OSPF ==="
+        systemctl is-active frr || echo "FRR no activo"
+        vtysh -c "show ip ospf neighbor" 2>/dev/null || echo "No se pudo consultar OSPF"
+      register: frr_output
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Mostrar resultados"
+      debug:
+        msg: |
+          =========================================
+          RESULTADOS VERIFICACIÓN — {{ core_id | upper }}
+          =========================================
+
+          [1] BOND0:
+          {{ bond0_output.stdout }}
+
+          [2] INTERLINK:
+          {{ interlink_output.stdout }}
+
+          [3] BRIDGES/STP:
+          {{ bridge_output.stdout }}
+
+          [4] KEEPALIVED:
+          {{ keepalived_output.stdout }}
+
+          [5] DNS/INTERNET:
+          {{ dns_output.stdout }}
+
+          [6] RUTAS:
+          {{ route_output.stdout }}
+
+          [7] VLANS:
+          {{ vlan_output.stdout }}
+
+          [8] FRR/OSPF:
+          {{ frr_output.stdout }}
+
+          =========================================
+          EJECUTAR PRUEBA DE FAILOVER:
+          1. Apagar Core 1
+          2. Ejecutar verificar_core2.yml
+          3. Verificar que tenga VIPs
+          =========================================
