@@ -1,0 +1,39 @@
+---
+- name: "DIAGNOSTICO — Verificar qué pasa con netplan"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    core_id: "core1"
+    nic_trunk1: "ens36"
+    nic_trunk2: "ens37"
+    nic_int: "ens38"
+    bonded_nics:
+      - "ens34"
+      - "ens35"
+    lan_ip: "192.168.10.20/24"
+    lan_gateway: "192.168.10.1"
+    assign_bridge_ips: false
+    core_unicast_src_ip: "10.0.0.1"
+
+  tasks:
+    - name: "DEBUG — Verificar variable"
+      debug:
+        msg: "assign_bridge_ips = {{ assign_bridge_ips }} | tipo = {{ assign_bridge_ips | type_debug }}"
+
+    - name: "RENDER — Renderizar netplan a /tmp para verificar"
+      template:
+        src: "roles/linux_core/templates/netplan.yaml.j2"
+        dest: "/tmp/netplan-renderizado.yaml"
+        force: yes
+
+    - name: "MOSTRAR — Contenido del netplan generado"
+      command: cat /tmp/netplan-renderizado.yaml
+      register: netplan_renderizado
+      changed_when: false
+
+    - name: "DEBUG — Resultado"
+      debug:
+        var: netplan_renderizado.stdout
