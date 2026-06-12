@@ -24,13 +24,15 @@
     core_ip_suffix: 4
 
     # INTERFACES REALES (Mapeadas de tu ESXi):
-    nic_fw: "ens34"         # Trunk 1 (Hacia pfSense Master)
-    nic_acc: "ens35"        # Puerto de Acceso (NO USAR)
-    nic_int: "ens36"        # Interlink fisico (Cruce directo al Core 2)
-    nic_internet: "ens37"   # LAN pfSense Master (192.168.10.x) - Gateway internet
-    nic_trunk2: "ens40"     # Trunk 2 (Hacia pfSense Backup) - para HA
+    nic_fw: "ens34"      # Trunk 1 (Hacia pfSense Master)
+    nic_acc: "ens35"     # Puerto de Acceso (NO USAR)
+    nic_int: "ens36"     # Interlink físico (Cruce directo al Core 2)
+    nic_trunk2: "ens40"  # Trunk 2 (Hacia pfSense Backup)
 
-    # Configuración LAN para internet
+    # LAN INTERFACES (HA por bonding):
+    bonded_nics:
+      - "ens37"     # LAN-1 → pfSense Master (192.168.10.1)
+      - "ens41"     # LAN-2 → pfSense Backup (192.168.10.1)
     lan_ip: "192.168.10.20/24"
     lan_gateway: "192.168.10.1"
 

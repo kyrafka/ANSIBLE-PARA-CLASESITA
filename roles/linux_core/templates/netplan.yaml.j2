@@ -16,6 +16,33 @@ network:
         - {{ core_unicast_src_ip }}/30
     {{ nic_trunk2 }}:
       dhcp4: no
+{% if bonded_nics is defined and bonded_nics | length >= 2 %}
+{% for nic in bonded_nics %}
+    {{ nic }}:
+      dhcp4: no
+      optional: true
+{% endfor %}
+{% endif %}
+{% if bonded_nics is defined and bonded_nics | length >= 2 %}
+
+  bonds:
+    bond0:
+      interfaces:
+{% for nic in bonded_nics %}
+        - {{ nic }}
+{% endfor %}
+      addresses:
+        - {{ lan_ip }}
+      routes:
+        - to: default
+          via: {{ lan_gateway }}
+        - to: 10.0.0.0/8
+          via: {{ lan_gateway }}
+      parameters:
+        mode: active-backup
+        mii-monitor-interval: 100
+        primary: {{ bonded_nics[0] }}
+{% endif %}
 
   vlans:
 {% for vlan in vlans %}

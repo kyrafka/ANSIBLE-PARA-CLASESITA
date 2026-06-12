@@ -24,11 +24,17 @@
     core_ip_suffix: 5
 
     # INTERFACES REALES DE CORE 2:
-    nic_fw: "ens34"         # Trunk 2 (Hacia pfSense Backup)
-    nic_acc: "ens35"        # Puerto de Acceso
-    nic_int: "ens36"        # Interlink fisico (Cruce directo al Core 1)
-    nic_internet: "ens39"   # Internet momentaneo
-    nic_trunk2: "ens40"     # Trunk 1 (Hacia pfSense Master) - para HA
+    nic_fw: "ens34"      # Trunk 2 (Hacia pfSense Backup)
+    nic_acc: "ens35"     # Puerto de Acceso (NO USAR)
+    nic_int: "ens36"     # Interlink físico (Cruce directo al Core 1)
+    nic_trunk2: "ens40"  # Trunk 1 (Hacia pfSense Master)
+
+    # LAN INTERFACES (HA por bonding):
+    bonded_nics:
+      - "ens39"     # LAN-1 → pfSense Master (192.168.10.1)
+      - "ens41"     # LAN-2 → pfSense Backup (192.168.10.1)
+    lan_ip: "192.168.10.30/24"
+    lan_gateway: "192.168.10.1"
 
     # LATIDOS KEEPALIVED (VRRP UNICAST):
     core_unicast_src_ip: "10.0.0.2"
