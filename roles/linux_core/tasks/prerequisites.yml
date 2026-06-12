@@ -16,7 +16,7 @@
   ansible.builtin.stat:
     path: "/sys/class/net/{{ item }}"
   loop:
-    - "{{ nic_fw }}"
+    - "{{ nic_trunk1 }}"
     - "{{ nic_acc }}"
     - "{{ nic_int }}"
   register: nic_exists

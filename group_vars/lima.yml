@@ -87,19 +87,19 @@ core2_interlink: "10.0.0.2"
 
 # --- Interfaces Core 1 (Maestro) ---
 core1_interfaces:
-  nic_fw: "ens34"
-  nic_acc: "ens35"
+  nic_trunk1: "ens34"
+  nic_trunk2: "ens42"
   nic_int: "ens36"
-  nic_internet: "ens37"
-  nic_trunk2: "ens40"
+  bonded_nics: ["ens37", "ens40"]
+  lan_ip: "192.168.10.20/24"
 
 # --- Interfaces Core 2 (Backup) ---
 core2_interfaces:
-  nic_fw: "ens34"
-  nic_acc: "ens35"
+  nic_trunk1: "ens42"
+  nic_trunk2: "ens34"
   nic_int: "ens36"
-  nic_internet: "ens39"
-  nic_trunk2: "ens40"
+  bonded_nics: ["ens40", "ens39"]
+  lan_ip: "192.168.10.30/24"
 
 # --- Keepalived ---
 keepalived_auth_pass: "AN3IBL3P4SS"

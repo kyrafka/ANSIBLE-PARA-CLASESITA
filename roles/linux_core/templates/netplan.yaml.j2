@@ -1,6 +1,7 @@
 # ============================================================================
 # Configuracion de Netplan para Linux Core ({{ core_id | upper }})
 # ============================================================================
+# Full HA: 2x Trunks + 2x LANs (bonding) + Interlink
 # Generado automaticamente por Ansible — NO EDITAR A MANO
 # ============================================================================
 
@@ -8,14 +9,14 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    {{ nic_fw }}:
+    {{ nic_trunk1 }}:
+      dhcp4: no
+    {{ nic_trunk2 }}:
       dhcp4: no
     {{ nic_int }}:
       dhcp4: no
       addresses:
         - {{ core_unicast_src_ip }}/30
-    {{ nic_trunk2 }}:
-      dhcp4: no
 {% if bonded_nics is defined and bonded_nics | length >= 2 %}
 {% for nic in bonded_nics %}
     {{ nic }}:
@@ -46,9 +47,9 @@ network:
 
   vlans:
 {% for vlan in vlans %}
-    v{{ vlan.id }}-fw:
+    v{{ vlan.id }}-trunk1:
       id: {{ vlan.id }}
-      link: {{ nic_fw }}
+      link: {{ nic_trunk1 }}
     v{{ vlan.id }}-trunk2:
       id: {{ vlan.id }}
       link: {{ nic_trunk2 }}
@@ -61,7 +62,7 @@ network:
 {% for vlan in vlans %}
     br{{ vlan.id }}:
       interfaces:
-        - v{{ vlan.id }}-fw
+        - v{{ vlan.id }}-trunk1
         - v{{ vlan.id }}-trunk2
         - v{{ vlan.id }}-int
       addresses:

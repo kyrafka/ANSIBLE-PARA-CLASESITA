@@ -2,10 +2,7 @@
 # =============================================================================
 # core2_setup.yml — Configurador de Core 2 (Keepalived BACKUP)
 # =============================================================================
-# Pre-requisitos:
-#   - Ejecutar con: sudo ansible-playbook core2_setup.yml
-#   - Ubuntu 24 Server (netplan) instalado y con apt funcional
-#   - Las NICs definidas aquí deben existir en el ESXi para Core 2
+# Full HA: 2 Trunks + Bonded LANs + Interlink
 # =============================================================================
 
 - name: "Configura Core 2 — Keepalived BACKUP"
@@ -24,15 +21,14 @@
     core_ip_suffix: 5
 
     # INTERFACES REALES DE CORE 2:
-    nic_fw: "ens34"      # Trunk 2 (Hacia pfSense Backup)
-    nic_acc: "ens35"     # Puerto de Acceso (NO USAR)
-    nic_int: "ens36"     # Interlink físico (Cruce directo al Core 1)
-    nic_trunk2: "ens40"  # Trunk 1 (Hacia pfSense Master)
+    nic_trunk1: "ens42"     # Trunk 1 (Hacia pfSense Master)
+    nic_trunk2: "ens34"     # Trunk 2 (Hacia pfSense Backup) - HA
+    nic_int: "ens36"        # Interlink físico (Cruce directo al Core 1)
 
     # LAN INTERFACES (HA por bonding):
     bonded_nics:
-      - "ens39"     # LAN-1 → pfSense Master (192.168.10.1)
-      - "ens41"     # LAN-2 → pfSense Backup (192.168.10.1)
+      - "ens40"     # LAN-1 → pfSense Master (192.168.10.1)
+      - "ens39"     # LAN-2 → pfSense Backup (192.168.10.1)
     lan_ip: "192.168.10.30/24"
     lan_gateway: "192.168.10.1"
 

@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 
 # Nombres de interfaces por defecto (Se sobreescriben en el playbook de cada Core)
-nic_fw: "ens34"
+nic_trunk1: "ens34"
 nic_acc: "ens35"
 nic_int: "ens36"
 nic_internet: "ens37"

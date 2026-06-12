@@ -257,7 +257,7 @@ ip route show | grep wg
 
 | Síntoma | Causa | Solución |
 |---|---|---|
-| `Fatal: interface X no existe` | NICs con nombres diferentes | Editar `nic_fw`, `nic_lan` en el playbook |
+| `Fatal: interface X no existe` | NICs con nombres diferentes | Editar `nic_trunk1`, `bonded_nics` en el playbook |
 | `netplan generate` falla | Sintaxis YAML incorrecta | Verificar templates/netplan.yaml.j2 |
 | OSPF no forma vecindad | Sin conectividad interlink | Ping 10.0.0.1 ↔ 10.0.0.2 |
 | VIP duplicadas (split-brain) | Ambos cores MASTER | Verificar conectividad interlink y priority |

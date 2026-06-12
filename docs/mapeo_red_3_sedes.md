@@ -21,21 +21,23 @@
 # CARP VIP: 192.168.16.1
 
 ## Core 1 (MASTER):
-# - ens34: Trunk → pfSense Master (brX-vlans)
-# - ens36: Interlink 10.0.0.1
-# - ens37: LAN-1 → pfSense Master (192.168.10.1) - Gateway internet
-# - ens40: Trunk → pfSense Backup (brX-vlans)
-# - ens41: LAN-2 → pfSense Backup (192.168.10.1) - Gateway internet HA
-# Bonding ens37+ens41: bond0 con IP 192.168.10.20/24 (HA failover)
+# - ens34: Trunk 1 → pfSense Master (brX-vlans via STP)
+# - ens36: Interlink 10.0.0.1/30 (Core 1 ↔ Core 2)
+# - ens37: LAN-1 → pfSense Master (192.168.10.1) via bond0
+# - ens40: LAN-2 → pfSense Backup (192.168.10.1) via bond0
+# - ens41: NO USAR (internet momentaneo - desactivado)
+# - ens42: Trunk 2 → pfSense Backup (brX-vlans via STP)
+# Bonding ens37+ens40: bond0 con IP 192.168.10.20/24 (active-backup, HA failover)
 # VIPs Keepalived en cada VLAN
 
 ## Core 2 (BACKUP):
-# - ens34: Trunk → pfSense Backup (brX-vlans)
-# - ens36: Interlink 10.0.0.2
-# - ens39: LAN-1 → pfSense Master (192.168.10.1) - Gateway internet
-# - ens40: Trunk → pfSense Master (brX-vlans)
-# - ens41: LAN-2 → pfSense Backup (192.168.10.1) - Gateway internet HA
-# Bonding ens39+ens41: bond0 con IP 192.168.10.30/24 (HA failover)
+# - ens34: Trunk 2 → pfSense Backup (brX-vlans via STP)
+# - ens36: Interlink 10.0.0.2/30 (Core 2 ↔ Core 1)
+# - ens39: LAN-2 → pfSense Backup (192.168.10.1) via bond0
+# - ens40: LAN-1 → pfSense Master (192.168.10.1) via bond0
+# - ens41: NO USAR (internet momentaneo - desactivado)
+# - ens42: Trunk 1 → pfSense Master (brX-vlans via STP)
+# Bonding ens40+ens39: bond0 con IP 192.168.10.30/24 (active-backup, HA failover)
 # VIPs Keepalived en cada VLAN
 
 ## VLANs Lima y Subnets:
@@ -68,23 +70,25 @@
 # .30 = Core 2 (bond0: ens39+ens41)
 
 # TABLA RESUMEN DE INTERFACES (Lima):
-# +------------+------------+--------------------------------+------------------+
-# | Core       | Interfaz   | Descripción                    | IP/Mask          |
-# +------------+------------+--------------------------------+------------------+
-# | Core 1     | ens34      | Trunk 1 → pfSense Master       |802.1q brX-vlans  |
-# | Core 1     | ens36      | Interlink Core 1→2             | 10.0.0.1/30      |
-# | Core 1     | ens37      | LAN-1 → pfSense Master         | Bond Slave       |
-# | Core 1     | ens40      | Trunk 2 → pfSense Backup       |802.1q brX-vlans  |
-# | Core 1     | ens41      | LAN-2 → pfSense Backup         | Bond Slave       |
-# | Core 1     | bond0      | Bond (ens37+ens41)             | 192.168.10.20/24 |
-# +------------+------------+--------------------------------+------------------+
-# | Core 2     | ens34      | Trunk 2 → pfSense Backup       |802.1q brX-vlans  |
-# | Core 2     | ens36      | Interlink Core 2→1             | 10.0.0.2/30      |
-# | Core 2     | ens39      | LAN-1 → pfSense Master         | Bond Slave       |
-# | Core 2     | ens40      | Trunk 1 → pfSense Master       |802.1q brX-vlans  |
-# | Core 2     | ens41      | LAN-2 → pfSense Backup         | Bond Slave       |
-# | Core 2     | bond0      | Bond (ens39+ens41)             | 192.168.10.30/24 |
-# +------------+------------+--------------------------------+------------------+
+# +------------+-----------+--------------------------------+------------------+
+# | Core       | Interfaz  | Descripción                    | IP/Mask          |
+# +------------+-----------+--------------------------------+------------------+
+# | Core 1     | ens34     | Trunk 1 → pfSense Master       |802.1q brX-vlans  |
+# | Core 1     | ens36     | Interlink Core 1↔2             | 10.0.0.1/30      |
+# | Core 1     | ens37     | LAN-1 → pfSense Master         | Bond Slave       |
+# | Core 1     | ens40     | LAN-2 → pfSense Backup         | Bond Slave       |
+# | Core 1     | ens41     | NO USAR (internet momentaneo) | -                |
+# | Core 1     | ens42     | Trunk 2 → pfSense Backup       |802.1q brX-vlans  |
+# | Core 1     | bond0     | Bond (ens37+ens40)             | 192.168.10.20/24 |
+# +------------+-----------+--------------------------------+------------------+
+# | Core 2     | ens34     | Trunk 2 → pfSense Backup       |802.1q brX-vlans  |
+# | Core 2     | ens36     | Interlink Core 2↔1             | 10.0.0.2/30      |
+# | Core 2     | ens39     | LAN-2 → pfSense Backup         | Bond Slave       |
+# | Core 2     | ens40     | LAN-1 → pfSense Master         | Bond Slave       |
+# | Core 2     | ens41     | NO USAR (internet momentaneo) | -                |
+# | Core 2     | ens42     | Trunk 1 → pfSense Master       |802.1q brX-vlans  |
+# | Core 2     | bond0     | Bond (ens40+ens39)             | 192.168.10.30/24 |
+# +------------+-----------+--------------------------------+------------------+
 
 # =============================================================================
 # AREQUIPA - SEDE REMOTA (Simple)

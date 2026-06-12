@@ -2,10 +2,7 @@
 # =============================================================================
 # core1_setup.yml — Configurador de Core 1 (Keepalived MASTER)
 # =============================================================================
-# Pre-requisitos:
-#   - Ejecutar con: sudo ansible-playbook core1_setup.yml
-#   - Ubuntu 24 Server (netplan) instalado y con apt funcional
-#   - Las NICs definidas aquí deben existir en el ESXi para Core 1
+# Full HA: 2 Trunks + Bonded LANs + Interlink
 # =============================================================================
 
 - name: "Configura Core 1 — Keepalived MASTER"
@@ -24,15 +21,14 @@
     core_ip_suffix: 4
 
     # INTERFACES REALES (Mapeadas de tu ESXi):
-    nic_fw: "ens34"      # Trunk 1 (Hacia pfSense Master)
-    nic_acc: "ens35"     # Puerto de Acceso (NO USAR)
-    nic_int: "ens36"     # Interlink físico (Cruce directo al Core 2)
-    nic_trunk2: "ens40"  # Trunk 2 (Hacia pfSense Backup)
+    nic_trunk1: "ens34"     # Trunk 1 (Hacia pfSense Master)
+    nic_trunk2: "ens42"     # Trunk 2 (Hacia pfSense Backup) - HA
+    nic_int: "ens36"        # Interlink físico (Cruce directo al Core 2)
 
     # LAN INTERFACES (HA por bonding):
     bonded_nics:
       - "ens37"     # LAN-1 → pfSense Master (192.168.10.1)
-      - "ens41"     # LAN-2 → pfSense Backup (192.168.10.1)
+      - "ens40"     # LAN-2 → pfSense Backup (192.168.10.1)
     lan_ip: "192.168.10.20/24"
     lan_gateway: "192.168.10.1"
 
