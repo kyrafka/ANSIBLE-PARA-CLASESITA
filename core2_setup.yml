@@ -2,7 +2,7 @@
 # =============================================================================
 # core2_setup.yml — Configurador de Core 2 (Keepalived BACKUP)
 # =============================================================================
-# Full HA: 2 Trunks + Bonded LANs + Interlink
+# Full HA: Bonded LANs + 2x Trunks + Interlink
 # =============================================================================
 
 - name: "Configura Core 2 — Keepalived BACKUP"
@@ -20,15 +20,15 @@
     core_priority: 100
     core_ip_suffix: 5
 
-    # INTERFACES REALES DE CORE 2:
-    nic_trunk1: "ens42"     # Trunk 1 (Hacia pfSense Master)
-    nic_trunk2: "ens34"     # Trunk 2 (Hacia pfSense Backup) - HA
-    nic_int: "ens36"        # Interlink físico (Cruce directo al Core 1)
+    # INTERFACES (Mapeo REAL de tu ESXi):
+    nic_trunk1: "ens36"     # Trunk 1 — pfSense
+    nic_trunk2: "ens37"     # Trunk 2 — pfSense
+    nic_int: "ens38"        # Interlink físico (Core 2 ↔ Core 1)
 
-    # LAN INTERFACES (HA por bonding):
+    # LAN INTERFACES (Bonding HA):
     bonded_nics:
-      - "ens40"     # LAN-1 → pfSense Master (192.168.10.1)
-      - "ens39"     # LAN-2 → pfSense Backup (192.168.10.1)
+      - "ens34"     # LAN-1 — pfSense (192.168.10.1)
+      - "ens35"     # LAN-2 — pfSense (192.168.10.1)
     lan_ip: "192.168.10.30/24"
     lan_gateway: "192.168.10.1"
 
