@@ -44,9 +44,8 @@
     core_router_id: "10.0.0.2"
 
   pre_tasks:
-    - name: "PRE-LIMPIEZA — Stop networkd y flush IPs viejas de bridges"
+    - name: "PRE-LIMPIEZA — Flush IPs viejas SIN detener systemd-networkd"
       ansible.builtin.shell: |
-        systemctl stop systemd-networkd 2>/dev/null || true
         for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{print $2}' | sed 's/://'); do
           ip addr flush dev "$br" 2>/dev/null || true
         done
