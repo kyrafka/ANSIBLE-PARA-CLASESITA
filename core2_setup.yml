@@ -44,12 +44,33 @@
     core_router_id: "10.0.0.2"
 
   pre_tasks:
-    - name: "PRE-LIMPIEZA — Flush IPs viejas SIN detener systemd-networkd"
+    - name: "NUCLEAR — Backup y destruir red actual completamente"
       ansible.builtin.shell: |
+        # Backup
+        BKP="/听众/netplan-nuclear-$(date +%s)"
+        cp -r /etc/netplan "$BKP" 2>/dev/null || true
+        echo "Backup en $BKP"
+        
+        # Destruir TODOS los bridges
         for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{print $2}' | sed 's/://'); do
-          ip addr flush dev "$br" 2>/dev/null || true
+          ip link set "$br" down 2>/dev/null || true
+          ip link delete "$br" 2>/dev/null || true
         done
-        echo "PRE-LIMPIO"
+        
+        # Destruir VLANs
+        for vlan in $(ip link show type vlan 2>/dev/null | awk '/^[0-9]+: v/{print $2}' | sed 's/://'); do
+          ip link delete "$vlan" 2>/dev/null || true
+        done
+        
+        # Borrar TODA config netplan vieja
+        rm -f /etc/netplan/*.yaml
+        rm -f /run/systemd/network/*.network 2>/dev/null || true
+        rm -f /etc/systemd/network/*.network 2>/dev/null || true
+        
+        # Reiniciar systemd para que olvide todo
+        systemctl restart systemd-networkd 2>/dev/null || true
+        
+        echo "NUCLEAR-DONE"
       changed_when: false
       ignore_errors: true
 
