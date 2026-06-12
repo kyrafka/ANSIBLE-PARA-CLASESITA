@@ -154,6 +154,13 @@
                 interfaces: [v999-trunk1, v999-trunk2, v999-int]
                 parameters: {stp: true, forward-delay: 4}
 
+    - name: "POST — Flush IPs de bridges antes de aplicar netplan limpio"
+      ansible.builtin.shell: |
+        for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do
+          ip addr flush dev "$br" 2>/dev/null || true
+        done
+        echo "Flushed bridge IPs"
+
     - name: "POST — Regenerar y aplicar netplan limpio"
       ansible.builtin.shell: |
         netplan generate
