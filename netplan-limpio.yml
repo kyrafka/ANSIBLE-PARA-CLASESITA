@@ -1,0 +1,235 @@
+---
+# ============================================================================
+# netplan-limpio.yml — Configura Netplan LIMPIO en Cores (sin IPs en bridges)
+# ============================================================================
+# SOLO escribe bonding + interlink. Los bridges son L2 puros (sin addresses).
+# Ejecutar: ansible-playbook netplan-limpio.yml -e "core_id=core1"
+# Ejecutar: ansible-playbook netplan-limpio.yml -e "core_id=core2"
+# ============================================================================
+
+- name: "Netplan Limpio para {{ core_id | upper }}"
+  hosts: localhost
+  connection: local
+  become: yes
+  gather_facts: no
+
+  # --- Puedes sobreescribir estas variables de ser necesario ---
+  vars:
+    nic_trunk1: "ens36"
+    nic_trunk2: "ens37"
+    nic_int:    "ens38"
+    bonded_nics: ["ens34", "ens35"]
+
+  # --- Lógica de IPs según el core ---
+    _core_ips:
+      core1:
+        interlink_ip: "10.0.0.1/30"
+        bond_ip:      "192.168.10.20/24"
+        lan_gateway:  "192.168.10.1"
+      core2:
+        interlink_ip: "10.0.0.2/30"
+        bond_ip:      "192.168.10.30/24"
+        lan_gateway:  "192.168.10.1"
+
+    current_ip: "{{ _core_ips[core_id].interlink_ip }}"
+    current_bond: "{{ _core_ips[core_id].bond_ip }}"
+    current_gw:   "{{ _core_ips[core_id].lan_gateway }}"
+
+  pre_tasks:
+    - name: "NUCLEAR — Limpiar todo rastro de red anterior"
+      ansible.builtin.shell: |
+        set -e
+        BKP="/tmp/netplan-nuclear-$(date +%s)"
+        cp -r /etc/netplan "$BKP" 2>/dev/null || true
+
+        # Destruir bridges
+        for br in $(ip link show type bridge 2>/dev/null | awk '/^[0-9]+: br/{gsub(/:/,"",$2); print $2}'); do
+          ip link set "$br" down 2>/dev/null || true
+          ip link delete "$br" 2>/dev/null || true
+        done
+
+        # Destruir VLANs
+        for vlan in $(ip link show type vlan 2>/dev/null | awk '/^[0-9]+: v/{gsub(/:/,"",$2); print $2}'); do
+          ip link delete "$vlan" 2>/dev/null || true
+        done
+
+        # Destruir bond
+        ip link set bond0 down 2>/dev/null || true
+        ip link delete bond0 2>/dev/null || true
+
+        # Limpiar netplan viejo
+        rm -f /etc/netplan/*.yaml
+        rm -f /run/systemd/network/*
+        rm -f /etc/systemd/network/*
+
+        echo "NUCLEAR-LISTO"
+      register: nuclear
+      changed_when: false
+
+    - name: "Mostrar resultado nuclear"
+      ansible.builtin.debug:
+        msg: "{{ nuclear.stdout_lines | default([]) }}"
+
+  tasks:
+    - name: "NETPLAN — Escribir configuración LIMPIA"
+      ansible.builtin.copy:
+        dest: "/etc/netplan/50-cloud-init.yaml"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # ============================================================================
+          # Netplan Limpio — {{ core_id | upper }}
+          # SOLO bonding + interlink. Los bridges son L2 puros.
+          # ============================================================================
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              {{ nic_trunk1 }}:
+                dhcp4: no
+              {{ nic_trunk2 }}:
+                dhcp4: no
+              {{ nic_int }}:
+                dhcp4: no
+                addresses:
+                  - {{ current_ip }}
+              {{ bonded_nics[0] }}:
+                dhcp4: no
+              {{ bonded_nics[1] }}:
+                dhcp4: no
+              ens39:
+                dhcp4: no
+                optional: true
+              ens40:
+                dhcp4: no
+                optional: true
+
+            bonds:
+              bond0:
+                interfaces:
+                  - {{ bonded_nics[0] }}
+                  - {{ bonded_nics[1] }}
+                addresses:
+                  - {{ current_bond }}
+                routes:
+                  - to: default
+                    via: {{ current_gw }}
+                  - to: 10.0.0.0/8
+                    via: {{ current_gw }}
+                nameservers:
+                  addresses:
+                    - 8.8.8.8
+                    - 8.8.4.4
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: {{ bonded_nics[0] }}
+
+            vlans:
+              # --- VLAN 10 ---
+              v10-trunk1: {id: 10, link: {{ nic_trunk1 }} }
+              v10-trunk2: {id: 10, link: {{ nic_trunk2 }} }
+              v10-int:    {id: 10, link: {{ nic_int }} }
+              # --- VLAN 20 ---
+              v20-trunk1: {id: 20, link: {{ nic_trunk1 }} }
+              v20-trunk2: {id: 20, link: {{ nic_trunk2 }} }
+              v20-int:    {id: 20, link: {{ nic_int }} }
+              # --- VLAN 21 ---
+              v21-trunk1: {id: 21, link: {{ nic_trunk1 }} }
+              v21-trunk2: {id: 21, link: {{ nic_trunk2 }} }
+              v21-int:    {id: 21, link: {{ nic_int }} }
+              # --- VLAN 30 ---
+              v30-trunk1: {id: 30, link: {{ nic_trunk1 }} }
+              v30-trunk2: {id: 30, link: {{ nic_trunk2 }} }
+              v30-int:    {id: 30, link: {{ nic_int }} }
+              # --- VLAN 40 ---
+              v40-trunk1: {id: 40, link: {{ nic_trunk1 }} }
+              v40-trunk2: {id: 40, link: {{ nic_trunk2 }} }
+              v40-int:    {id: 40, link: {{ nic_int }} }
+              # --- VLAN 50 ---
+              v50-trunk1: {id: 50, link: {{ nic_trunk1 }} }
+              v50-trunk2: {id: 50, link: {{ nic_trunk2 }} }
+              v50-int:    {id: 50, link: {{ nic_int }} }
+              # --- VLAN 60 ---
+              v60-trunk1: {id: 60, link: {{ nic_trunk1 }} }
+              v60-trunk2: {id: 60, link: {{ nic_trunk2 }} }
+              v60-int:    {id: 60, link: {{ nic_int }} }
+              # --- VLAN 70 ---
+              v70-trunk1: {id: 70, link: {{ nic_trunk1 }} }
+              v70-trunk2: {id: 70, link: {{ nic_trunk2 }} }
+              v70-int:    {id: 70, link: {{ nic_int }} }
+              # --- VLAN 999 ---
+              v999-trunk1: {id: 999, link: {{ nic_trunk1 }} }
+              v999-trunk2: {id: 999, link: {{ nic_trunk2 }} }
+              v999-int:    {id: 999, link: {{ nic_int }} }
+
+            bridges:
+              br10:
+                interfaces: [v10-trunk1, v10-trunk2, v10-int]
+                parameters: {stp: true, forward-delay: 4}
+              br20:
+                interfaces: [v20-trunk1, v20-trunk2, v20-int]
+                parameters: {stp: true, forward-delay: 4}
+              br21:
+                interfaces: [v21-trunk1, v21-trunk2, v21-int]
+                parameters: {stp: true, forward-delay: 4}
+              br30:
+                interfaces: [v30-trunk1, v30-trunk2, v30-int]
+                parameters: {stp: true, forward-delay: 4}
+              br40:
+                interfaces: [v40-trunk1, v40-trunk2, v40-int]
+                parameters: {stp: true, forward-delay: 4}
+              br50:
+                interfaces: [v50-trunk1, v50-trunk2, v50-int]
+                parameters: {stp: true, forward-delay: 4}
+              br60:
+                interfaces: [v60-trunk1, v60-trunk2, v60-int]
+                parameters: {stp: true, forward-delay: 4}
+              br70:
+                interfaces: [v70-trunk1, v70-trunk2, v70-int]
+                parameters: {stp: true, forward-delay: 4}
+              br999:
+                interfaces: [v999-trunk1, v999-trunk2, v999-int]
+                parameters: {stp: true, forward-delay: 4}
+
+    - name: "NETPLAN — Generar y aplicar"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        echo "Netplan aplicado correctamente"
+      register: netplan_result
+      changed_when: true
+
+    - name: "Verificar estado de interfaces"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ===" && ip addr show bond0 2>/dev/null || true
+        echo "=== INTERLINK ===" && ip addr show {{ nic_int }} 2>/dev/null || true
+        echo "=== BRIDGES ===" && for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do echo "--- $br ---"; ip addr show "$br" 2>/dev/null || true; done
+      register: verification
+      changed_when: false
+
+    - name: "Mostrar estado de red"
+      ansible.builtin.debug:
+        msg:
+          - "Verificación de red finalizada. Revisa esto:"
+          - ""
+          - "{{ verification.stdout }}"
+
+  post_tasks:
+    - name: "Reiniciar systemd-networkd para limpiar caché"
+      ansible.builtin.systemd:
+        name: systemd-networkd
+        state: restarted
+        enabled: yes
+
+    - name: "Mostrar instrucciones finales"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Netplan limpio aplicado en {{ core_id }}"
+          - "=========================================="
+          - "Verifica que los bridges NO tengan IPs:"
+          - "  ip addr show | grep br"
+          - ""
+          - "Si solo ves MAC addresses sin 'inet', ¡perfecto!"
