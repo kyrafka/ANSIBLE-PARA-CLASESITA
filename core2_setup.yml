@@ -25,18 +25,21 @@
     nic_trunk2: "ens37"     # Trunk 2 — pfSense
     nic_int: "ens38"        # Interlink físico (Core 2 ↔ Core 1)
 
+    # SWITCH L2: sin IPs en bridges, todo gateway es pfSense
+    assign_bridge_ips: false
+
     # LAN INTERFACES (Bonding HA):
     bonded_nics:
-      - "ens34"     # LAN-1 — pfSense (192.168.10.1)
-      - "ens35"     # LAN-2 — pfSense (192.168.10.1)
+      - "ens34"     # LAN-1 — pfSense
+      - "ens35"     # LAN-2 — pfSense
     lan_ip: "192.168.10.30/24"
     lan_gateway: "192.168.10.1"
 
-    # LATIDOS KEEPALIVED (VRRP UNICAST):
+    # INTERLINK para monitoreo/estado HA del otro core:
     core_unicast_src_ip: "10.0.0.2"
     core_unicast_peer_ip: "10.0.0.1"
 
-    # IDENTIDAD OSPF
+    # IDENTIDAD OSPF (solo para monitoreo LAN interna)
     core_router_id: "10.0.0.2"
 
   roles:

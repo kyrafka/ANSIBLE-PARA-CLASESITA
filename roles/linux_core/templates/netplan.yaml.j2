@@ -69,8 +69,10 @@ network:
         - v{{ vlan.id }}-trunk1
         - v{{ vlan.id }}-trunk2
         - v{{ vlan.id }}-int
+{% if assign_bridge_ips | default(false) %}
       addresses:
         - "{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}"
+{% endif %}
       parameters:
         stp: true
         forward-delay: 0
