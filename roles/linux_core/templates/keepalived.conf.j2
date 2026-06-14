@@ -54,8 +54,9 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
         check_peer_link
     }
 
-    virtual_ipaddress {
-        {{ vlan.vip }} dev br{{ vlan.id }}
-    }
+    # NOTA: Las VIPs (vlan.vip) NO se asignan aqui.
+    # Las VIPs son gestionadas UNICAMENTE por pfSense via CARP.
+    # Este Keepalived solo monitorea que los bridges y el interlink esten vivos.
+    # Si un Core detecta que su interlink o un bridge baja, alerta.
 }
 {% endfor %}
