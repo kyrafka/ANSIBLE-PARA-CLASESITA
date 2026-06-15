@@ -70,8 +70,8 @@
                 dhcp4: no
               {{ nic_int1 }}:
                 dhcp4: no
-              {{ nic_int2 }}:
-                dhcp4: no
+                addresses:
+                  - {{ core_unicast_src_ip }}/30
               {{ bonded_nics[0] }}:
                 dhcp4: no
               {{ bonded_nics[1] }}:
@@ -98,41 +98,34 @@
                   mode: active-backup
                   mii-monitor-interval: 100
                   primary: {{ bonded_nics[0] }}
-              bond1:
-                interfaces: [{{ nic_int1 }}, {{ nic_int2 }}]
-                addresses: [{{ core_unicast_src_ip }}/30]
-                parameters:
-                  mode: active-backup
-                  mii-monitor-interval: 100
-                  primary: {{ nic_int1 }}
             vlans:
               v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}
               v10-trunk2: {id: 10, link: {{ nic_trunk2 }}}
-              v10-int:    {id: 10, link: bond1}
+              v10-int:    {id: 10, link: {{ nic_int1 }}}
               v20-trunk1: {id: 20, link: {{ nic_trunk1 }}}
               v20-trunk2: {id: 20, link: {{ nic_trunk2 }}}
-              v20-int:    {id: 20, link: bond1}
+              v20-int:    {id: 20, link: {{ nic_int1 }}}
               v21-trunk1: {id: 21, link: {{ nic_trunk1 }}}
               v21-trunk2: {id: 21, link: {{ nic_trunk2 }}}
-              v21-int:    {id: 21, link: bond1}
+              v21-int:    {id: 21, link: {{ nic_int1 }}}
               v30-trunk1: {id: 30, link: {{ nic_trunk1 }}}
               v30-trunk2: {id: 30, link: {{ nic_trunk2 }}}
-              v30-int:    {id: 30, link: bond1}
+              v30-int:    {id: 30, link: {{ nic_int1 }}}
               v40-trunk1: {id: 40, link: {{ nic_trunk1 }}}
               v40-trunk2: {id: 40, link: {{ nic_trunk2 }}}
-              v40-int:    {id: 40, link: bond1}
+              v40-int:    {id: 40, link: {{ nic_int1 }}}
               v50-trunk1: {id: 50, link: {{ nic_trunk1 }}}
               v50-trunk2: {id: 50, link: {{ nic_trunk2 }}}
-              v50-int:    {id: 50, link: bond1}
+              v50-int:    {id: 50, link: {{ nic_int1 }}}
               v60-trunk1: {id: 60, link: {{ nic_trunk1 }}}
               v60-trunk2: {id: 60, link: {{ nic_trunk2 }}}
-              v60-int:    {id: 60, link: bond1}
+              v60-int:    {id: 60, link: {{ nic_int1 }}}
               v70-trunk1: {id: 70, link: {{ nic_trunk1 }}}
               v70-trunk2: {id: 70, link: {{ nic_trunk2 }}}
-              v70-int:    {id: 70, link: bond1}
+              v70-int:    {id: 70, link: {{ nic_int1 }}}
               v999-trunk1: {id: 999, link: {{ nic_trunk1 }}}
               v999-trunk2: {id: 999, link: {{ nic_trunk2 }}}
-              v999-int:    {id: 999, link: bond1}
+              v999-int:    {id: 999, link: {{ nic_int1 }}}
             bridges:
               br10:
                 interfaces: [v10-trunk1, v10-trunk2, v10-int]
