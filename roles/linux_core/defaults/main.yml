@@ -7,6 +7,7 @@ nic_trunk1: "ens34"
 nic_acc: "ens35"
 nic_int: "ens36"
 nic_internet: "ens37"
+nic_trunk2: "ens37"
 
 # Ficheros de configuración del sistema
 netplan_config_file: "/etc/netplan/50-cloud-init.yaml"
