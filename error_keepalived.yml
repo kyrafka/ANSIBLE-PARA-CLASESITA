@@ -5,117 +5,52 @@
   become: true
   gather_facts: false
 
-  vars:
-    hostname: "{{ ansible_hostname }}"
-
   tasks:
-    - name: "PROCESOS KEEPALIVED"
-      ansible.builtin.shell: ps aux | grep keepalived | grep -v grep
+    - name: "OBTENER HOSTNAME"
+      ansible.builtin.shell: hostname
       changed_when: false
-      register: proc_keepalived
+      register: out_hostname
 
-    - name: "ARCHIVOS EN /etc/keepalived/"
-      ansible.builtin.shell: ls -la /etc/keepalived/
+    - name: "PROCESOS KEEPALIVED"
+      ansible.builtin.shell: ps aux | grep keepalived | grep -v grep || echo "SIN PROCESOS"
       changed_when: false
-      register: archivos
+      register: out_procesos
 
     - name: "CONTENIDO DE keepalived.conf"
       ansible.builtin.shell: cat /etc/keepalived/keepalived.conf
       changed_when: false
-      register: config_completa
+      register: out_config
 
     - name: "ESTADO DE SERVICIO"
-      ansible.builtin.shell: systemctl status keepalived --no-pager -l 2>&1
+      ansible.builtin.shell: systemctl status keepalived --no-pager -l 2>&1 | head -20
       changed_when: false
-      register: servicio
+      register: out_servicio
 
     - name: "ULTIMOS LOGS"
       ansible.builtin.shell: journalctl -u keepalived -n 30 --no-pager 2>&1
       changed_when: false
-      register: logs
+      register: out_logs
 
-    - name: "INTERFACE ENS38 — IP y estado"
+    - name: "INTERFACE ENS38"
       ansible.builtin.shell: ip addr show ens38 2>&1
       changed_when: false
-      register: ens38_info
+      register: out_ens38
 
-    - name: "IPTABLES — reglas VRRP/CARP"
-      ansible.builtin.shell: iptables -L INPUT -n | grep -E "112|VRRP|CARP" ; iptables -L OUTPUT -n | grep -E "112|VRRP|CARP"
+    - name: "IPTABLES VRRP"
+      ansible.builtin.shell: iptables -L INPUT -n | grep 112 ; iptables -L OUTPUT -n | grep 112 ; echo "DONE"
       changed_when: false
-      register: iptables_rules
+      register: out_iptables
 
-    - name: "TCPdump — capturar 5 paquetes VRRP en ens38"
+    - name: "TCPDUMP VRRP"
       ansible.builtin.shell: timeout 5 tcpdump -i ens38 -nn 'proto 112' -c 5 2>&1 || echo "Sin paquetes capturados"
       changed_when: false
-      register: tcpdump_vrrp
+      register: out_tcpdump
       ignore_errors: true
 
-    - name: "EXTRAER — state de config"
-      ansible.builtin.shell: grep "state " /etc/keepalived/keepalived.conf | head -1
-      changed_when: false
-      register: grep_state
-
-    - name: "EXTRAER — priority de config"
-      ansible.builtin.shell: grep "priority " /etc/keepalived/keepalived.conf | head -1
-      changed_when: false
-      register: grep_priority
-
-    - name: "EXTRAER — unicast_src_ip"
-      ansible.builtin.shell: grep "unicast_src_ip" /etc/keepalived/keepalived.conf
-      changed_when: false
-      register: grep_unicast_src
-
-    - name: "EXTRAER — unicast_peer"
-      ansible.builtin.shell: grep "unicast_peer" -A1 /etc/keepalived/keepalived.conf | tail -1
-      changed_when: false
-      register: grep_unicast_peer
-
-    - name: "EXTRAER — inet de ens38"
-      ansible.builtin.shell: ip addr show ens38 | grep "inet " | awk '{print $2}'
-      changed_when: false
-      register: grep_ens38_ip
-
-    - name: "EXTRAER — ip route get 10.0.0.2 (verificar routing)"
+    - name: "RUTA A 10.0.0.2"
       ansible.builtin.shell: ip route get 10.0.0.2 2>&1 || echo "SIN RUTA"
       changed_when: false
-      register: route_to_peer
-
-    - name: "EXTRAER — ip route get 10.0.0.1 (verificar routing)"
-      ansible.builtin.shell: ip route get 10.0.0.1 2>&1 || echo "SIN RUTA"
-      changed_when: false
-      register: route_to_self
-
-    - name: "ANALISIS — Cuantos procesos keepalived hay"
-      ansible.builtin.set_fact:
-        count_procesos: "{{ proc_keepalived.stdout_lines | length }}"
-
-    - name: "ANALISIS — Servicio activo?"
-      ansible.builtin.set_fact:
-        servicio_activo: "{{ 'active (running)' in servicio.stdout }}"
-
-    - name: "ANALISIS — Verificar iptables VRRP"
-      ansible.builtin.set_fact:
-        iptables_ok: "{{ (iptables_rules.stdout | length) > 0 }}"
-
-    - name: "ANALISIS — tcpdump mostro paquetes?"
-      ansible.builtin.set_fact:
-        tcpdump_tiene_packets: "{{ 'captured' in tcpdump_vrrp.stdout and '0 packets' not in tcpdump_vrrp.stdout }}"
-
-    - name: "ANALISIS — Generar resumen"
-      ansible.builtin.shell: |
-        if [ "{{ count_procesos }}" -eq 0 ]; then
-          echo "KEEPALIVED NO ESTA CORRIENDO"
-        elif [ "{{ count_procesos }}" -gt 1 ]; then
-          echo "MULTIPLES PROCESOS - PROBLEMA"
-        elif [ "{{ servicio_activo }}" != "True" ]; then
-          echo "SERVICIO NO ESTA ACTIVO"
-        elif [ "{{ tcpdump_tiene_packets }}" == "True" ]; then
-          echo "PAQUETES VRRP LLEGANDO - comunicacion OK"
-        else
-          echo "NO SE VEN PAQUETES VRRP - los cores no se comunican"
-        fi
-      changed_when: false
-      register: resumen_sh
+      register: out_ruta_peer
 
     - name: "DIAGNOSTICO FINAL"
       ansible.builtin.debug:
@@ -124,32 +59,29 @@
           - "DIAGNOSTICO KEEPALIVED"
           - "============================================================"
           - ""
-          - "HOSTNAME: {{ hostname }}"
+          - "HOSTNAME: {{ out_hostname.stdout }}"
           - ""
-          - "CONFIG:"
-          - "  State:       {{ grep_state.stdout | default('NO ENCONTRADO') }}"
-          - "  Priority:    {{ grep_priority.stdout | default('NO ENCONTRADO') }}"
-          - "  Unicast src: {{ grep_unicast_src.stdout | default('NO ENCONTRADO') }}"
-          - "  Peer:        {{ grep_unicast_peer.stdout | default('NO ENCONTRADO') }}"
+          - "ESTADO DE SERVICIO:"
+          - "{{ out_servicio.stdout }}"
           - ""
           - "PROCESOS:"
-          - "  Cantidad: {{ count_procesos }}"
-          - "  Servicio activo: {{ servicio_activo }}"
+          - "{{ out_procesos.stdout }}"
           - ""
-          - "RED:"
-          - "  ENS38 IP:  {{ grep_ens38_ip.stdout | default('SIN IP') }}"
-          - "  Ruta a 10.0.0.2: {{ route_to_peer.stdout | default('N/A') }}"
-          - "  Ruta a 10.0.0.1: {{ route_to_self.stdout | default('N/A') }}"
+          - "CONFIG keepalived.conf:"
+          - "{{ out_config.stdout }}"
+          - ""
+          - "ENS38:"
+          - "{{ out_ens38.stdout }}"
+          - ""
+          - "RUTA A 10.0.0.2:"
+          - "{{ out_ruta_peer.stdout }}"
           - ""
           - "IPTABLES VRRP:"
-          - "  {{ iptables_rules.stdout | default('SIN REGLAS') }}"
+          - "{{ out_iptables.stdout }}"
           - ""
           - "TCPDUMP VRRP:"
-          - "  Paquetes capturados: {{ tcpdump_tiene_packets }}"
-          - "  {{ tcpdump_vrrp.stdout }}"
+          - "{{ out_tcpdump.stdout }}"
           - ""
           - "LOGS:"
-          - "{{ logs.stdout }}"
-          - "============================================================"
-          - "RESUMEN: {{ resumen_sh.stdout }}"
+          - "{{ out_logs.stdout }}"
           - "============================================================"
