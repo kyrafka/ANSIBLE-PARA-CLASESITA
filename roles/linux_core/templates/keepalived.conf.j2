@@ -8,18 +8,18 @@ global_defs {
     enable_script_security
 }
 
-vrrp_script check_bond1 {
-    script "/usr/bin/cat /sys/class/net/bond1/operstate | /usr/bin/grep -q up"
+vrrp_script check_ens38 {
+    script "/usr/bin/cat /sys/class/net/ens38/operstate | /usr/bin/grep -q up"
     interval 2
     weight 10
     fall 2
     rise 2
 }
 
-vrrp_script check_peer_link {
-    script "/usr/local/bin/check_peer.sh"
-    interval 3
-    weight 5
+vrrp_script check_ens40 {
+    script "/usr/bin/cat /sys/class/net/ens40/operstate | /usr/bin/grep -q up"
+    interval 2
+    weight 10
     fall 2
     rise 2
 }
@@ -47,15 +47,15 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
 
     track_interface {
         br{{ vlan.id }}
-        bond1
+        ens38
+        ens40
     }
     track_script {
-        check_bond1
-        check_peer_link
+        check_ens38
+        check_ens40
     }
 
     # NOTA: Las VIPs (vlan.vip) NO se asignan aqui.
     # Las VIPs son gestionadas UNICAMENTE por pfSense via CARP.
-    # Este Keepalived solo monitorea que los bridges y el interlink esten vivos.
 }
 {% endfor %}
