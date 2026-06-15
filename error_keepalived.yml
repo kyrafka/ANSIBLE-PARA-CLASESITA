@@ -5,6 +5,9 @@
   become: true
   gather_facts: false
 
+  vars:
+    hostname: "{{ ansible_hostname }}"
+
   tasks:
     - name: "PROCESOS KEEPALIVED"
       ansible.builtin.shell: ps aux | grep keepalived | grep -v grep
@@ -16,36 +19,129 @@
       changed_when: false
       register: archivos
 
-    - name: "CONFIG ACTUAL — state / priority / unicast"
-      ansible.builtin.shell: grep -E "state|priority|unicast" /etc/keepalived/keepalived.conf
+    - name: "CONTENIDO DE keepalived.conf"
+      ansible.builtin.shell: cat /etc/keepalived/keepalived.conf
       changed_when: false
-      register: config
+      register: config_completa
 
     - name: "ESTADO DE SERVICIO"
-      ansible.builtin.shell: systemctl status keepalived --no-pager -l | head -20
+      ansible.builtin.shell: systemctl status keepalived --no-pager -l 2>&1
       changed_when: false
       register: servicio
 
     - name: "ULTIMOS LOGS"
-      ansible.builtin.shell: journalctl -u keepalived -n 15 --no-pager
+      ansible.builtin.shell: journalctl -u keepalived -n 30 --no-pager 2>&1
       changed_when: false
       register: logs
 
-    - name: "MOSTRAR RESULTADOS"
+    - name: "INTERFACE ENS38 — IP y estado"
+      ansible.builtin.shell: ip addr show ens38 2>&1
+      changed_when: false
+      register: ens38_info
+
+    - name: "IPTABLES — reglas VRRP/CARP"
+      ansible.builtin.shell: iptables -L INPUT -n | grep -E "112|VRRP|CARP" ; iptables -L OUTPUT -n | grep -E "112|VRRP|CARP"
+      changed_when: false
+      register: iptables_rules
+
+    - name: "TCPdump — capturar 5 paquetes VRRP en ens38"
+      ansible.builtin.shell: timeout 5 tcpdump -i ens38 -nn 'proto 112' -c 5 2>&1 || echo "Sin paquetes capturados"
+      changed_when: false
+      register: tcpdump_vrrp
+      ignore_errors: true
+
+    - name: "ANALISIS — Cuantos procesos keepalived hay"
+      ansible.builtin.set_fact:
+        count_procesos: "{{ proc_keepalived.stdout_lines | length }}"
+
+    - name: "ANALISIS — Extraer state de la config"
+      ansible.builtin.set_fact:
+        config_state: "{{ config_completa.stdout | regex_findall('state\\s+(\\w+)') | first | default('NO ENCONTRADO') }}"
+
+    - name: "ANALISIS — Extraer priority de la config"
+      ansible.builtin.set_fact:
+        config_priority: "{{ config_completa.stdout | regex_findall('priority\\s+(\\d+)') | first | default('NO ENCONTRADO') }}"
+
+    - name: "ANALISIS — Extraer unicast_src_ip"
+      ansible.builtin.set_fact:
+        config_unicast_src: "{{ config_completa.stdout | regex_findall('unicast_src_ip\\s+([0-9.]+)') | first | default('NO ENCONTRADO') }}"
+
+    - name: "ANALISIS — Extraer unicast_peer"
+      ansible.builtin.set_fact:
+        config_unicast_peer: "{{ config_completa.stdout | regex_findall('unicast_peer\\s*\\{?\\s*([0-9.]+)') | first | default('NO ENCONTRADO') }}"
+
+    - name: "ANALISIS — Servicio activo?"
+      ansible.builtin.set_fact:
+        servicio_activo: "{{ 'active (running)' in servicio.stdout }}"
+
+    - name: "ANALISIS — Verificar iptables VRRP"
+      ansible.builtin.set_fact:
+        iptables_ok: "{{ (iptables_rules.stdout | length) > 0 }}"
+
+    - name: "ANALISIS — tcpdump mostro paquetes?"
+      ansible.builtin.set_fact:
+        tcpdump_tiene_packets: "{{ 'captured' in tcpdump_vrrp.stdout and '0 packets' not in tcpdump_vrrp.stdout }}"
+
+    - name: "DIAGNOSTICO FINAL"
       ansible.builtin.debug:
         msg: |
-          ======================
-          PROCESOS:
-          {{ proc_keepalived.stdout }}
-          ======================
-          ARCHIVOS:
-          {{ archivos.stdout }}
-          ======================
-          CONFIG:
-          {{ config.stdout }}
-          ======================
-          SERVICIO:
-          {{ servicio.stdout }}
-          ======================
-          LOGS:
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  DIAGNOSTICO KEEPALIVED — {{ hostname }}                         ║
+          ╚══════════════════════════════════════════════════════════════╝
+
+          ── CONFIGURACION ──────────────────────────────────────────────
+          State config:     {{ config_state }}
+          Priority config: {{ config_priority }}
+          Unicast src:     {{ config_unicast_src }}
+          Unicast peer:    {{ config_unicast_peer }}
+
+          ── PROCESOS ───────────────────────────────────────────────────
+          Procesos:         {{ count_procesos }}
+          {% if count_procesos | int == 0 %}
+          ⚠ NO HAY PROCESO KEEPALIVED CORRIENDO
+          {% elif count_procesos | int == 1 %}
+          ✅ 1 proceso OK
+          {% else %}
+          ⚠ MULTIPLES PROCESOS — PROBLEMA
+          {% endif %}
+
+          ── SERVICIO ───────────────────────────────────────────────────
+          ¿Activo?:         {{ servicio_activo }}
+          {% if not servicio_activo %}
+          ⚠ KEEPALIVED NO ESTA CORRIENDO — ejecutar: systemctl start keepalived
+          {% endif %}
+
+          ── RED ───────────────────────────────────────────────────────
+          ENS38 IP:         {{ ens38_info.stdout | regex_findall('inet\\s+([0-9.]+)') | first | default('SIN IP') }}
+
+          ── IPTABLES ──────────────────────────────────────────────────
+          ¿Reglas VRRP?:    {{ iptables_ok }}
+          Detalle:
+          {{ iptables_rules.stdout | default('SIN REGLAS') }}
+
+          ── TCPdump VRRP ──────────────────────────────────────────────
+          ¿Paquetes?:       {{ tcpdump_tiene_packets }}
+          {{ tcpdump_vrrp.stdout }}
+
+          ── LOGS RECIENTES ───────────────────────────────────────────
           {{ logs.stdout }}
+
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  RESUMEN                                                          ║
+          ╚══════════════════════════════════════════════════════════════╝
+          {% if count_procesos | int == 0 %}
+          ❌ KEEPALIVED NO ESTA CORRIENDO
+             → sudo systemctl start keepalived
+          {% elif count_procesos | int > 1 %}
+          ❌ MULTIPLES PROCESOS — MATAR PROCESOS SOBRANTES
+             → sudo pkill keepalived ; sudo systemctl start keepalived
+          {% elif not servicio_activo %}
+          ❌ SERVICIO NO ESTA ACTIVO
+             → sudo systemctl start keepalived
+          {% elif tcpdump_tiene_packets %}
+          ✅ PAQUETES VRRP LLEGANDO — la comunicacion esta bien
+          {% else %}
+          ⚠ NO SE VEN PAQUETES VRRP — los cores no se comunican
+             ¿Las reglas iptables estan cargadas? Verificar en AMBOS cores
+             ¿La IP en ens38 es la correcta en cada core?
+          {% endif %}
