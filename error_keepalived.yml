@@ -106,39 +106,38 @@
           NO SE VEN PAQUETES VRRP - los cores no se comunican.
           {% endif %}
 
+    - name: "ANALISIS — Procesos texto"
+      ansible.builtin.set_fact:
+        proceso_msg: "{% if count_procesos | int == 0 %}⚠ NO HAY KEEPALIVED CORRIENDO{% elif count_procesos | int == 1 %}✅ 1 proceso OK{% else %}⚠ MULTIPLES PROCESOS - PROBLEMA{% endif %}"
+
     - name: "DIAGNOSTICO FINAL"
       ansible.builtin.debug:
-        msg: |
-          ============================================================
-          DIAGNOSTICO KEEPALIVED — {{ hostname }}
-          ============================================================
-
-          CONFIG:
-            State:      {{ grep_state.stdout | default('NO ENCONTRADO') }}
-            Priority:   {{ grep_priority.stdout | default('NO ENCONTRADO') }}
-            Unicast src:{{ grep_unicast_src.stdout | default('NO ENCONTRADO') }}
-            Peer:       {{ grep_unicast_peer.stdout | default('NO ENCONTRADO') }}
-
-          PROCESOS: {{ count_procesos }}
-          {% if count_procesos | int == 0 %}  ⚠ NO HAY KEEPALIVED CORRIENDO{% endif %}
-          {% if count_procesos | int == 1 %}  ✅ 1 proceso OK{% endif %}
-          {% if count_procesos | int > 1 %}  ⚠ MULTIPLES PROCESOS — PROBLEMA{% endif %}
-
-          SERVICIO ACTIVO: {{ servicio_activo }}
-
-          RED:
-            ENS38 IP: {{ grep_ens38_ip.stdout | default('SIN IP') }}
-
-          IPTABLES VRRP:
-            {{ iptables_rules.stdout | default('SIN REGLAS') }}
-
-          TCPDUMP VRRP:
-            ¿Paquetes capturados?: {{ tcpdump_tiene_packets }}
-            {{ tcpdump_vrrp.stdout }}
-
-          LOGS:
-            {{ logs.stdout }}
-
-          ============================================================
-          RESUMEN: {{ resumen }}
-          ============================================================
+        msg:
+          - "============================================================"
+          - "DIAGNOSTICO KEEPALIVED — {{ hostname }}"
+          - "============================================================"
+          - ""
+          - "CONFIG:"
+          - "  State:      {{ grep_state.stdout | default('NO ENCONTRADO') }}"
+          - "  Priority:   {{ grep_priority.stdout | default('NO ENCONTRADO') }}"
+          - "  Unicast src: {{ grep_unicast_src.stdout | default('NO ENCONTRADO') }}"
+          - "  Peer:       {{ grep_unicast_peer.stdout | default('NO ENCONTRADO') }}"
+          - ""
+          - "PROCESOS: {{ count_procesos }} — {{ proceso_msg }}"
+          - "SERVICIO ACTIVO: {{ servicio_activo }}"
+          - ""
+          - "RED:"
+          - "  ENS38 IP: {{ grep_ens38_ip.stdout | default('SIN IP') }}"
+          - ""
+          - "IPTABLES VRRP:"
+          - "  {{ iptables_rules.stdout | default('SIN REGLAS') }}"
+          - ""
+          - "TCPDUMP VRRP:"
+          - "  Paquetes?: {{ tcpdump_tiene_packets }}"
+          - "  {{ tcpdump_vrrp.stdout }}"
+          - ""
+          - "LOGS:"
+          - "{{ logs.stdout }}"
+          - "============================================================"
+          - "RESUMEN: {{ resumen }}"
+          - "============================================================"
