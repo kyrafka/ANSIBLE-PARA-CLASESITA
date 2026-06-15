@@ -80,7 +80,9 @@
             renderer: networkd
             ethernets:
               {{ isp_wan_iface }}:
-                dhcp4: true
+                addresses:
+                  - {{ current_isp.wan_ip }}
+                gateway4: {{ current_isp.wan_gw }}
                 optional: true
               {{ isp_lan_iface }}:
                 addresses:
