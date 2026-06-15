@@ -19,7 +19,7 @@ vrrp_script check_interlink {
 {% for vlan in vlans %}
 vrrp_instance VI_VLAN{{ vlan.id }} {
     state {{ core_state }}
-    interface br{{ vlan.id }}
+    interface {{ nic_int1 }}
     virtual_router_id {{ vlan.vrid }}
     priority {{ core_priority }}
     advert_int 1

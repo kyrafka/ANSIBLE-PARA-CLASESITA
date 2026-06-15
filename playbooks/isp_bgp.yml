@@ -33,17 +33,17 @@
     isp_config:
       "1":
         as: "65001"
-        wan_ip: "172.17.25.49/24"      # Distribuidora A
+        wan_ip: "172.17.25.49/24"      # WAN upstream (ens34)
         wan_gw: "172.17.25.121"
-        lan_interface: "eth0"
-        lan_ip: "192.168.2.1/24"       # P2P con pfSense
+        lan_interface: "ens35"           # LAN hacia pfSense (NATEADO, ens35)
+        lan_ip: "192.168.2.1/24"       # Red interna hacia pfSense
         pf_ip: "192.168.2.2"            # pfSense en esta red
       "2":
         as: "65002"
-        wan_ip: "172.17.25.88/24"      # Distribuidora B
+        wan_ip: "172.17.25.88/24"      # WAN upstream (ens34)
         wan_gw: "172.17.25.121"
-        lan_interface: "ens35"
-        lan_ip: "192.168.1.1/24"       # P2P con pfSense
+        lan_interface: "ens35"           # LAN hacia pfSense (NATEADO, ens35)
+        lan_ip: "192.168.1.1/24"       # Red interna hacia pfSense
         pf_ip: "192.168.1.2"            # pfSense en esta red
 
     # Configuración pfSense (igual para ambos)

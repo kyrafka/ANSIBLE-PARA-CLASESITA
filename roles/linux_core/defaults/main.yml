@@ -8,6 +8,7 @@ nic_acc: "ens35"
 nic_int: "ens36"
 nic_internet: "ens37"
 nic_trunk2: "ens37"
+nic_int1: "ens38"       # Interlink entre Cores
 
 # Ficheros de configuración del sistema
 netplan_config_file: "/etc/netplan/50-cloud-init.yaml"
