@@ -73,7 +73,7 @@
 
     - name: "NET — Crear netplan para ISP {{ isp_id }}"
       ansible.builtin.copy:
-        dest: "/etc/netplan/60-isp{{ isp_id }}.yaml"
+        dest: "/etc/netplan/50-cloud-init.yaml"
         content: |
           network:
             version: 2
@@ -86,9 +86,9 @@
                 addresses:
                   - {{ isp_lan_ip }}
                 optional: true
-            routes:
-              - to: default
-                via: {{ isp_pf_ip }}
+          routes:
+            - to: default
+              via: {{ isp_pf_ip }}
         owner: root
         group: root
         mode: "0600"
