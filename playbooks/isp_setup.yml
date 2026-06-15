@@ -86,9 +86,9 @@
                 addresses:
                   - {{ isp_lan_ip }}
                 optional: true
-          routes:
-            - to: default
-              via: {{ isp_pf_ip }}
+                routes:
+                  - to: default
+                    via: {{ isp_pf_ip }}
         owner: root
         group: root
         mode: "0600"
