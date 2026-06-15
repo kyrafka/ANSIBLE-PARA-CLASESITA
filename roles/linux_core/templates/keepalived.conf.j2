@@ -8,16 +8,8 @@ global_defs {
     enable_script_security
 }
 
-vrrp_script check_ens38 {
-    script "/bin/grep -q 'up' /sys/class/net/ens38/operstate"
-    interval 2
-    weight -20
-    fall 2
-    rise 2
-}
-
-vrrp_script check_ens40 {
-    script "/bin/grep -q 'up' /sys/class/net/ens40/operstate"
+vrrp_script check_interlink {
+    script "/usr/local/bin/check_interlink.sh"
     interval 2
     weight -20
     fall 2
@@ -47,12 +39,9 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
 
     track_interface {
         br{{ vlan.id }}
-        ens38
-        ens40
     }
     track_script {
-        check_ens38
-        check_ens40
+        check_interlink
     }
 
     # NOTA: Las VIPs (vlan.vip) NO se asignan aqui.

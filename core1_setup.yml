@@ -162,6 +162,20 @@
                 interfaces: [v999-trunk1, v999-trunk2, v999-int]
                 parameters: {stp: true, forward-delay: 4}
 
+    - name: "POST — Crear script de verificacion del interlink"
+      ansible.builtin.copy:
+        dest: /usr/local/bin/check_interlink.sh
+        content: |
+          #!/bin/bash
+          # Verifica que al menos una interfaz del interlink este up
+          STATE1=$(cat /sys/class/net/ens38/operstate 2>/dev/null)
+          STATE2=$(cat /sys/class/net/ens40/operstate 2>/dev/null)
+          [ "$STATE1" = "up" ] || [ "$STATE2" = "up" ] && exit 0
+          exit 1
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: "POST — Bajar bridges y flush IPs"
       ansible.builtin.shell: |
         for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do
