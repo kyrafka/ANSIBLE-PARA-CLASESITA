@@ -29,9 +29,9 @@
   failed_when: false
 
 - name: "KAL - Hacer reglas iptables permanentes"
-      ansible.builtin.shell: |
-        sudo apt-get install -y iptables-persistent netfilter-persistent 2>/dev/null || true
-        sudo netfilter-persistent save 2>/dev/null || true
-        echo "done"
-      changed_when: false
-      failed_when: false
+  ansible.builtin.shell: |
+    sudo apt-get install -y iptables-persistent netfilter-persistent 2>/dev/null || true
+    sudo netfilter-persistent save 2>/dev/null || true
+    echo "done"
+  changed_when: false
+  failed_when: false
