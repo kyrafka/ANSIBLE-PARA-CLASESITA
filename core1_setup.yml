@@ -57,7 +57,7 @@
           # ============================================================================
           # Netplan Limpio — {{ core_id | upper }}
           # Bond0: LANs hacia pfSenses (active-backup)
-          # Bond1: Interlink entre Cores (active-backup, failover)
+          # Ens38: Interlink directo entre Cores
           # Bridges: L2 puros sin IPs
           # ============================================================================
           network:
