@@ -75,6 +75,16 @@
       changed_when: false
       register: grep_ens38_ip
 
+    - name: "EXTRAER — ip route get 10.0.0.2 (verificar routing)"
+      ansible.builtin.shell: ip route get 10.0.0.2 2>&1 || echo "SIN RUTA"
+      changed_when: false
+      register: route_to_peer
+
+    - name: "EXTRAER — ip route get 10.0.0.1 (verificar routing)"
+      ansible.builtin.shell: ip route get 10.0.0.1 2>&1 || echo "SIN RUTA"
+      changed_when: false
+      register: route_to_self
+
     - name: "ANALISIS — Cuantos procesos keepalived hay"
       ansible.builtin.set_fact:
         count_procesos: "{{ proc_keepalived.stdout_lines | length }}"
@@ -91,53 +101,55 @@
       ansible.builtin.set_fact:
         tcpdump_tiene_packets: "{{ 'captured' in tcpdump_vrrp.stdout and '0 packets' not in tcpdump_vrrp.stdout }}"
 
-    - name: "ANALISIS — Diagnostico resumido"
-      ansible.builtin.set_fact:
-        resumen: >
-          {% if count_procesos | int == 0 -%}
-          KEEPALIVED NO ESTA CORRIENDO. Ejecutar: sudo systemctl start keepalived
-          {% elif count_procesos | int > 1 -%}
-          HAY MULTIPLES PROCESOS. Ejecutar: sudo pkill keepalived ; sudo systemctl start keepalived
-          {% elif not servicio_activo -%}
-          SERVICIO NO ESTA ACTIVO. Ejecutar: sudo systemctl start keepalived
-          {% elif tcpdump_tiene_packets -%}
-          PAQUETES VRRP LLEGANDO - la comunicacion entre cores esta bien.
-          {% else -%}
-          NO SE VEN PAQUETES VRRP - los cores no se comunican.
-          {% endif %}
-
-    - name: "ANALISIS — Procesos texto"
-      ansible.builtin.set_fact:
-        proceso_msg: "{% if count_procesos | int == 0 %}⚠ NO HAY KEEPALIVED CORRIENDO{% elif count_procesos | int == 1 %}✅ 1 proceso OK{% else %}⚠ MULTIPLES PROCESOS - PROBLEMA{% endif %}"
+    - name: "ANALISIS — Generar resumen"
+      ansible.builtin.shell: |
+        if [ "{{ count_procesos }}" -eq 0 ]; then
+          echo "KEEPALIVED NO ESTA CORRIENDO"
+        elif [ "{{ count_procesos }}" -gt 1 ]; then
+          echo "MULTIPLES PROCESOS - PROBLEMA"
+        elif [ "{{ servicio_activo }}" != "True" ]; then
+          echo "SERVICIO NO ESTA ACTIVO"
+        elif [ "{{ tcpdump_tiene_packets }}" == "True" ]; then
+          echo "PAQUETES VRRP LLEGANDO - comunicacion OK"
+        else
+          echo "NO SE VEN PAQUETES VRRP - los cores no se comunican"
+        fi
+      changed_when: false
+      register: resumen_sh
 
     - name: "DIAGNOSTICO FINAL"
       ansible.builtin.debug:
         msg:
           - "============================================================"
-          - "DIAGNOSTICO KEEPALIVED — {{ hostname }}"
+          - "DIAGNOSTICO KEEPALIVED"
           - "============================================================"
           - ""
-          - "CONFIG:"
-          - "  State:      {{ grep_state.stdout | default('NO ENCONTRADO') }}"
-          - "  Priority:   {{ grep_priority.stdout | default('NO ENCONTRADO') }}"
-          - "  Unicast src: {{ grep_unicast_src.stdout | default('NO ENCONTRADO') }}"
-          - "  Peer:       {{ grep_unicast_peer.stdout | default('NO ENCONTRADO') }}"
+          - "HOSTNAME: {{ hostname }}"
           - ""
-          - "PROCESOS: {{ count_procesos }} — {{ proceso_msg }}"
-          - "SERVICIO ACTIVO: {{ servicio_activo }}"
+          - "CONFIG:"
+          - "  State:       {{ grep_state.stdout | default('NO ENCONTRADO') }}"
+          - "  Priority:    {{ grep_priority.stdout | default('NO ENCONTRADO') }}"
+          - "  Unicast src: {{ grep_unicast_src.stdout | default('NO ENCONTRADO') }}"
+          - "  Peer:        {{ grep_unicast_peer.stdout | default('NO ENCONTRADO') }}"
+          - ""
+          - "PROCESOS:"
+          - "  Cantidad: {{ count_procesos }}"
+          - "  Servicio activo: {{ servicio_activo }}"
           - ""
           - "RED:"
-          - "  ENS38 IP: {{ grep_ens38_ip.stdout | default('SIN IP') }}"
+          - "  ENS38 IP:  {{ grep_ens38_ip.stdout | default('SIN IP') }}"
+          - "  Ruta a 10.0.0.2: {{ route_to_peer.stdout | default('N/A') }}"
+          - "  Ruta a 10.0.0.1: {{ route_to_self.stdout | default('N/A') }}"
           - ""
           - "IPTABLES VRRP:"
           - "  {{ iptables_rules.stdout | default('SIN REGLAS') }}"
           - ""
           - "TCPDUMP VRRP:"
-          - "  Paquetes?: {{ tcpdump_tiene_packets }}"
+          - "  Paquetes capturados: {{ tcpdump_tiene_packets }}"
           - "  {{ tcpdump_vrrp.stdout }}"
           - ""
           - "LOGS:"
           - "{{ logs.stdout }}"
           - "============================================================"
-          - "RESUMEN: {{ resumen }}"
+          - "RESUMEN: {{ resumen_sh.stdout }}"
           - "============================================================"
