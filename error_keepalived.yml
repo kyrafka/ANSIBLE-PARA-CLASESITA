@@ -1,0 +1,51 @@
+---
+- name: "Debug Keepalived — Diagnosticar estado MASTER/MASTER"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "PROCESOS KEEPALIVED"
+      ansible.builtin.shell: ps aux | grep keepalived | grep -v grep
+      changed_when: false
+      register: proc_keepalived
+
+    - name: "ARCHIVOS EN /etc/keepalived/"
+      ansible.builtin.shell: ls -la /etc/keepalived/
+      changed_when: false
+      register: archivos
+
+    - name: "CONFIG ACTUAL — state / priority / unicast"
+      ansible.builtin.shell: grep -E "state|priority|unicast" /etc/keepalived/keepalived.conf
+      changed_when: false
+      register: config
+
+    - name: "ESTADO DE SERVICIO"
+      ansible.builtin.shell: systemctl status keepalived --no-pager -l | head -20
+      changed_when: false
+      register: servicio
+
+    - name: "ULTIMOS LOGS"
+      ansible.builtin.shell: journalctl -u keepalived -n 15 --no-pager
+      changed_when: false
+      register: logs
+
+    - name: "MOSTRAR RESULTADOS"
+      ansible.builtin.debug:
+        msg: |
+          ======================
+          PROCESOS:
+          {{ proc_keepalived.stdout }}
+          ======================
+          ARCHIVOS:
+          {{ archivos.stdout }}
+          ======================
+          CONFIG:
+          {{ config.stdout }}
+          ======================
+          SERVICIO:
+          {{ servicio.stdout }}
+          ======================
+          LOGS:
+          {{ logs.stdout }}
