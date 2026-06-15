@@ -51,17 +51,21 @@
         isp_pf_ip: "{{ current_isp.pf_ip }}"
         isp_bgp_neighbor_as: "{{ current_isp.bgp_neighbor_as }}"
 
-    - name: "ISP — Crear directorio de log FRR"
+    # =========================================================================
+    # 1. FRR — Instalar PRIMERO para crear usuario frr
+    # =========================================================================
+    - name: "BGP — Instalar FRR"
+      ansible.builtin.apt:
+        name:
+          - frr
+        state: present
+        update_cache: yes
+
+    - name: "BGP — Crear directorio de log FRR"
       ansible.builtin.file:
         path: /var/log/frr
         state: directory
-        owner: frr
-        group: frr
         mode: "0755"
-
-    # =========================================================================
-    # 1. NETPLAN — Configurar IPs y gateway
-    # =========================================================================
     - name: "NET — Backup netplan anterior"
       ansible.builtin.shell: |
         [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.isp.bak.$(date +%s)
@@ -139,19 +143,10 @@
     # =========================================================================
     # 3. FRR + BGP
     # =========================================================================
-    - name: "BGP — Instalar FRR"
-      ansible.builtin.apt:
-        name:
-          - frr
-        state: present
-        update_cache: yes
-
     - name: "BGP — Crear frr.conf para ISP {{ isp_id }}"
       ansible.builtin.template:
         src: "frr_isp.conf.j2"
         dest: "/etc/frr/frr.conf"
-        owner: frr
-        group: frr
         mode: "0640"
         backup: yes
       vars:
@@ -183,8 +178,6 @@
           fabricd=no
           vrrpd=no
           pathd=no
-        owner: frr
-        group: frr
         mode: "0640"
       notify: "Restart FRR"
 
