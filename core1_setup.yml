@@ -57,7 +57,7 @@
           # ============================================================================
           # Netplan Limpio — {{ core_id | upper }}
           # Bond0: LANs hacia pfSenses (active-backup)
-          # Bond1: Interlink LACP entre Cores (802.3ad, ambos activos)
+          # Bond1: Interlink entre Cores (active-backup, failover)
           # Bridges: L2 puros sin IPs
           # ============================================================================
           network:
@@ -208,5 +208,5 @@
         msg:
           - "Netplan LIMPIO aplicado en {{ core_id }}"
           - "bond0 = LANs (active-backup hacia pfSenses)"
-          - "bond1 = Interlink (LACP 802.3ad entre Cores)"
+          - "bond1 = Interlink (active-backup entre Cores)"
           - "Bridges sin IPs — Verifica con: ip addr show | grep inet"
