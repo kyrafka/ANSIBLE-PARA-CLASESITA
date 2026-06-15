@@ -102,9 +102,9 @@
                 interfaces: [{{ nic_int1 }}, {{ nic_int2 }}]
                 addresses: [{{ core_unicast_src_ip }}/30]
                 parameters:
-                  mode: 802.3ad
-                  lacp-rate: fast
+                  mode: active-backup
                   mii-monitor-interval: 100
+                  primary: {{ nic_int1 }}
             vlans:
               v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}
               v10-trunk2: {id: 10, link: {{ nic_trunk2 }}}

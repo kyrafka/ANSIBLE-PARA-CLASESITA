@@ -9,7 +9,7 @@ global_defs {
 }
 
 vrrp_script check_ens38 {
-    script "/usr/bin/cat /sys/class/net/ens38/operstate | /usr/bin/grep -q up"
+    script "/bin/cat /sys/class/net/ens38/operstate 2>/dev/null | /bin/grep -v down"
     interval 2
     weight 10
     fall 2
@@ -17,7 +17,7 @@ vrrp_script check_ens38 {
 }
 
 vrrp_script check_ens40 {
-    script "/usr/bin/cat /sys/class/net/ens40/operstate | /usr/bin/grep -q up"
+    script "/bin/cat /sys/class/net/ens40/operstate 2>/dev/null | /bin/grep -v down"
     interval 2
     weight 10
     fall 2
