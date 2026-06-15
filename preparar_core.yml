@@ -18,6 +18,7 @@
 
   vars:
     core_id: "core_prepare"
+    nic_int1: "ens38"       # Interlink cable 1 ↔ Core 2
 
   pre_tasks:
     - name: "PREP — Verificar que el script check_interlink existe"
