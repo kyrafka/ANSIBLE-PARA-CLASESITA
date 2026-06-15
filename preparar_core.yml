@@ -1,0 +1,66 @@
+---
+# =============================================================================
+# preparar_core.yml — Instalación de paquetes (ejecutar primero)
+# =============================================================================
+# Este playbook es LENTO porque hace apt update + install.
+# Si falla por mirror, reintentá nomás.
+# Una vez instalado, NO lo vuelvas a ejecutar.
+# =============================================================================
+
+- name: "Preparar Core — Instalar paquetes"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - vars/main.yml
+
+  vars:
+    core_id: "core_prepare"
+
+  pre_tasks:
+    - name: "PREP — Verificar que el script check_interlink existe"
+      ansible.builtin.stat:
+        path: /usr/local/bin/check_interlink.sh
+      register: script_check
+      changed_when: false
+
+    - name: "PREP — Crear script de verificacion del interlink"
+      ansible.builtin.copy:
+        dest: /usr/local/bin/check_interlink.sh
+        content: |
+          #!/bin/bash
+          # Verifica que ens38 (interlink) este up
+          STATE=$(cat /sys/class/net/ens38/operstate 2>/dev/null)
+          [ "$STATE" = "up" ] && exit 0
+          exit 1
+        owner: root
+        group: root
+        mode: "0755"
+      when: not script_check.stat.exists
+
+  roles:
+    - linux_core
+
+  post_tasks:
+    - name: "POST — Verificar que FRR esta instalado"
+      ansible.builtin.shell: |
+        dpkg -l | grep frr | head -3
+        echo "---"
+        dpkg -l | grep keepalived | head -3
+      changed_when: false
+      failed_when: false
+
+    - name: "POST — Verificar que script existe"
+      ansible.builtin.shell: |
+        ls -la /usr/local/bin/check_interlink.sh 2>/dev/null || echo "Script NO encontrado"
+      changed_when: false
+
+    - name: "POST — Mensaje final"
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "Paquetes instalados correctamente"
+          - "Ahora ejecutá: ansible-playbook core1_setup.yml"
+          - "=============================================="
