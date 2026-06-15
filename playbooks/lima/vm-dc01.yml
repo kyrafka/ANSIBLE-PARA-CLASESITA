@@ -62,48 +62,36 @@
         echo "Backup done"
       changed_when: false
 
-    - name: "NET — Crear netplan con bonding + VLAN 60"
+    - name: "NET — Crear netplan simple (IP directa en ens34)"
       ansible.builtin.copy:
         dest: /etc/netplan/60-dc01.yaml
         content: |
-          # vm-dc01 — Bonding de trunks + VLAN 60
+          # vm-dc01 — Red simple
+          # ens34: acceso a red de gestion VLAN 60 (sin tags, Port Group VLAN 60 en ESXi)
+          # ens35: redundancia (opcional, cable a Core 2)
+          # ens38: internet temporal (DHCP)
           network:
             version: 2
             renderer: networkd
             ethernets:
-              {{ iface_bond_slaves[0] }}:
+              ens34:
                 dhcp4: no
                 optional: true
-              {{ iface_bond_slaves[1] }}:
-                dhcp4: no
-                optional: true
-              ens38:
-                dhcp4: no
-                optional: true
-            bonds:
-              bond0:
-                interfaces:
-                  - {{ iface_bond_slaves[0] }}
-                  - {{ iface_bond_slaves[1] }}
-                parameters:
-                  mode: active-backup
-                  mii-monitor-interval: 100
-                  primary: {{ iface_bond_slaves[0] }}
-            vlans:
-              bond0.60:
-                id: 60
-                link: bond0
                 addresses:
                   - {{ server_ip }}/27
-                routes:
-                  - to: default
-                    via: {{ pfSense_ip }}
+                gateway4: {{ pfSense_ip }}
                 nameservers:
                   addresses:
                     - 127.0.0.1
                     - {{ pfSense_ip }}
                   search:
                     - {{ domain_name }}
+              ens35:
+                dhcp4: no
+                optional: true
+              ens38:
+                dhcp4: true
+                optional: true
         owner: root
         group: root
         mode: "0600"
@@ -116,7 +104,7 @@
         sleep 3
       changed_when: true
 
-    - name: "NET — Verificar que bond0.60 levantó"
+    - name: "NET — Verificar que ens34 tiene IP"
       ansible.builtin.shell: |
         ip addr show bond0.60 || echo "FALLO: bond0.60 no existe"
         ip addr show | grep "{{ server_ip }}"
@@ -190,24 +178,145 @@
         mode: "0640"
         force: yes
 
-    - name: "DNS — Crear named.conf principal"
+    - name: "DNS — Crear zona local AJ.local"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          # Zona directa AJ.local
+          zone "AJ.local" {
+              type master;
+              file "/etc/bind/zones/db.AJ.local";
+              allow-transfer { any; };
+          };
+
+          # Zona reversa 192.168.16.0/27
+          zone "16.168.192.in-addr.arpa" {
+              type master;
+              file "/etc/bind/zones/db.192.168.16";
+              allow-transfer { any; };
+          };
+        owner: root
+        group: bind
+        mode: "0640"
+        force: yes
+
+    - name: "DNS — Crear directorio de zonas"
+      ansible.builtin.file:
+        path: /etc/bind/zones
+        state: directory
+        owner: root
+        group: bind
+        mode: "0755"
+
+    - name: "DNS — Crear archivo de zona directa db.AJ.local"
+      ansible.builtin.copy:
+        dest: /etc/bind/zones/db.AJ.local
+        content: |
+          ; Zona directa AJ.local
+          ; Generado por Ansible
+          $TTL    604800
+          @       IN      SOA     vm-dc01.AJ.local. admin.AJ.local. (
+                              3         ; Serial (YYYYMMDDNN)
+                              604800    ; Refresh
+                              86400     ; Retry
+                              2419200   ; Expire
+                              604800 )  ; Negative Cache TTL
+
+          ; Nameservers
+          @       IN      NS      vm-dc01.AJ.local.
+
+          ; Registros A principales
+          vm-dc01         IN      A       192.168.16.10
+          pfsense         IN      A       192.168.16.1
+          core1           IN      A       192.168.10.20
+          core2           IN      A       192.168.10.30
+          interlink       IN      A       10.0.0.1
+
+          ; Alias (CNAMEs)
+          www             IN      CNAME   vm-dc01
+          archivos        IN      CNAME   vm-dc01
+          correo          IN      CNAME   vm-dc01
+          erp             IN      CNAME   vm-dc01
+
+          ; Zona reversa 192.168.12.0/24 (VLAN 20 usuarios)
+          zone "12.168.192.in-addr.arpa" {
+              type master;
+              file "/etc/bind/zones/db.192.168.12";
+              allow-transfer { any; };
+          };
+        owner: root
+        group: bind
+        mode: "0644"
+
+    - name: "DNS — Crear archivo de zona reversa 192.168.16"
+      ansible.builtin.copy:
+        dest: /etc/bind/zones/db.192.168.16
+        content: |
+          ; Zona reversa 192.168.16.0/27
+          ; Generado por Ansible
+          $TTL    604800
+          @       IN      SOA     vm-dc01.AJ.local. admin.AJ.local. (
+                              3         ; Serial
+                              604800    ; Refresh
+                              86400     ; Retry
+                              2419200   ; Expire
+                              604800 )  ; Negative Cache TTL
+
+          @       IN      NS      vm-dc01.AJ.local.
+
+          ; Registros PTR
+          10      IN      PTR     vm-dc01.AJ.local.
+          1       IN      PTR     pfsense.AJ.local.
+        owner: root
+        group: bind
+        mode: "0644"
+
+    - name: "DNS — Actualizar named.conf para incluir zonas"
       ansible.builtin.copy:
         dest: /etc/bind/named.conf
         content: |
           include "/etc/bind/named.conf.options";
+          include "/etc/bind/named.conf.local";
         owner: root
         group: bind
         mode: "0644"
         force: yes
 
-    - name: "DNS — Verificar sintaxis"
+    - name: "DNS — Crear archivo de zona reversa 192.168.12 (VLAN 20)"
+      ansible.builtin.copy:
+        dest: /etc/bind/zones/db.192.168.12
+        content: |
+          ; Zona reversa 192.168.12.0/24 (VLAN 20 usuarios)
+          ; Generado por Ansible
+          $TTL    604800
+          @       IN      SOA     vm-dc01.AJ.local. admin.AJ.local. (
+                              3         ; Serial
+                              604800    ; Refresh
+                              86400     ; Retry
+                              2419200   ; Expire
+                              604800 )  ; Negative Cache TTL
+
+          @       IN      NS      vm-dc01.AJ.local.
+          ; PTR records se agregan automaticamente o manualmente segun IPs asignadas
+        owner: root
+        group: bind
+        mode: "0644"
+
+    - name: "DNS — Verificar sintaxis de zonas"
+      ansible.builtin.shell: |
+        named-checkzone AJ.local /etc/bind/zones/db.AJ.local 2>&1 || echo "Zona directa: ERROR"
+        named-checkzone 16.168.192.in-addr.arpa /etc/bind/zones/db.192.168.16 2>&1 || echo "Zona reversa 16: ERROR"
+        named-checkzone 12.168.192.in-addr.arpa /etc/bind/zones/db.192.168.12 2>&1 || echo "Zona reversa 12: ERROR"
+      changed_when: false
+
+    - name: "DNS — Verificar sintaxis global"
       ansible.builtin.shell: "named-checkconf 2>&1 || echo 'named-checkconf falló'"
       changed_when: false
 
-    - name: "DNS — Iniciar bind9 (named)"
+    - name: "DNS — Reiniciar bind9 con nuevas zonas"
       ansible.builtin.systemd:
         name: named
-        state: started
+        state: restarted
         enabled: yes
 
     # === 4. SAMBA 4 AD DOMAIN CONTROLLER ===
@@ -275,20 +384,23 @@
         dest: /etc/dhcp/dhcpd.conf
         content: |
           # Configuración DHCP para vm-dc01
+          # VLAN 60: Gestion (servidores)
+          # VLAN 20: Usuarios ( PCs de empleados)
           ddns-update-style none;
           authoritative;
           log-facility local7;
 
-          option domain-name "{{ domain_name }}";
-          option domain-name-servers {{ server_ip }}, {{ pfSense_ip }};
-          default-lease-time 600;
+          option domain-name "AJ.local";
+          option domain-name-servers 192.168.16.10, 192.168.16.1;
+          default-lease-time 3600;
           max-lease-time 7200;
 
-          # Subnet de gestión (VLAN 60 — local)
+          # Subnet de gestion (VLAN 60 — local, servidor DC)
           subnet 192.168.16.0 netmask 255.255.255.224 {
               option routers 192.168.16.1;
               option subnet-mask 255.255.255.224;
               option broadcast-address 192.168.16.31;
+              option domain-name-servers 192.168.16.10, 192.168.16.1;
               range 192.168.16.11 192.168.16.30;
           }
 
@@ -297,6 +409,8 @@
               option routers 192.168.12.1;
               option subnet-mask 255.255.255.0;
               option broadcast-address 192.168.12.255;
+              option domain-name-servers 192.168.16.10, 192.168.16.1;
+              option domain-name "AJ.local";
               range 192.168.12.81 192.168.12.200;
           }
         owner: root
@@ -308,13 +422,13 @@
       ansible.builtin.copy:
         dest: /etc/default/isc-dhcp-server
         content: |
-          # Escuchar en bond0.60 (VLAN 60) para recibir relay de pfSense
-          INTERFACESv4="bond0.60"
+          # Escuchar en ens34 (VLAN 60, gestion) para recibir relay de pfSense
+          INTERFACESv4="ens34"
         force: yes
 
     - name: "DHCP — Iniciar isc-dhcp-server (con reintento si falla)"
       ansible.builtin.shell: |
-        sleep 2  # Esperar a que bond0.60 esté listo
+        sleep 2
         systemctl enable isc-dhcp-server
         systemctl restart isc-dhcp-server || systemctl start isc-dhcp-server
         systemctl is-active isc-dhcp-server
@@ -337,7 +451,7 @@
         nslookup google.com {{ pfSense_ip }} 2>/dev/null || echo "⚠ DNS pfSense FALLA"
         echo ""
         echo "=== INTERFACES ==="
-        ip addr show bond0.60 2>/dev/null || ip addr show bond0 || echo "⚠ bond0 no existe"
+        ip addr show ens34 || echo "⚠ ens34 no tiene IP"
         echo ""
         echo "=== RUTA DEFAULT ==="
         ip route | grep default || echo "⚠ NO HAY DEFAULT GATEWAY"

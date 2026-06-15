@@ -2,7 +2,7 @@
 # =============================================================================
 # core2_setup.yml — Configurador de Core 2 (Keepalived BACKUP)
 # =============================================================================
-# Full HA: Bonded LANs + 2x Trunks + Interlink
+# Full HA: Bonded LANs + 2x Trunks + Interlink LACP
 # SWITCH L2 sin IPs en bridges — todo gateway es pfSense
 # =============================================================================
 
@@ -24,23 +24,22 @@
     # INTERFACES (Mapeo REAL de tu ESXi):
     nic_trunk1: "ens36"     # Trunk 1 — pfSense Master
     nic_trunk2: "ens37"     # Trunk 2 — pfSense Backup
-    nic_int: "ens38"        # Interlink físico (Core 2 ↔ Core 1)
+    nic_int1: "ens38"       # Interlink cable 1 ↔ Core 1
+    nic_int2: "ens40"       # Interlink cable 2 ↔ Core 1
 
     # SWITCH L2: sin IPs en bridges, todo gateway es pfSense
     assign_bridge_ips: false
 
-    # LAN INTERFACES (Bonding HA):
+    # LAN INTERFACES (Bonding HA hacia pfSenses):
     bonded_nics:
       - "ens34"     # LAN-1 — pfSense
       - "ens35"     # LAN-2 — pfSense
     lan_ip: "192.168.10.30/24"
     lan_gateway: "192.168.10.1"
 
-    # INTERLINK para monitoreo/estado HA del otro core:
+    # INTERLINK para monitoreo/estado HA del otro core (LACP):
     core_unicast_src_ip: "10.0.0.2"
     core_unicast_peer_ip: "10.0.0.1"
-
-    # IDENTIDAD OSPF (solo para monitoreo LAN interna)
     core_router_id: "10.0.0.2"
 
   roles:
@@ -57,7 +56,9 @@
         content: |
           # ============================================================================
           # Netplan Limpio — {{ core_id | upper }}
-          # SOLO bonding + interlink. Los bridges son L2 puros.
+          # Bond0: LANs hacia pfSenses (active-backup)
+          # Bond1: Interlink LACP entre Cores (802.3ad, ambos activos)
+          # Bridges: L2 puros sin IPs
           # ============================================================================
           network:
             version: 2
@@ -67,10 +68,10 @@
                 dhcp4: no
               {{ nic_trunk2 }}:
                 dhcp4: no
-              {{ nic_int }}:
+              {{ nic_int1 }}:
                 dhcp4: no
-                addresses:
-                  - {{ core_unicast_src_ip }}/30
+              {{ nic_int2 }}:
+                dhcp4: no
               {{ bonded_nics[0] }}:
                 dhcp4: no
               {{ bonded_nics[1] }}:
@@ -78,7 +79,7 @@
               ens39:
                 dhcp4: no
                 optional: true
-              ens40:
+              ens43:
                 dhcp4: true
             bonds:
               bond0:
@@ -97,34 +98,41 @@
                   mode: active-backup
                   mii-monitor-interval: 100
                   primary: {{ bonded_nics[0] }}
+              bond1:
+                interfaces: [{{ nic_int1 }}, {{ nic_int2 }}]
+                addresses: [{{ core_unicast_src_ip }}/30]
+                parameters:
+                  mode: 802.3ad
+                  lacp-rate: fast
+                  mii-monitor-interval: 100
             vlans:
-              v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}          
+              v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}
               v10-trunk2: {id: 10, link: {{ nic_trunk2 }}}
-              v10-int:    {id: 10, link: {{ nic_int }}}              
+              v10-int:    {id: 10, link: bond1}
               v20-trunk1: {id: 20, link: {{ nic_trunk1 }}}
               v20-trunk2: {id: 20, link: {{ nic_trunk2 }}}
-              v20-int:    {id: 20, link: {{ nic_int }}}
+              v20-int:    {id: 20, link: bond1}
               v21-trunk1: {id: 21, link: {{ nic_trunk1 }}}
               v21-trunk2: {id: 21, link: {{ nic_trunk2 }}}
-              v21-int:    {id: 21, link: {{ nic_int }}}
-              v30-trunk1: {id: 30, link: {{ nic_trunk1 }}}          
+              v21-int:    {id: 21, link: bond1}
+              v30-trunk1: {id: 30, link: {{ nic_trunk1 }}}
               v30-trunk2: {id: 30, link: {{ nic_trunk2 }}}
-              v30-int:    {id: 30, link: {{ nic_int }}}            
-              v40-trunk1: {id: 40, link: {{ nic_trunk1 }}}        
+              v30-int:    {id: 30, link: bond1}
+              v40-trunk1: {id: 40, link: {{ nic_trunk1 }}}
               v40-trunk2: {id: 40, link: {{ nic_trunk2 }}}
-              v40-int:    {id: 40, link: {{ nic_int }}}
-              v50-trunk1: {id: 50, link: {{ nic_trunk1 }}}          
+              v40-int:    {id: 40, link: bond1}
+              v50-trunk1: {id: 50, link: {{ nic_trunk1 }}}
               v50-trunk2: {id: 50, link: {{ nic_trunk2 }}}
-              v50-int:    {id: 50, link: {{ nic_int }}}
+              v50-int:    {id: 50, link: bond1}
               v60-trunk1: {id: 60, link: {{ nic_trunk1 }}}
-              v60-trunk2: {id: 60, link: {{ nic_trunk2 }}}          
-              v60-int:    {id: 60, link: {{ nic_int }}}             
-              v70-trunk1: {id: 70, link: {{ nic_trunk1 }}}          
+              v60-trunk2: {id: 60, link: {{ nic_trunk2 }}}
+              v60-int:    {id: 60, link: bond1}
+              v70-trunk1: {id: 70, link: {{ nic_trunk1 }}}
               v70-trunk2: {id: 70, link: {{ nic_trunk2 }}}
-              v70-int:    {id: 70, link: {{ nic_int }}}
-              v999-trunk1: {id: 999, link: {{ nic_trunk1 }}}      
+              v70-int:    {id: 70, link: bond1}
+              v999-trunk1: {id: 999, link: {{ nic_trunk1 }}}
               v999-trunk2: {id: 999, link: {{ nic_trunk2 }}}
-              v999-int:    {id: 999, link: {{ nic_int }}}
+              v999-int:    {id: 999, link: bond1}
             bridges:
               br10:
                 interfaces: [v10-trunk1, v10-trunk2, v10-int]
@@ -134,7 +142,7 @@
                 parameters: {stp: true, forward-delay: 4}
               br21:
                 interfaces: [v21-trunk1, v21-trunk2, v21-int]
-                parameters: {stp: true, forward-delay: 4}              
+                parameters: {stp: true, forward-delay: 4}
               br30:
                 interfaces: [v30-trunk1, v30-trunk2, v30-int]
                 parameters: {stp: true, forward-delay: 4}
@@ -142,7 +150,7 @@
                 interfaces: [v40-trunk1, v40-trunk2, v40-int]
                 parameters: {stp: true, forward-delay: 4}
               br50:
-                interfaces: [v50-trunk1, v50-trunk2, v50-int]      
+                interfaces: [v50-trunk1, v50-trunk2, v50-int]
                 parameters: {stp: true, forward-delay: 4}
               br60:
                 interfaces: [v60-trunk1, v60-trunk2, v60-int]
@@ -188,10 +196,10 @@
         state: restarted
         enabled: yes
 
-    - name: "POST — Verificar bridges limpios"
+    - name: "POST — Verificar estado de interfaces"
       ansible.builtin.shell: |
-        echo "=== BOND0 ===" && ip addr show bond0 2>/dev/null || true
-        echo "=== INTERLINK ===" && ip addr show {{ nic_int }} 2>/dev/null || true
+        echo "=== BOND0 (LANs hacia pfSenses) ===" && ip addr show bond0 2>/dev/null || true
+        echo "=== BOND1 (Interlink LACP) ===" && ip addr show bond1 2>/dev/null || true
         echo "=== BRIDGES ===" && for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do echo "--- $br ---"; ip addr show "$br" 2>/dev/null || true; done
       changed_when: false
 
@@ -199,4 +207,6 @@
       ansible.builtin.debug:
         msg:
           - "Netplan LIMPIO aplicado en {{ core_id }}"
-          - "Revisa que los bridges NO tengan IPs con: ip addr show"
+          - "bond0 = LANs (active-backup hacia pfSenses)"
+          - "bond1 = Interlink (LACP 802.3ad entre Cores)"
+          - "Bridges sin IPs — Verifica con: ip addr show | grep inet"

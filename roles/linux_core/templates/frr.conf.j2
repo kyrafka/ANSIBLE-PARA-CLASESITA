@@ -11,8 +11,8 @@ log file /var/log/frr/{{ core_id }}.log
 log stdout
 log syslog
 !
-interface {{ nic_int }}
- description Enlace_Directo_Core_Transporte
+interface bond1
+ description Enlace_Directo_Core_Transporte_LACP
  ip ospf {{ ospf_area | default('0.0.0.0') }}
  ip ospf cost 10
 !
@@ -27,7 +27,7 @@ interface br{{ vlan.id }}
 router ospf
  ospf router-id {{ core_router_id }}
  passive-interface default
- no passive-interface {{ nic_int }}
+ no passive-interface bond1
  {% for vlan in vlans -%}
  no passive-interface br{{ vlan.id }}
  {% endfor %}
