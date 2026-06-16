@@ -136,20 +136,18 @@
       register: bond_fix
 
     - name: "NET — Aplicar sysctls para evitar DUPs en bonding"
-      ansible.builtin.shell: |
-        # Evitar DUPs causados por ARP
-        cat > /etc/sysctl.d/99-bond0.conf << 'EOF'
-# Sysctls para bond0 - evitar DUPs
-net.ipv4.conf.bond0.arp_announce = 0
-net.ipv4.conf.bond0.arp_ignore = 0
-net.ipv4.conf.all.arp_announce = 0
-net.ipv4.conf.all.arp_ignore = 0
-net.ipv4.conf.bond0.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
-EOF
-        sysctl -p /etc/sysctl.d/99-bond0.conf
-        echo "Sysctls aplicados"
-      changed_when: false
+      ansible.builtin.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { name: 'net.ipv4.conf.bond0.arp_announce', value: '0' }
+        - { name: 'net.ipv4.conf.bond0.arp_ignore', value: '0' }
+        - { name: 'net.ipv4.conf.all.arp_announce', value: '0' }
+        - { name: 'net.ipv4.conf.all.arp_ignore', value: '0' }
+        - { name: 'net.ipv4.conf.bond0.rp_filter', value: '1' }
+        - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
 
     # =========================================================================
     # 3. VERIFICAR CONECTIVIDAD
