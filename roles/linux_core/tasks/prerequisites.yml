@@ -74,17 +74,18 @@
 
 - name: "PRE — Instalar paquetes requeridos (solo si no existen)"
   ansible.builtin.shell: |
+    MISSING=""
     for pkg in bridge-utils vlan frr keepalived iptables-persistent; do
       dpkg -l "$pkg" 2>/dev/null | grep -q "^ii" || MISSING="$MISSING $pkg"
     done
     if [ -n "$MISSING" ]; then
-      apt-get update --fix-missing
-      apt-get install -y --fix-missing $MISSING
+      apt-get update --fix-missing && apt-get install -y --fix-missing $MISSING
+      echo "PAQUETES_INSTALADOS"
     else
-      echo "Todos los paquetes ya estan instalados"
+      echo "PAQUETES_YA_INSTALADOS"
     fi
   register: apt_result
-  changed_when: "'ya estan instalados' not in apt_result.stdout"
+  changed_when: "'PAQUETES_INSTALADOS' in apt_result.stdout"
   failed_when: false
 
 - name: "PRE — Verificar estado de servicios críticos"
