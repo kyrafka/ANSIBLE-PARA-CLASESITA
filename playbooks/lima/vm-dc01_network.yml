@@ -139,13 +139,12 @@
 
     - name: "NET — Aplicar sysctls para evitar DUPs en bonding"
       ansible.builtin.shell: |
-        sysctl -w net.ipv4.conf.bond0.arp_announce=0
-        sysctl -w net.ipv4.conf.bond0.arp_ignore=0
-        sysctl -w net.ipv4.conf.all.arp_announce=0
-        sysctl -w net.ipv4.conf.all.arp_ignore=0
-        sysctl -w net.ipv4.conf.bond0.rp_filter=1
-        sysctl -w net.ipv4.conf.all.rp_filter=1
-        # Guardar permanentemente
+        sysctl -w net.ipv4.conf.bond0.arp_announce 0
+        sysctl -w net.ipv4.conf.bond0.arp_ignore 0
+        sysctl -w net.ipv4.conf.all.arp_announce 0
+        sysctl -w net.ipv4.conf.all.arp_ignore 0
+        sysctl -w net.ipv4.conf.bond0.rp_filter 1
+        sysctl -w net.ipv4.conf.all.rp_filter 1
         cat > /etc/sysctl.d/99-bond0.conf << 'EOF'
 net.ipv4.conf.bond0.arp_announce = 0
 net.ipv4.conf.bond0.arp_ignore = 0
