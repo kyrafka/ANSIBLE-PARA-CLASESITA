@@ -145,6 +145,10 @@
     # =========================================================================
     # 3. FRR + BGP
     # =========================================================================
+    - name: "BGP — Pre-calcular red LAN para BGP"
+      ansible.builtin.set_fact:
+        lan_network_bgp: "{{ isp_lan_ip | regex_replace('^(.*)\\.(.*)$', '\\1.0') }}/24"
+
     - name: "BGP — Crear frr.conf para ISP {{ isp_id }}"
       ansible.builtin.template:
         src: "frr_isp.conf.j2"
@@ -157,7 +161,7 @@
         bgp_local_as: "{{ isp_as }}"
         bgp_neighbor_ip: "{{ isp_pf_ip }}"
         bgp_neighbor_as: "{{ isp_bgp_neighbor_as }}"
-        lan_network: "{{ isp_lan_ip }}"
+        lan_network: "{{ lan_network_bgp }}"
         wan_network: "{{ current_isp.wan_ip }}"
       notify: "Restart FRR"
 
