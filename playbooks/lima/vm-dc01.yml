@@ -48,7 +48,24 @@
         mode: "0644"
         force: yes
 
-    # === 1. CONFIGURAR RED (BONDING + VLAN 60) ===
+    # === 1. INSTALAR PAQUETES (primero — con red original intacta) ===
+    - name: "PKGS — Instalar paquetes (solo si faltan)"
+      ansible.builtin.shell: |
+        MISSING=""
+        for pkg in samba samba-common-bin bind9 bind9-utils isc-dhcp-server krb5-user libpam-krb5 winbind libpam-winbind libnss-winbind; do
+          dpkg -l "$pkg" 2>/dev/null | grep -q "^ii" || MISSING="$MISSING $pkg"
+        done
+        if [ -n "$MISSING" ]; then
+          apt-get update --fix-missing && apt-get install -y --fix-missing $MISSING
+          echo "PAQUETES_INSTALADOS"
+        else
+          echo "PAQUETES_YA_INSTALADOS"
+        fi
+      register: apt_result
+      changed_when: "'PAQUETES_INSTALADOS' in apt_result.stdout"
+      failed_when: false
+
+    # === 2. CONFIGURAR RED (BONDING + ENS36 TEMPORAL) ===
     - name: "NET — Detener NetworkManager si existe"
       ansible.builtin.shell: |
         systemctl is-active NetworkManager >/dev/null 2>&1 && systemctl stop NetworkManager || true
@@ -119,23 +136,6 @@
     - name: "NET — Debug estado de red"
       ansible.builtin.debug:
         msg: "{{ net_check.stdout }}"
-
-    # === 2. INSTALAR PAQUETES (solo si no existen) ===
-    - name: "PKGS — Instalar paquetes (solo si faltan)"
-      ansible.builtin.shell: |
-        MISSING=""
-        for pkg in samba samba-common-bin bind9 bind9-utils isc-dhcp-server krb5-user libpam-krb5 winbind libpam-winbind libnss-winbind; do
-          dpkg -l "$pkg" 2>/dev/null | grep -q "^ii" || MISSING="$MISSING $pkg"
-        done
-        if [ -n "$MISSING" ]; then
-          apt-get update --fix-missing && apt-get install -y --fix-missing $MISSING
-          echo "PAQUETES_INSTALADOS"
-        else
-          echo "PAQUETES_YA_INSTALADOS"
-        fi
-      register: apt_result
-      changed_when: "'PAQUETES_INSTALADOS' in apt_result.stdout"
-      failed_when: false
 
     # === 3. CONFIGURAR BIND9 (DNS) ===
     - name: "DNS — Backup config anterior"
