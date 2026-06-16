@@ -167,31 +167,31 @@
             bridges:
               br10:
                 interfaces: [v10-trunk1, v10-trunk2, v10-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br20:
                 interfaces: [v20-trunk1, v20-trunk2, v20-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br21:
                 interfaces: [v21-trunk1, v21-trunk2, v21-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br30:
                 interfaces: [v30-trunk1, v30-trunk2, v30-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br40:
                 interfaces: [v40-trunk1, v40-trunk2, v40-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br50:
                 interfaces: [v50-trunk1, v50-trunk2, v50-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br60:
                 interfaces: [v60-trunk1, v60-trunk2, v60-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br70:
                 interfaces: [v70-trunk1, v70-trunk2, v70-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
               br999:
                 interfaces: [v999-trunk1, v999-trunk2, v999-int]
-                parameters: {stp: true, forward-delay: 4}
+                parameters: {stp: true, forward-delay: 15}
 
     - name: "NETPLAN — Generar y aplicar"
       ansible.builtin.shell: |
