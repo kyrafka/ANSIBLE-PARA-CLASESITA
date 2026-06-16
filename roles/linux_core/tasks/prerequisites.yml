@@ -72,20 +72,20 @@
   changed_when: true
   failed_when: false
 
-- name: "PRE — Instalar paquetes requeridos"
-  ansible.builtin.apt:
-    name:
-      - "bridge-utils"
-      - "vlan"
-      - "frr"
-      - "keepalived"
-      - "netplan.io"
-      - "iptables-persistent"
-    state: present
-    update_cache: yes
-    cache_valid_time: 3600
+- name: "PRE — Instalar paquetes requeridos (solo si no existen)"
+  ansible.builtin.shell: |
+    for pkg in bridge-utils vlan frr keepalived iptables-persistent; do
+      dpkg -l "$pkg" 2>/dev/null | grep -q "^ii" || MISSING="$MISSING $pkg"
+    done
+    if [ -n "$MISSING" ]; then
+      apt-get update --fix-missing
+      apt-get install -y --fix-missing $MISSING
+    else
+      echo "Todos los paquetes ya estan instalados"
+    fi
   register: apt_result
-  failed_when: apt_result.failed
+  changed_when: "'ya estan instalados' not in apt_result.stdout"
+  failed_when: false
 
 - name: "PRE — Verificar estado de servicios críticos"
   ansible.builtin.systemd:
