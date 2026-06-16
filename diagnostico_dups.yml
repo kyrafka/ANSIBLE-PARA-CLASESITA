@@ -1,0 +1,64 @@
+---
+- name: "Diagnostico DUPs en cores"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "KEEPALIVED — Estado del servicio"
+      ansible.builtin.shell: |
+        echo "=== STATUS KEEPALIVED ==="
+        systemctl status keepalived --no-pager -l | head -15
+      changed_when: false
+      register: kal_status
+
+    - name: "KEEPALIVED — Log reciente"
+      ansible.builtin.shell: |
+        echo "=== JOURNALCTL -20 lineas ==="
+        journalctl -u keepalived -n 20 --no-pager 2>&1 | tail -15
+      changed_when: false
+      register: kal_logs
+
+    - name: "KEEPALIVED — Config actual"
+      ansible.builtin.shell: |
+        echo "=== KEEPALIVED.CONF ==="
+        cat /etc/keepalived/keepalived.conf | grep -E "state|priority|unicast|interface"
+      changed_when: false
+      register: kal_conf
+
+    - name: "NET — Puentes activos"
+      ansible.builtin.shell: |
+        echo "=== BRIDGES ==="
+        for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do
+          if ip link show "$br" 2>/dev/null | grep -q "state UP"; then
+            echo "--- $br: UP ---"
+            ip addr show "$br" | grep "inet "
+            # Ver interfaces del bridge
+            brctl show "$br" 2>/dev/null || true
+          else
+            echo "$br: DOWN"
+          fi
+        done
+      changed_when: false
+      register: bridges
+
+    - name: "NET — TCPdump captura 5 seg"
+      ansible.builtin.shell: |
+        echo "=== TCPDUMP (5 seg) ==="
+        timeout 5 tcpdump -i bond0 -c 10 2>&1 || echo "Sin paquetes capturados"
+      changed_when: false
+      register: tcpdump
+
+    - name: "RESULTADOS"
+      ansible.builtin.debug:
+        msg:
+          - "{{ kal_status.stdout }}"
+          - "---"
+          - "{{ kal_logs.stdout }}"
+          - "---"
+          - "{{ kal_conf.stdout }}"
+          - "---"
+          - "{{ bridges.stdout }}"
+          - "---"
+          - "{{ tcpdump.stdout }}"
