@@ -62,14 +62,13 @@
         echo "Backup done"
       changed_when: false
 
-    - name: "NET — Crear netplan simple (IP directa en ens34)"
+    - name: "NET — Crear netplan con Bond0 (ens34+ens35) + Internet temp (ens36)"
       ansible.builtin.copy:
-        dest: /etc/netplan/60-dc01.yaml
+        dest: /etc/netplan/50-cloud-init.yaml
         content: |
-          # vm-dc01 — Red simple
-          # ens34: acceso a red de gestion VLAN 60 (sin tags, Port Group VLAN 60 en ESXi)
-          # ens35: redundancia (opcional, cable a Core 2)
-          # ens38: internet temporal (DHCP)
+          # vm-dc01 — Red con Bond0 (active-backup) + Internet temporal
+          # Bond0: ens34+ens35 hacia gestion VLAN 60 (IP fija)
+          # ens36: internet temporal (DHCP)
           network:
             version: 2
             renderer: networkd
@@ -77,6 +76,15 @@
               ens34:
                 dhcp4: no
                 optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+              ens36:
+                dhcp4: true
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
                 addresses:
                   - {{ server_ip }}/27
                 gateway4: {{ pfSense_ip }}
@@ -86,12 +94,10 @@
                     - {{ pfSense_ip }}
                   search:
                     - {{ domain_name }}
-              ens35:
-                dhcp4: no
-                optional: true
-              ens38:
-                dhcp4: true
-                optional: true
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
         owner: root
         group: root
         mode: "0600"
@@ -104,10 +110,9 @@
         sleep 3
       changed_when: true
 
-    - name: "NET — Verificar que ens34 tiene IP"
+    - name: "NET — Verificar que bond0 tiene IP"
       ansible.builtin.shell: |
-        ip addr show bond0.60 || echo "FALLO: bond0.60 no existe"
-        ip addr show | grep "{{ server_ip }}"
+        ip addr show bond0 | grep "{{ server_ip }}"
       changed_when: false
       register: net_check
 
@@ -115,26 +120,22 @@
       ansible.builtin.debug:
         msg: "{{ net_check.stdout }}"
 
-    # === 2. INSTALAR PAQUETES ===
-    - name: "PKGS — Actualizar APT"
-      ansible.builtin.apt:
-        update_cache: yes
-        cache_valid_time: 3600
-
-    - name: "PKGS — Instalar paquetes necesarios"
-      ansible.builtin.apt:
-        name:
-          - samba
-          - samba-common-bin
-          - bind9
-          - bind9-utils
-          - isc-dhcp-server
-          - krb5-user
-          - libpam-krb5
-          - winbind
-          - libpam-winbind
-          - libnss-winbind
-        state: present
+    # === 2. INSTALAR PAQUETES (solo si no existen) ===
+    - name: "PKGS — Instalar paquetes (solo si faltan)"
+      ansible.builtin.shell: |
+        MISSING=""
+        for pkg in samba samba-common-bin bind9 bind9-utils isc-dhcp-server krb5-user libpam-krb5 winbind libpam-winbind libnss-winbind; do
+          dpkg -l "$pkg" 2>/dev/null | grep -q "^ii" || MISSING="$MISSING $pkg"
+        done
+        if [ -n "$MISSING" ]; then
+          apt-get update --fix-missing && apt-get install -y --fix-missing $MISSING
+          echo "PAQUETES_INSTALADOS"
+        else
+          echo "PAQUETES_YA_INSTALADOS"
+        fi
+      register: apt_result
+      changed_when: "'PAQUETES_INSTALADOS' in apt_result.stdout"
+      failed_when: false
 
     # === 3. CONFIGURAR BIND9 (DNS) ===
     - name: "DNS — Backup config anterior"
