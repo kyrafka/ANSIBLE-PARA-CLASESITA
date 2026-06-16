@@ -80,7 +80,9 @@
                 interfaces: [ens34, ens35]
                 addresses:
                   - {{ server_ip }}/27
-                gateway4: {{ pfSense_ip }}
+                routes:
+                  - to: default
+                    via: {{ pfSense_ip }}
                 nameservers:
                   addresses:
                     - 8.8.8.8
@@ -136,18 +138,24 @@
       register: bond_fix
 
     - name: "NET — Aplicar sysctls para evitar DUPs en bonding"
-      ansible.builtin.sysctl:
-        name: "{{ item.name }}"
-        value: "{{ item.value }}"
-        state: present
-        reload: yes
-      loop:
-        - { name: 'net.ipv4.conf.bond0.arp_announce', value: '0' }
-        - { name: 'net.ipv4.conf.bond0.arp_ignore', value: '0' }
-        - { name: 'net.ipv4.conf.all.arp_announce', value: '0' }
-        - { name: 'net.ipv4.conf.all.arp_ignore', value: '0' }
-        - { name: 'net.ipv4.conf.bond0.rp_filter', value: '1' }
-        - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
+      ansible.builtin.shell: |
+        sysctl -w net.ipv4.conf.bond0.arp_announce=0
+        sysctl -w net.ipv4.conf.bond0.arp_ignore=0
+        sysctl -w net.ipv4.conf.all.arp_announce=0
+        sysctl -w net.ipv4.conf.all.arp_ignore=0
+        sysctl -w net.ipv4.conf.bond0.rp_filter=1
+        sysctl -w net.ipv4.conf.all.rp_filter=1
+        # Guardar permanentemente
+        cat > /etc/sysctl.d/99-bond0.conf << 'EOF'
+net.ipv4.conf.bond0.arp_announce = 0
+net.ipv4.conf.bond0.arp_ignore = 0
+net.ipv4.conf.all.arp_announce = 0
+net.ipv4.conf.all.arp_ignore = 0
+net.ipv4.conf.bond0.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 1
+EOF
+        echo "Sysctls aplicados"
+      changed_when: false
 
     # =========================================================================
     # 3. VERIFICAR CONECTIVIDAD
