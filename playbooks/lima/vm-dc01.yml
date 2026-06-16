@@ -159,6 +159,14 @@
         mode: "0644"
         force: yes
 
+    - name: "NET — Habilitar IP Forwarding (para que funcione como router)"
+      ansible.builtin.shell: |
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+        echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-vm-dc01.conf
+        sysctl -p /etc/sysctl.d/99-vm-dc01.conf
+        echo "IP Forwarding enabled"
+      changed_when: false
+
     - name: "NET — Verificar que bond0 tiene IP"
       ansible.builtin.shell: |
         ip addr show bond0 | grep "{{ server_ip }}"
