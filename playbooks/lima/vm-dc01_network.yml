@@ -1,0 +1,192 @@
+---
+# ============================================================================
+# vm-dc01_network.yml — Solo configuración de RED (Parte 1)
+# ============================================================================
+# Ejecutar PRIMERO en VM fresca para configurar bonding + conectividad
+# NO instala paquetes — solo configura red y verifica conexión
+# ============================================================================
+
+- name: "Configurar RED vm-dc01 — Bond0 + Conectividad"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    server_ip: "192.168.16.10"
+    pfSense_ip: "192.168.16.1"
+    domain_name: "AJ.local"
+
+  tasks:
+    # =========================================================================
+    # 1. DESHABILITAR SYSTEMD-RESOLVED (conflicta con Bind9 después)
+    # =========================================================================
+    - name: "PRE — Deshabilitar systemd-resolved"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "PRE — Crear resolv.conf temporal"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 8.8.4.4
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    # =========================================================================
+    # 2. CONFIGURAR NETWORK (BOND0 + ENS36 TEMPORAL)
+    # =========================================================================
+    - name: "NET — Detener NetworkManager"
+      ansible.builtin.shell: |
+        systemctl is-active NetworkManager >/dev/null 2>&1 && systemctl stop NetworkManager || true
+        systemctl is-enabled NetworkManager >/dev/null 2>&1 && systemctl disable NetworkManager || true
+        echo "OK"
+      changed_when: false
+
+    - name: "NET — Backup netplan anterior"
+      ansible.builtin.shell: |
+        [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.bak.$(date +%s)
+        echo "Backup done"
+      changed_when: false
+
+    - name: "NET — Crear netplan con Bond0 (ens34+ens35) + ens36 temp"
+      ansible.builtin.copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        content: |
+          # vm-dc01 — Red con Bond0 (active-backup) + Internet temporal
+          # Bond0: ens34+ens35 hacia gestion VLAN 60 (IP fija)
+          # ens36: internet temporal (DHCP)
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+              ens36:
+                dhcp4: true
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                addresses:
+                  - {{ server_ip }}/27
+                gateway4: {{ pfSense_ip }}
+                nameservers:
+                  addresses:
+                    - 8.8.8.8
+                    - 8.8.4.4
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "NET — Aplicar netplan"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+      changed_when: true
+      register: netplan_result
+
+    # =========================================================================
+    # 3. VERIFICAR CONECTIVIDAD
+    # =========================================================================
+    - name: "VERIF — Estado de interfaces"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet "
+        echo "=== ENS34 ==="
+        ip addr show ens34 | grep "inet "
+        echo "=== ENS35 ==="
+        ip addr show ens35 | grep "inet "
+        echo "=== ENS36 ==="
+        ip addr show ens36 | grep "inet "
+        echo "=== RUTAS ==="
+        ip route | grep -E "default|192.168"
+      changed_when: false
+      register: interfaces_status
+
+    - name: "VERIF — Ping a pfSense (gateway)"
+      ansible.builtin.shell: |
+        ping -c 3 {{ pfSense_ip }}
+      changed_when: false
+      register: ping_pfsense
+      ignore_errors: true
+
+    - name: "VERIF — Ping a internet"
+      ansible.builtin.shell: |
+        ping -c 3 8.8.8.8
+      changed_when: false
+      register: ping_internet
+      ignore_errors: true
+
+    - name: "VERIF — Ping a Core1 (192.168.10.20)"
+      ansible.builtin.shell: |
+        ping -c 3 192.168.10.20
+      changed_when: false
+      register: ping_core1
+      ignore_errors: true
+
+    - name: "VERIF — Ping a Core2 (192.168.10.30)"
+      ansible.builtin.shell: |
+        ping -c 3 192.168.10.30
+      changed_when: false
+      register: ping_core2
+      ignore_errors: true
+
+    # =========================================================================
+    # 4. MOSTRAR RESULTADOS
+    # =========================================================================
+    - name: "RESULT — Estado de interfaces"
+      ansible.builtin.debug:
+        msg: "{{ interfaces_status.stdout_lines }}"
+
+    - name: "RESULT — Conectividad pfSense"
+      ansible.builtin.debug:
+        msg:
+          - "Ping a {{ pfSense_ip }}: {{ 'OK' if ping_pfsense.rc == 0 else 'FALLO' }}"
+          - "{{ ping_pfsense.stdout }}"
+
+    - name: "RESULT — Conectividad Internet"
+      ansible.builtin.debug:
+        msg:
+          - "Ping a 8.8.8.8: {{ 'OK' if ping_internet.rc == 0 else 'FALLO' }}"
+          - "{{ ping_internet.stdout }}"
+
+    - name: "RESULT — Conectividad Core1"
+      ansible.builtin.debug:
+        msg:
+          - "Ping a 192.168.10.20: {{ 'OK' if ping_core1.rc == 0 else 'FALLO' }}"
+          - "{{ ping_core1.stdout }}"
+
+    - name: "RESULT — Conectividad Core2"
+      ansible.builtin.debug:
+        msg:
+          - "Ping a 192.168.10.30: {{ 'OK' if ping_core2.rc == 0 else 'FALLO' }}"
+          - "{{ ping_core2.stdout }}"
+
+    - name: "RESULT — Resumen"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "vm-dc01 RED CONFIGURADA"
+          - "Bond0: {{ server_ip }}/27 (ens34+ens35 active-backup)"
+          - "Ens36: DHCP temporal (internet)"
+          - "============================================"
+          - "SI hay ping a pfSense, Core1, Core2 e internet:"
+          - "  → Ejecutar: vm-dc01_servicios.yml"
+          - "============================================"

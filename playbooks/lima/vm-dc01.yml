@@ -115,8 +115,6 @@
                 optional: true
               ens36:
                 dhcp4: true
-                dhcp4-overrides:
-                  use-dns: no
                 optional: true
             bonds:
               bond0:
