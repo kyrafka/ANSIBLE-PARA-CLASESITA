@@ -134,10 +134,39 @@
         echo "Forward rules applied"
 
     - name: "NAT — Guardar reglas persistente"
+      ansible.builtin.apt:
+        name:
+          - iptables-persistent
+          - netfilter-persistent
+        state: present
+        update_cache: yes
+
+    - name: "NAT — Guardar reglas iptables"
       ansible.builtin.shell: |
-        apt-get install -y iptables-persistent netfilter-persistent 2>/dev/null || true
         netfilter-persistent save 2>/dev/null || true
         echo "NAT rules saved"
+
+    # =========================================================================
+    # DNS — Configurar resolv.conf (deshabilitar systemd-resolved)
+    # =========================================================================
+    - name: "DNS — Deshabilitar systemd-resolved"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "DNS — Crear resolv.conf con Google DNS"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 8.8.4.4
+          nameserver 1.1.1.1
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
 
     # =========================================================================
     # 3. FRR + BGP
