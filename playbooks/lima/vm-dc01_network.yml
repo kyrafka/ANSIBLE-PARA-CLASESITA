@@ -102,6 +102,34 @@
       changed_when: true
       register: netplan_result
 
+    - name: "NET — Verificar y corregir bond0 si es necesario"
+      ansible.builtin.shell: |
+        # Verificar que el bond existe y tiene el modo correcto
+        if [ -f /proc/net/bonding/bond0 ]; then
+          MODE=$(cat /proc/net/bonding/bond0 | grep "Bonding Mode" | awk '{print $3}')
+          echo "Bond mode actual: $MODE"
+          # Forzar modo active-backup si no está correcto
+          if [ "$MODE" != "fault-tolerance" ]; then
+            echo "Modo incorrecto, recargando bond..."
+            modprobe -r bonding 2>/dev/null || true
+            modprobe bonding mode=active-backup miimon=100 primary=ens34
+          fi
+          # Verificar que solo ens34 esté activa
+          ACTIVE=$(cat /proc/net/bonding/bond0 | grep "Currently Active Slave" | awk '{print $4}')
+          echo "Active Slave: $ACTIVE"
+          if [ "$ACTIVE" != "ens34" ]; then
+            echo "Cambiando active slave a ens34..."
+            echo "+ens34" > /sys/class/net/bond0/bonding/slaves
+            echo "-$ACTIVE" > /sys/class/net/bond0/bonding/slaves
+          fi
+          echo "Bond0 OK"
+        else
+          echo "Bond0 no existe todavia, esperando..."
+          sleep 5
+        fi
+      changed_when: false
+      register: bond_fix
+
     # =========================================================================
     # 3. VERIFICAR CONECTIVIDAD
     # =========================================================================
