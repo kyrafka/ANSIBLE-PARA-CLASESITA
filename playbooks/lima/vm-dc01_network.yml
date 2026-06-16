@@ -122,6 +122,11 @@
             echo "+ens34" > /sys/class/net/bond0/bonding/slaves
             echo "-$ACTIVE" > /sys/class/net/bond0/bonding/slaves
           fi
+          # Deshabilitar arp_proxy en el bond (causa DUPs)
+          echo 0 > /proc/sys/net/ipv4/conf/bond0/arp_announce
+          echo 0 > /proc/sys/net/ipv4/conf/bond0/arp_ignore
+          echo 0 > /proc/sys/net/ipv4/conf/all/arp_announce
+          echo 0 > /proc/sys/net/ipv4/conf/all/arp_ignore
           echo "Bond0 OK"
         else
           echo "Bond0 no existe todavia, esperando..."
@@ -129,6 +134,22 @@
         fi
       changed_when: false
       register: bond_fix
+
+    - name: "NET — Aplicar sysctls para evitar DUPs en bonding"
+      ansible.builtin.shell: |
+        # Evitar DUPs causados por ARP
+        cat > /etc/sysctl.d/99-bond0.conf << 'EOF'
+# Sysctls para bond0 - evitar DUPs
+net.ipv4.conf.bond0.arp_announce = 0
+net.ipv4.conf.bond0.arp_ignore = 0
+net.ipv4.conf.all.arp_announce = 0
+net.ipv4.conf.all.arp_ignore = 0
+net.ipv4.conf.bond0.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 1
+EOF
+        sysctl -p /etc/sysctl.d/99-bond0.conf
+        echo "Sysctls aplicados"
+      changed_when: false
 
     # =========================================================================
     # 3. VERIFICAR CONECTIVIDAD
