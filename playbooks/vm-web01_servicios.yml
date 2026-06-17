@@ -114,11 +114,9 @@
 
           backend web_servers
               balance roundrobin
-              option httpchk
               option forwardfor
-              {% for server in backend_servers %}
-              server web{{ loop.index }} {{ server }} check inter 3s rise 2 fall 3
-              {% endfor %}
+              http-check expect status 200
+              server web1 127.0.0.1:8080 check inter 3s rise 2 fall 3
         mode: "0644"
         force: yes
 

@@ -1,0 +1,152 @@
+---
+# ============================================================================
+# pfsense_bgp.yml — Configurar BGP en pfSense (requiere FRR instalado)
+# ============================================================================
+# AS local: 65000
+# Peers:
+#   - WAN1: 192.168.2.1 (ISPCREATE1, AS65001)
+#   - WAN2: 192.168.1.1 (ISPCREATE2, AS65002)
+# ============================================================================
+
+- name: "Configurar BGP en pfSense"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    local_as: 65000
+    wan1_peer: "192.168.2.1"
+    wan2_peer: "192.168.1.1"
+    wan1_ip: "192.168.2.2"
+    wan2_ip: "192.168.1.2"
+    networks_to_announce:
+      - "192.168.11.0/27"   # DMZ web
+      - "192.168.12.0/25"   # LAN users
+      - "192.168.15.0/26"   # VoIP
+
+  tasks:
+    - name: "Verificar que FRR está instalado"
+      ansible.builtin.shell: |
+        if [ ! -f /usr/local/sbin/frrinit.sh ]; then
+          echo "ERROR: FRR no está instalado. Instalar desde System → Package Manager → Available Packages → FRR"
+          exit 1
+        fi
+        echo "FRR OK"
+
+    - name: "Habilitar FRR vía vtysh"
+      ansible.builtin.shell: |
+        vtysh -c 'configure terminal' \
+              -c 'hostname pfSense' \
+              -c 'log syslog informational' \
+              -c 'service integrated-vtysh-config' \
+              -c 'exit'
+      changed_when: true
+
+    - name: "Configurar Zebra daemon"
+      ansible.builtin.shell: |
+        cat > /tmp/frr_zebra.conf << 'EOF'
+! Zebra configuration
+hostname pfSense
+log syslog informational
+!
+interface wan1
+  ip address {{ wan1_ip }}/30
+!
+interface wan2
+  ip address {{ wan2_ip }}/30
+!
+interface lo
+  ip address 127.0.0.1/8
+  ip address ::1/128
+!
+ip forwarding
+ipv6 forwarding
+!
+line vty
+!
+EOF
+        echo "Zebra config done"
+
+    - name: "Configurar BGP daemon"
+      ansible.builtin.shell: |
+        cat > /tmp/frr_bgp.conf << 'EOF'
+! BGP Configuration
+router bgp {{ local_as }}
+  bgp router-id {{ wan2_ip }}
+  !
+  ! Peer WAN1 (ISPCREATE1)
+  neighbor {{ wan1_peer }} remote-as 65001
+  neighbor {{ wan1_peer }} description ISPCREATE1-WAN1
+  neighbor {{ wan1_peer }} timers 10 30
+  neighbor {{ wan1_peer }} timers connect 10
+  !  
+  ! Peer WAN2 (ISPCREATE2)
+  neighbor {{ wan2_peer }} remote-as 65002
+  neighbor {{ wan2_peer }} description ISPCREATE2-WAN2
+  neighbor {{ wan2_peer }} timers 10 30
+  neighbor {{ wan2_peer }} timers connect 10
+  !
+  ! Advertise networks
+{% for net in networks_to_announce %}
+  network {{ net }}
+{% endfor %}
+  !
+  ! Redistance connected routes
+  redistribute connected
+  !
+  ! Access list para limitar peers (solo aceptar conexiones de IPs especificas)
+  access-list allow_peers permit {{ wan1_peer }}/32
+  access-list allow_peers permit {{ wan2_peer }}/32
+  access-list allow_peers deny any
+  !
+line vty
+EOF
+        echo "BGP config done"
+
+    - name: "Escribir configuración de FRR"
+      ansible.builtin.shell: |
+        # Detener FRR si está corriendo
+        if [ -f /var/run/frr/frr.pid ]; then
+          kill $(cat /var/run/frr/frr.pid) 2>/dev/null || true
+        fi
+        
+        # Copiar configs a /usr/local/etc/frr/
+        cp /tmp/frr_zebra.conf /usr/local/etc/frr/zebra.conf
+        cp /tmp/frr_bgp.conf /usr/local/etc/frr/bgpd.conf
+        
+        # Asegurar permisos
+        chown frr:frr /usr/local/etc/frr/*.conf
+        chmod 640 /usr/local/etc/frr/*.conf
+        
+        # Habilitar BGP en frr.conf
+        sed -i 's/bgpd=no/bgpd=yes/' /usr/local/etc/frr/frr.conf 2>/dev/null || true
+        sed -i 's/zebra=no/zebra=yes/' /usr/local/etc/frr/frr.conf 2>/dev/null || true
+        
+        echo "Configs escritas"
+
+    - name: "Iniciar FRR"
+      ansible.builtin.shell: |
+        # Reiniciar FRR
+        /usr/local/sbin/frr.init restart
+        sleep 5
+        
+        # Verificar que BGP está corriendo
+        vtysh -c 'show ip bgp summary'
+
+    - name: "RESULT — Estado BGP"
+      ansible.builtin.shell: |
+        echo "=== BGP STATUS ==="
+        vtysh -c 'show ip bgp summary' 2>/dev/null || echo "BGP no corriendo"
+        echo ""
+        echo "=== BGP NEIGHBORS ==="
+        vtysh -c 'show ip bgp neighbors' 2>/dev/null || echo "Sin neighbors"
+        echo ""
+        echo "=== ANNOUNCED NETWORKS ==="
+        vtysh -c 'show ip bgp' 2>/dev/null || echo "Sin redes"
+      changed_when: false
+      register: bgp_status
+
+    - name: "Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ bgp_status.stdout_lines }}"
