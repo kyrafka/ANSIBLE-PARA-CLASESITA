@@ -14,7 +14,7 @@
   vars:
     web_domain: "web.AJ.local"
     backend_servers:
-      - "192.168.11.11:80"
+      - "192.168.11.11:8080"
 
   tasks:
     - name: "WEB — Actualizar apt"
@@ -47,19 +47,19 @@
           </html>
         mode: "0644"
 
-    - name: "WEB — Configurar Nginx como proxy"
+    - name: "WEB — Configurar Nginx en puerto 8080 (sin proxy, servidor directo)"
       ansible.builtin.copy:
         dest: /etc/nginx/sites-available/reverse-proxy.conf
         content: |
           server {
-              listen 80;
+              listen 8080;
               server_name {{ web_domain }};
 
+              root /var/www/html;
+              index index.html;
+
               location / {
-                  proxy_pass http://{{ backend_servers[0] }};
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  try_files $uri $uri/ =404;
               }
 
               location /health {
@@ -69,11 +69,16 @@
           }
         mode: "0644"
 
-    - name: "WEB — Habilitar sitio reverse proxy"
+    - name: "WEB — Habilitar sitio Nginx"
       ansible.builtin.file:
         src: /etc/nginx/sites-available/reverse-proxy.conf
         dest: /etc/nginx/sites-enabled/reverse-proxy.conf
         state: link
+
+    - name: "WEB — Deshabilitar sitio default de Nginx"
+      ansible.builtin.file:
+        dest: /etc/nginx/sites-enabled/default
+        state: absent
 
     - name: "WEB — Configurar HAProxy balanceador"
       ansible.builtin.copy:
@@ -97,40 +102,30 @@
               timeout client 50000ms
               timeout server 50000ms
 
-          # Dashboard stats
           listen stats
               bind *:8404
               stats enable
               stats uri /stats
               stats refresh 30s
 
-          # Frontend
           frontend http_front
               bind *:80
               default_backend web_servers
 
-          # Backend - servidores web
           backend web_servers
               balance roundrobin
               option httpchk
               option forwardfor
               {% for server in backend_servers %}
-              server {{ server.split(':')[0] }} {{ server }} check inter 3s rise 2 fall 3
+              server web{{ loop.index }} {{ server }} check inter 3s rise 2 fall 3
               {% endfor %}
-
-          # Health check
-          backend health_check
-              mode http
-              option httpchk GET /health
-              http-check expect status 200
-              server web1 192.168.11.11:80 check inter 3s rise 2 fall 3
         mode: "0644"
         force: yes
 
     - name: "WEB — Iniciar servicios"
       ansible.builtin.systemd:
         name: "{{ item }}"
-        state: started
+        state: restarted
         enabled: yes
       loop:
         - nginx
@@ -142,7 +137,10 @@
         systemctl is-active nginx && echo "Nginx: OK" || echo "Nginx: FAIL"
         systemctl is-active haproxy && echo "HAProxy: OK" || echo "HAProxy: FAIL"
         echo ""
-        echo "=== TEST NGINX ==="
+        echo "=== TEST NGINX (puerto 8080) ==="
+        curl -s http://localhost:8080/ | head -5
+        echo ""
+        echo "=== TEST HAPROXY (puerto 80) ==="
         curl -s http://localhost/ | head -5
         echo ""
         echo "=== TEST HAPROXY STATS ==="
