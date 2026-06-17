@@ -1,0 +1,155 @@
+---
+# ============================================================================
+# vm-web01_servicios.yml — Nginx + Balanceador (PARTE 2)
+# ============================================================================
+# Ejecutar DESPUES de vm-web01_network.yml
+# ============================================================================
+
+- name: "Configurar SERVICIOS vm-web01 — Nginx + Balanceador"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    web_domain: "web.AJ.local"
+    backend_servers:
+      - "192.168.11.11:80"
+
+  tasks:
+    - name: "WEB — Actualizar apt"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "WEB — Instalar Nginx"
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+
+    - name: "WEB — Instalar HAProxy"
+      ansible.builtin.apt:
+        name: haproxy
+        state: present
+
+    - name: "WEB — Crear pagina de prueba"
+      ansible.builtin.copy:
+        dest: /var/www/html/index.html
+        content: |
+          <html>
+          <head><title>vm-web01 - AJ.local</title></head>
+          <body>
+            <h1>vm-web01 — Servidor Web + Balanceador</h1>
+            <p>Dominio: {{ web_domain }}</p>
+            <p>IP: 192.168.11.11</p>
+            <p>Fecha: {{ ansible_date_time.iso8601 }}</p>
+          </body>
+          </html>
+        mode: "0644"
+
+    - name: "WEB — Configurar Nginx como proxy"
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/reverse-proxy.conf
+        content: |
+          server {
+              listen 80;
+              server_name {{ web_domain }};
+
+              location / {
+                  proxy_pass http://{{ backend_servers[0] }};
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              }
+
+              location /health {
+                  return 200 "OK\n";
+                  add_header Content-Type text/plain;
+              }
+          }
+        mode: "0644"
+
+    - name: "WEB — Habilitar sitio reverse proxy"
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/reverse-proxy.conf
+        dest: /etc/nginx/sites-enabled/reverse-proxy.conf
+        state: link
+
+    - name: "WEB — Configurar HAProxy balanceador"
+      ansible.builtin.copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+              log /dev/log local0
+              chroot /var/lib/haproxy
+              stats socket /run/haproxy/admin.sock mode 660 level admin
+              stats timeout 30s
+              user haproxy
+              group haproxy
+              daemon
+
+          defaults
+              log global
+              mode http
+              option httplog
+              option dontlognull
+              timeout connect 5000ms
+              timeout client 50000ms
+              timeout server 50000ms
+
+          # Dashboard stats
+          listen stats
+              bind *:8404
+              stats enable
+              stats uri /stats
+              stats refresh 30s
+
+          # Frontend
+          frontend http_front
+              bind *:80
+              default_backend web_servers
+
+          # Backend - servidores web
+          backend web_servers
+              balance roundrobin
+              option httpchk
+              option forwardfor
+              {% for server in backend_servers %}
+              server {{ server.split(':')[0] }} {{ server }} check inter 3s rise 2 fall 3
+              {% endfor %}
+
+          # Health check
+          backend health_check
+              mode http
+              option httpchk GET /health
+              http-check expect status 200
+              server web1 192.168.11.11:80 check inter 3s rise 2 fall 3
+        mode: "0644"
+        force: yes
+
+    - name: "WEB — Iniciar servicios"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - nginx
+        - haproxy
+
+    - name: "WEB — Verificar servicios"
+      ansible.builtin.shell: |
+        echo "=== SERVICIOS ==="
+        systemctl is-active nginx && echo "Nginx: OK" || echo "Nginx: FAIL"
+        systemctl is-active haproxy && echo "HAProxy: OK" || echo "HAProxy: FAIL"
+        echo ""
+        echo "=== TEST NGINX ==="
+        curl -s http://localhost/ | head -5
+        echo ""
+        echo "=== TEST HAPROXY STATS ==="
+        curl -s http://localhost:8404/stats | head -10 || echo "Stats no disponible"
+      changed_when: false
+      register: verif
+
+    - name: "RESULT — Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ verif.stdout_lines }}"

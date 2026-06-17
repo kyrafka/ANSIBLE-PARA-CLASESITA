@@ -1,0 +1,89 @@
+---
+# ============================================================================
+# vm-web01_network.yml — RED con BOND0 (PARTE 1)
+# ============================================================================
+# Ejecutar primero para configurar IP en VLAN 10 con bonding
+# ============================================================================
+
+- name: "Configurar RED vm-web01 — VLAN 10 + Bond0"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    server_ip: "192.168.11.11"
+    server_gateway: "192.168.11.1"
+    vlan_id: 10
+
+  tasks:
+    - name: "NET — Backup netplan anterior"
+      ansible.builtin.shell: |
+        [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.bak.$(date +%s)
+        echo "Backup done"
+
+    - name: "NET — Crear netplan con Bond0 (ens34+ens35) + VLAN"
+      ansible.builtin.copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        content: |
+          # vm-web01 — Bond0 active-backup + VLAN 10 DMZ
+          # Bond0: ens34 (primary) + ens35 (backup)
+          # VLAN 10 sobre bond0
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
+            vlans:
+              vlan{{ vlan_id }}:
+                id: {{ vlan_id }}
+                link: bond0
+                addresses:
+                  - {{ server_ip }}/27
+                gateway4: {{ server_gateway }}
+                nameservers:
+                  addresses:
+                    - 192.168.16.10
+                    - 192.168.16.1
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "NET — Aplicar netplan"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+      changed_when: true
+
+    - name: "VERIF — Estado interfaces y bond"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet "
+        echo "=== VLAN{{ vlan_id }} (vlan{{ vlan_id }}) ==="
+        ip addr show vlan{{ vlan_id }} | grep "inet "
+        echo "=== BOND STATUS ==="
+        cat /proc/net/bonding/bond0 | grep -E "Bonding Mode|Primary Slave|Currently Active"
+        echo "=== RUTAS ==="
+        ip route | grep default
+        echo "=== PING GATEWAY ==="
+        ping -c 2 {{ server_gateway }}
+      changed_when: false
+      register: verif
+
+    - name: "RESULT — Mostrar verificacion"
+      ansible.builtin.debug:
+        msg: "{{ verif.stdout_lines }}"
