@@ -73,7 +73,7 @@
                 dhcp4: no
                 optional: true
               ens36:
-                dhcp4: true
+                dhcp4: false
                 optional: true
             bonds:
               bond0:
