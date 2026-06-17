@@ -2,12 +2,12 @@
 # ============================================================================
 # vm-web01_network.yml — Solo red (PARTE 1)
 # ============================================================================
-# Ens34 en ESXi port group VLAN 10 (tagged en vSwitch 4095)
-# IP: 192.168.11.11/27 — SIN crear VLAN dentro del guest
-# Gateway: 192.168.11.1 (pfSense VIP en VLAN 10)
+# Bond0 (ens34+ens35) active-backup hacia cores/trunk ESXi VLAN 10
+# IP: 192.168.11.11/27 en bond0
+# Gateway: 192.168.11.1 (pfSense VIP VLAN 10)
 # ============================================================================
 
-- name: "Configurar RED vm-web01 — VLAN 10 DMZ"
+- name: "Configurar RED vm-web01 — Bond0 + VLAN 10 DMZ"
   hosts: localhost
   connection: local
   become: true
@@ -30,13 +30,12 @@
         [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.bak.$(date +%s)
         echo "Backup done"
 
-    - name: "NET — Crear netplan simple (ens34 directo, SIN VLAN dentro del guest)"
+    - name: "NET — Crear netplan con Bond0 (ens34+ens35) active-backup"
       ansible.builtin.copy:
         dest: /etc/netplan/50-cloud-init.yaml
         content: |
-          # vm-web01 — VLAN 10 DMZ
-          # Ens34 está en ESXi port group VLAN 10 (taggeado por vSwitch)
-          # El guest recibe tráfico untagged — no necesita crear VLAN internamente
+          # vm-web01 — Bond0 active-backup hacia cores (VLAN 10 via ESXi trunk)
+          # El trunk VLAN 10 viaja por el bond hacia los cores L2
           network:
             version: 2
             renderer: networkd
@@ -44,13 +43,25 @@
               ens34:
                 dhcp4: no
                 optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
                 addresses:
                   - {{ server_ip }}/27
-                gateway4: {{ server_gateway }}
+                routes:
+                  - to: default
+                    via: {{ server_gateway }}
                 nameservers:
                   addresses:
                     - {{ dns_server }}
                     - 8.8.8.8
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
         owner: root
         group: root
         mode: "0600"
@@ -60,13 +71,30 @@
       ansible.builtin.shell: |
         netplan generate
         netplan apply
-        sleep 3
+        sleep 5
       changed_when: true
+      register: netplan_result
+
+    - name: "NET — Verificar bond0"
+      ansible.builtin.shell: |
+        if [ -f /proc/net/bonding/bond0 ]; then
+          MODE=$(cat /proc/net/bonding/bond0 | grep "Bonding Mode" | awk '{print $3}')
+          ACTIVE=$(cat /proc/net/bonding/bond0 | grep "Currently Active Slave" | awk '{print $4}')
+          echo "Bond mode: $MODE, Active: $ACTIVE"
+        else
+          echo "Bond0 NO existe"
+        fi
+      changed_when: false
+      register: bond_status
 
     - name: "VERIF — Estado de red"
       ansible.builtin.shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet " || echo "Sin IP en bond0"
         echo "=== ENS34 ==="
         ip addr show ens34 | grep "inet " || echo "Sin IP en ens34"
+        echo "=== ENS35 ==="
+        ip addr show ens35 | grep "inet " || echo "Sin IP en ens35"
         echo "=== RUTAS ==="
         ip route | grep default
         echo "=== PING GATEWAY ==="
@@ -78,6 +106,10 @@
       changed_when: false
       failed_when: false
       register: verif
+
+    - name: "RESULT — Bond status"
+      ansible.builtin.debug:
+        msg: "{{ bond_status.stdout_lines }}"
 
     - name: "RESULT — Mostrar estado"
       ansible.builtin.debug:
