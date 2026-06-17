@@ -218,10 +218,5 @@
         echo "=== LOGS RECIENTES DE HAPROXY ==="
         journalctl -u haproxy --no-pager -n 20 2>/dev/null || tail -20 /var/log/haproxy.log 2>/dev/null || echo "Sin logs disponibles"
       changed_when: false
-      when: "'OK' not in verif.stdout"
+      when: verif.stdout_lines is defined and "'OK' not in verif.stdout"
       register: debug_haproxy
-
-    - name: "RESULT — Debug HAProxy"
-      ansible.builtin.debug:
-        msg: "{{ debug_haproxy.stdout_lines }}"
-      when: debug_haproxy is defined and "'OK' not in verif.stdout"
