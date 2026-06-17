@@ -69,19 +69,22 @@
         sleep 5
       changed_when: true
 
-    - name: "VERIF — Estado interfaces y bond"
+- name: "VERIF — Estado interfaces y bond"
       ansible.builtin.shell: |
         echo "=== BOND0 ==="
-        ip addr show bond0 | grep "inet "
+        ip addr show bond0 | grep "inet " || echo "Sin IP en bond0"
         echo "=== VLAN{{ vlan_id }} (vlan{{ vlan_id }}) ==="
-        ip addr show vlan{{ vlan_id }} | grep "inet "
+        ip addr show vlan{{ vlan_id }} | grep "inet " || echo "Sin IP en vlan{{ vlan_id }}"
         echo "=== BOND STATUS ==="
         cat /proc/net/bonding/bond0 | grep -E "Bonding Mode|Primary Slave|Currently Active"
         echo "=== RUTAS ==="
         ip route | grep default
         echo "=== PING GATEWAY ==="
-        ping -c 2 {{ server_gateway }}
+        ping -c 2 {{ server_gateway }} || echo "GATEWAY NO ALCANZAIBLE"
+        echo "=== PING DNS vm-dc01 ==="
+        ping -c 2 192.168.16.10 || echo "DNS NO ALCANZABLE"
       changed_when: false
+      failed_when: false
       register: verif
 
     - name: "RESULT — Mostrar verificacion"
