@@ -2,9 +2,8 @@
 # ============================================================================
 # vm-web01_network.yml — Solo red (PARTE 1)
 # ============================================================================
-# Bond0 (ens34+ens35) active-backup hacia cores/trunk ESXi VLAN 10
+# Bond0 (ens34+ens35) active-backup hacia cores (trunk ESXi VLAN 10)
 # IP: 192.168.11.11/27 en bond0
-# Gateway: 192.168.11.1 (pfSense VIP VLAN 10)
 # ============================================================================
 
 - name: "Configurar RED vm-web01 — Bond0 + VLAN 10 DMZ"
@@ -35,7 +34,6 @@
         dest: /etc/netplan/50-cloud-init.yaml
         content: |
           # vm-web01 — Bond0 active-backup hacia cores (VLAN 10 via ESXi trunk)
-          # El trunk VLAN 10 viaja por el bond hacia los cores L2
           network:
             version: 2
             renderer: networkd
@@ -73,44 +71,85 @@
         netplan apply
         sleep 5
       changed_when: true
-      register: netplan_result
 
-    - name: "NET — Verificar bond0"
+    - name: "NET — Verificar y corregir enslave de interfaces al bond"
       ansible.builtin.shell: |
+        echo "=== Intentando netplan apply ==="
+        netplan apply
+        sleep 5
+
+        echo "=== Estado actual del bond ==="
         if [ -f /proc/net/bonding/bond0 ]; then
-          MODE=$(cat /proc/net/bonding/bond0 | grep "Bonding Mode" | awk '{print $3}')
-          ACTIVE=$(cat /proc/net/bonding/bond0 | grep "Currently Active Slave" | awk '{print $4}')
-          echo "Bond mode: $MODE, Active: $ACTIVE"
+          SLAVES=$(cat /proc/net/bonding/bond0 | grep "Slave Interface" | awk '{print $4}')
+          echo "Slaves: $SLAVES"
+          ACTIVE=$(cat /proc/net/bonding/bond0 | grep "Currently Active Slave" | awk '{print $5}')
+          echo "Active: $ACTIVE"
         else
-          echo "Bond0 NO existe"
+          echo "Bond0 no existe aun"
         fi
-      changed_when: false
-      register: bond_status
 
-    - name: "VERIF — Estado de red"
-      ansible.builtin.shell: |
-        echo "=== BOND0 ==="
-        ip addr show bond0 | grep "inet " || echo "Sin IP en bond0"
-        echo "=== ENS34 ==="
-        ip addr show ens34 | grep "inet " || echo "Sin IP en ens34"
-        echo "=== ENS35 ==="
-        ip addr show ens35 | grep "inet " || echo "Sin IP en ens35"
+        echo "=== Verificar si ens34/ens35 son slaves ==="
+        for iface in ens34 ens35; do
+          MASTER=$(cat /sys/class/net/$iface/master 2>/dev/null || echo "none")
+          echo "$iface master: $MASTER"
+        done
+
+        echo "=== Si bond0 existe pero no tiene slaves, forzar enslave ==="
+        if [ -f /proc/net/bonding/bond0 ]; then
+          SLAVE_COUNT=$(cat /proc/net/bonding/bond0 | grep -c "Slave Interface")
+          if [ "$SLAVE_COUNT" -eq 0 ]; then
+            echo "Forzando enslave de ens34 y ens35..."
+            ip link set ens34 down
+            ip link set ens35 down
+            ip link set ens34 master bond0 2>/dev/null || true
+            ip link set ens35 master bond0 2>/dev/null || true
+            ip link set ens34 up
+            ip link set ens35 up
+            sleep 3
+            SLAVE_COUNT2=$(cat /proc/net/bonding/bond0 | grep -c "Slave Interface")
+            echo "Slaves ahora: $SLAVE_COUNT2"
+          fi
+        fi
+
+        echo "=== Subir bond0 ==="
+        ip link set bond0 up
+        sleep 2
+
+        echo "=== Estado bond0 ==="
+        ip addr show bond0 | grep "inet "
         echo "=== RUTAS ==="
         ip route | grep default
-        echo "=== PING GATEWAY ==="
-        ping -c 2 {{ server_gateway }} || echo "GATEWAY: NO ALCANZA"
-        echo "=== PING DNS ==="
-        ping -c 2 {{ dns_server }} || echo "DNS: NO ALCANZA"
-        echo "=== PING INTERNET ==="
-        ping -c 2 8.8.8.8 || echo "INTERNET: NO ALCANZA"
       changed_when: false
-      failed_when: false
-      register: verif
+      register: bond_debug
 
-    - name: "RESULT — Bond status"
-      ansible.builtin.debug:
-        msg: "{{ bond_status.stdout_lines }}"
+    - name: "VERIF — Ping a gateway"
+      ansible.builtin.shell: |
+        ping -c 3 {{ server_gateway }}
+      changed_when: false
+      ignore_errors: true
+      register: ping_gw
 
-    - name: "RESULT — Mostrar estado"
+    - name: "VERIF — Ping a DNS"
+      ansible.builtin.shell: |
+        ping -c 3 {{ dns_server }}
+      changed_when: false
+      ignore_errors: true
+      register: ping_dns
+
+    - name: "VERIF — Ping a internet"
+      ansible.builtin.shell: |
+        ping -c 3 8.8.8.8
+      changed_when: false
+      ignore_errors: true
+      register: ping_net
+
+    - name: "RESULT — Debug bond"
       ansible.builtin.debug:
-        msg: "{{ verif.stdout_lines }}"
+        msg: "{{ bond_debug.stdout_lines }}"
+
+    - name: "RESULT — Conectividad"
+      ansible.builtin.debug:
+        msg:
+          - "Gateway {{ server_gateway }}: {{ 'OK' if ping_gw.rc == 0 else 'FALLO' }}"
+          - "DNS {{ dns_server }}: {{ 'OK' if ping_dns.rc == 0 else 'FALLO' }}"
+          - "Internet 8.8.8.8: {{ 'OK' if ping_net.rc == 0 else 'FALLO' }}"
