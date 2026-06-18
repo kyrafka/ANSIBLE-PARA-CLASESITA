@@ -1,0 +1,253 @@
+---
+# ============================================================================
+# vm-docker01_servicios.yml — Docker + MySQL + Dolibarr ERP (PARTE 2)
+# ============================================================================
+# Ejecutar DESPUES de vm-docker01_network.yml
+# ============================================================================
+
+- name: "Configurar SERVICIOS vm-docker01 — Docker + MySQL + Dolibarr ERP"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    mysql_root_password: "Admin123!"
+    mysql_db: "dolibarr"
+    mysql_user: "dolibarr"
+    mysql_password: "Dolibarr123!"
+    erp_domain: "erp.AJ.local"
+    erp_port: 8080
+
+  tasks:
+    - name: "DOCKER — Actualizar apt"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "DOCKER — Instalar dependencias"
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+        state: present
+
+    - name: "DOCKER — Agregar GPG key Docker"
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      ignore_errors: true
+
+    - name: "DOCKER — Agregar repo Docker"
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_lsb.codename }} stable"
+        state: present
+      ignore_errors: true
+
+    - name: "DOCKER — Instalar Docker Engine"
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: "DOCKER — Instalar Docker Compose standalone"
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: "0755"
+      ignore_errors: true
+
+    - name: "DOCKER — Agregar usuario ubuntu al grupo docker"
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: "DOCKER — Habilitar e iniciar servicio"
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: "DOCKER — Verificar instalación"
+      ansible.builtin.shell: |
+        docker --version
+        docker compose version 2>/dev/null || docker-compose --version
+
+    - name: "DB — Instalar MySQL Server"
+      ansible.builtin.apt:
+        name: mysql-server
+        state: present
+        update_cache: yes
+
+    - name: "DB — Habilitar MySQL"
+      ansible.builtin.systemd:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: "DB — Crear base de datos Dolibarr"
+      ansible.builtin.shell: |
+        mysql -u root << 'EOSQL'
+        CREATE DATABASE IF NOT EXISTS {{ mysql_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'localhost' IDENTIFIED BY '{{ mysql_password }}';
+        CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'%' IDENTIFIED BY '{{ mysql_password }}';
+        GRANT ALL PRIVILEGES ON {{ mysql_db }}.* TO '{{ mysql_user }}'@'localhost';
+        GRANT ALL PRIVILEGES ON {{ mysql_db }}.* TO '{{ mysql_user }}'@'%';
+        FLUSH PRIVILEGES;
+        SHOW DATABASES;
+        EOSQL
+
+    - name: "DOLIBARR — Crear directorio de aplicación"
+      ansible.builtin.file:
+        path: /opt/dolibarr
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: "DOLIBARR — Descargar Dolibarr (stable)"
+      ansible.builtin.shell: |
+        cd /tmp
+        wget -q https://github.com/Dolibarr/dolibarr/archive/refs/tags/19.0.6.tar.gz -O dolibarr.tar.gz
+        tar -xzf dolibarr.tar.gz
+        cp -r dolibarr-19.0.6/* /opt/dolibarr/
+        chown -R ubuntu:ubuntu /opt/dolibarr
+        rm -rf /tmp/dolibarr.tar.gz /tmp/dolibarr-19.0.6
+        echo "Dolibarr descomprimido"
+        ls /opt/dolibarr/
+
+    - name: "DOLIBARR — Crear documento de configuración"
+      ansible.builtin.copy:
+        dest: /opt/dolibarr/htdocs/conf/conf.php
+        content: |
+          <?php
+          $dolibarr_main_url_root = 'http://{{ erp_domain }}:{{ erp_port }}';
+          $dolibarr_main_document_root = '/opt/dolibarr/htdocs';
+          $dolibarr_main_data_root = '/var/dolibarr/documents';
+          $dolibarr_main_db_host = 'localhost';
+          $dolibarr_main_db_port = '3306';
+          $dolibarr_main_db_name = '{{ mysql_db }}';
+          $dolibarr_main_db_user = '{{ mysql_user }}';
+          $dolibarr_main_db_pass = '{{ mysql_password }}';
+          $dolibarr_main_db_type = 'mysqli';
+          $dolibarr_main_db_character_set = 'utf8mb4';
+          $dolibarr_main_db_collation = 'utf8mb4_unicode_ci';
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: "DOLIBARR — Crear directorio documents"
+      ansible.builtin.file:
+        path: /var/dolibarr/documents
+        state: directory
+        owner: www-data
+        group: ubuntu
+        mode: "0755"
+
+    - name: "DOLIBARR — Crear vhost Nginx"
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/dolibarr
+        content: |
+          server {
+              listen {{ erp_port }};
+              server_name {{ erp_domain }};
+
+              root /opt/dolibarr/htdocs;
+              index index.php index.html;
+
+              client_max_body_size 50M;
+
+              location / {
+                  try_files $uri $uri/ /index.php?url=$request_uri;
+              }
+
+              location ~ \\.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  include fastcgi_params;
+              }
+
+              location /documents {
+                  alias /var/dolibarr/documents;
+                  autoindex off;
+              }
+          }
+        mode: "0644"
+
+    - name: "DOLIBARR — Habilitar sitio y reiniciar Nginx"
+      ansible.builtin.shell: |
+        ln -sf /etc/nginx/sites-available/dolibarr /etc/nginx/sites-enabled/dolibarr
+        rm -f /etc/nginx/sites-enabled/default
+        nginx -t && systemctl reload nginx
+        echo "Nginx configurado para Dolibarr"
+
+    - name: "DOLIBARR — Instalar PHP"
+      ansible.builtin.apt:
+        name:
+          - php
+          - php-fpm
+          - php-mysql
+          - php-curl
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-zip
+          - php-intl
+          - php-ldap
+        state: present
+        update_cache: yes
+
+    - name: "DOLIBARR — Iniciar PHP-FPM"
+      ansible.builtin.systemd:
+        name: php8.1-fpm
+        state: started
+        enabled: yes
+
+    - name: "DOLIBARR — Agregar permisos"
+      ansible.builtin.shell: |
+        chown -R www-data:ubuntu /opt/dolibarr/htdocs
+        chmod -R 755 /opt/dolibarr/htdocs
+        chmod 755 /opt/dolibarr/htdocs/conf/conf.php
+        echo "Permisos configurados"
+
+    - name: "DOCKER — Verificación completa"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "VERIFICACION DE vm-docker01"
+        echo "=========================================="
+        echo ""
+        echo "=== 1. DOCKER ==="
+        docker --version
+        systemctl is-active docker && echo "Docker: OK" || echo "Docker: FAIL"
+        echo ""
+        echo "=== 2. MYSQL ==="
+        systemctl is-active mysql && echo "MySQL: OK" || echo "MySQL: FAIL"
+        mysql -u root -e "SHOW DATABASES;" 2>/dev/null | grep {{ mysql_db }} && echo "DB {{ mysql_db }}: OK" || echo "DB {{ mysql_db }}: FAIL"
+        echo ""
+        echo "=== 3. DOLIBARR (puerto {{ erp_port }}) ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:{{ erp_port }}/ || echo "Sin respuesta"
+        echo ""
+        echo "=== 4. CONECTIVIDAD ==="
+        ping -c 1 192.168.13.1 >/dev/null 2>&1 && echo "Gateway: OK" || echo "Gateway: FAIL"
+        ping -c 1 192.168.16.10 >/dev/null 2>&1 && echo "DNS vm-dc01: OK" || echo "DNS: FAIL"
+        echo ""
+        echo "=========================================="
+        echo "ACCESO AL ERP: http://{{ erp_domain }}:{{ erp_port }}"
+        echo "Login inicial: admin / admin"
+        echo "=========================================="
+      changed_when: false
+      register: verif
+
+    - name: "RESULT — Mostrar verificación"
+      ansible.builtin.debug:
+        msg: "{{ verif.stdout_lines }}"

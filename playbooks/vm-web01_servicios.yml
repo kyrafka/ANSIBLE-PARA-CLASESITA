@@ -110,6 +110,8 @@
 
           frontend http_front
               bind *:80
+              acl is_erp path_beg /erp
+              use_backend erp_backend if is_erp
               default_backend web_servers
 
           backend web_servers
@@ -119,6 +121,12 @@
               {% for server in backend_servers %}
               server web{{ loop.index }} {{ server }} check inter 3s rise 2 fall 3
               {% endfor %}
+
+          backend erp_backend
+              balance roundrobin
+              option forwardfor
+              http-check expect status 200
+              server erp1 192.168.13.12:80 check inter 3s rise 2 fall 3
         mode: "0644"
         force: yes
 
