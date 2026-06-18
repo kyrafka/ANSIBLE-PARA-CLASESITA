@@ -54,21 +54,17 @@
 
     - name: "MON — Crear DB Zabbix (sin password root)"
       ansible.builtin.shell: |
-        mysql << 'EOSQL'
-        CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
-        CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';
-        CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';
-        GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
-        GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';
-        FLUSH PRIVILEGES;
-        ALTER USER 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';
-        ALTER USER 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';
-        FLUSH PRIVILEGES;
-        EOSQL
+        mysql -e "CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
+        mysql -e "CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';"
+        mysql -e "CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';"
+        mysql -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';"
+        mysql -e "FLUSH PRIVILEGES;"
         echo "DB configurada"
 
     - name: "MON — Importar schema de Zabbix"
       ansible.builtin.shell: |
+        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p{{ zabbix_password }} zabbix 2>&1 || echo "Intento 2"
         zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql --user=zabbix --password={{ zabbix_password }} zabbix
         echo "Schema importado"
 
@@ -96,20 +92,36 @@
       ansible.builtin.copy:
         dest: /etc/apache2/conf-available/zabbix.conf
         content: |
-          php_value max_execution_time 300
-          php_value memory_limit 128M
-          php_value post_max_size 16M
-          php_value upload_max_filesize 2M
-          php_value max_input_vars = 5000
-          php_value date.timezone = America/Lima
+          <VirtualHost *:80>
+              ServerName localhost
+              DocumentRoot /usr/share/zabbix
+
+              <Directory />
+                  Options FollowSymLinks
+                  AllowOverride All
+              </Directory>
+
+              <Directory /usr/share/zabbix>
+                  Options FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+
+              php_value max_execution_time 300
+              php_value memory_limit 128M
+              php_value post_max_size 16M
+              php_value upload_max_filesize 2M
+              php_value max_input_vars 5000
+              php_value date.timezone America/Lima
+          </VirtualHost>
         force: yes
 
     - name: "MON — Habilitar sitios"
       ansible.builtin.shell: |
         a2enconf zabbix
-        a2enmod php
+        a2enmod php8.1
         a2dissite 000-default.conf
-        systemctl reload apache2
+        systemctl restart apache2
 
     - name: "MON — Instalar Grafana"
       ansible.builtin.shell: |
