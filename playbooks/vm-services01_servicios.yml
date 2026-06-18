@@ -1,0 +1,184 @@
+---
+# ============================================================================
+# vm-services01_servicios.yml — iRedMail Server (PARTE 2)
+# ============================================================================
+# Ejecutar DESPUES de vm-services01_network.yml
+# ============================================================================
+
+- name: "Configurar SERVICIOS vm-services01 — iRedMail"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AJ.local"
+    mail_domain: "aj.local"
+    mail_password: "AdminMail123!"
+    webmail_url: "webmail.AJ.local"
+
+  tasks:
+    - name: "MAIL — Actualizar apt"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "MAIL — Instalar dependencias base"
+      ansible.builtin.apt:
+        name:
+          - wget
+          - python3
+          - dnsutils
+          - net-tools
+        state: present
+
+    - name: "MAIL — Deshabilitar AppArmor"
+      ansible.builtin.shell: |
+        systemctl stop apparmor
+        systemctl disable apparmor
+        update-rc.d apparmor disable
+        echo "AppArmor deshabilitado"
+
+    - name: "MAIL — Configurar hostname"
+      ansible.builtin.shell: |
+        hostnamectl set-hostname mail.{{ domain_name }}
+        echo "{{ server_ip }} mail.{{ domain_name }} mail" >> /etc/hosts
+        echo "127.0.1.1 mail.{{ domain_name }} mail" >> /etc/hosts
+        hostname -f
+        echo "Hostname configurado"
+
+    - name: "MAIL — Configurar DNS resolver"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ dns_server }}
+          nameserver 8.8.8.8
+          search {{ domain_name }}
+        force: yes
+
+    - name: "MAIL — Verificar conectividad DNS"
+      ansible.builtin.shell: |
+        echo "Verificando DNS..."
+        nslookup {{ domain_name }} || echo "DNS local no responde"
+        nslookup google.com || echo "DNS externo no responde"
+        nslookup mail.{{ domain_name }} || echo "MX lookup fallara"
+
+    - name: "MAIL — Crear directorio temporal"
+      ansible.builtin.file:
+        path: /tmp/iredmail
+        state: directory
+        mode: "0755"
+
+    - name: "MAIL — Descargar iRedMail"
+      ansible.builtin.shell: |
+        cd /tmp
+        wget -q https://github.com/iredmail/iRedMail/archive/refs/tags/1.7.2.tar.gz -O iredmail.tar.gz
+        tar -xzf iredmail.tar.gz
+        cd iRedMail-1.7.2
+        echo "iRedMail descargado"
+        ls -la
+
+    - name: "MAIL — Respaldar config si existe"
+      ansible.builtin.shell: |
+        if [ -f /opt/iredmail/.settings.m ]; then
+          cp /opt/iredmail/.settings.m /tmp/settings.m.bak.$(date +%s)
+          echo "Settings respaldado"
+        fi
+        echo "OK"
+
+    - name: "MAIL — Generar config para instalación desatendida"
+      ansible.builtin.copy:
+        dest: /tmp/iredmail/config.txt
+        content: |
+          # iRedMail Configuration
+          export HOSTNAME='mail'
+          export DOMAIN='{{ domain_name }}'
+          export MTA='POSTFIX'
+          export ESE='MYSQL'
+          export WEB_SERVER='NGINX'
+          export IREDADMIN_MILTER='yes'
+          export IREDMAIL_PROVIDER='https://www.iredmail.org'
+          export FIRST_USER='admin'
+          export FIRST_USER_PASSWD='{{ mail_password }}'
+          export MYSQL_ROOT_PASSWD='{{ mail_password }}'
+          export VMAIL_DB_BIND_PASSWD='{{ mail_password }}'
+          export VMAIL_DB_ADMIN_PASSWD='{{ mail_password }}'
+          export AMAVISD_DB_PASSWD='{{ mail_password }}'
+          export CLUEBRINGER_DB_PASSWD='{{ mail_password }}'
+          export IREDAPD_DB_PASSWD='{{ mail_password }}'
+          export IREDADMIN_DB_PASSWD='{{ mail_password }}'
+          export RNGD_FILE='/dev/urandom'
+
+    - name: "MAIL — Instalar iRedMail (desatendido)"
+      ansible.builtin.shell: |
+        cd /tmp/iRedMail-1.7.2
+        bash iRedMail.sh --config /tmp/iredmail/config.txt << 'EOF'
+        y
+        y
+        y
+        y
+        EOF
+        echo "iRedMail instalado"
+
+    - name: "MAIL — Configurar Nginx para webmail"
+      ansible.builtin.shell: |
+        if [ -f /etc/nginx/sites-available/iredmail ]; then
+          ln -sf /etc/nginx/sites-available/iredmail /etc/nginx/sites-enabled/iredmail
+          rm -f /etc/nginx/sites-enabled/default
+          nginx -t && systemctl reload nginx
+          echo "Nginx configurado"
+        fi
+
+    - name: "MAIL — Crear usuario de prueba"
+      ansible.builtin.shell: |
+        cd /opt/iredmail/tools
+        python3 create_user.py admin@{{ domain_name }} {{ mail_password }} || echo "Usuario puede existir"
+        echo "Usuario admin@{{ domain_name }} creado/verificado"
+
+    - name: "MAIL — Abrir puertos en firewall"
+      ansible.builtin.shell: |
+        ufw allow 22/tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow 25/tcp
+        ufw allow 465/tcp
+        ufw allow 587/tcp
+        ufw allow 993/tcp
+        ufw allow 995/tcp
+        ufw allow 110/tcp
+        ufw allow 143/tcp
+        ufw reload
+        echo "Puertos abiertos"
+
+    - name: "MAIL — Verificar servicios"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "VERIFICACION DE vm-services01 (iRedMail)"
+        echo "=========================================="
+        echo ""
+        echo "=== 1. SERVICIOS ==="
+        systemctl is-active postfix && echo "Postfix: OK" || echo "Postfix: FAIL"
+        systemctl is-active dovecot && echo "Dovecot: OK" || echo "Dovecot: FAIL"
+        systemctl is-active nginx && echo "Nginx: OK" || echo "Nginx: FAIL"
+        systemctl is-active mysql && echo "MySQL: OK" || echo "MySQL: FAIL"
+        systemctl is-active iredadmin && echo "iRedAdmin: OK" || echo "iRedAdmin: FAIL"
+        echo ""
+        echo "=== 2. PUERTOS ==="
+        ss -tlnp | grep -E "25|80|443|110|143|465|587|993|995" || echo "Sin puertos abiertos"
+        echo ""
+        echo "=== 3. DNS ==="
+        nslookup {{ domain_name }}
+        echo ""
+        echo "=== 4. ACCESOS ==="
+        echo "Webmail: https://{{ webmail_url }}/mail/"
+        echo "Admin Panel: https://{{ webmail_url }}/iredadmin/"
+        echo "Usuario: admin@{{ domain_name }}"
+        echo "Contraseña: {{ mail_password }}"
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: verif
+
+    - name: "RESULT — Mostrar verificación"
+      ansible.builtin.debug:
+        msg: "{{ verif.stdout_lines }}"

@@ -1,0 +1,199 @@
+---
+# ============================================================================
+# vm-storage01_servicios.yml — File Server (PARTE 2)
+# ============================================================================
+# Ejecutar DESPUES de vm-storage01_network.yml
+# ============================================================================
+
+- name: "Configurar SERVICIOS vm-storage01 — Samba + NFS File Server"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AJ.local"
+    samba_workgroup: "AJ"
+    samba_password: "AdminFile123!"
+
+  tasks:
+    - name: "STORAGE — Actualizar apt"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "STORAGE — Instalar Samba + NFS"
+      ansible.builtin.apt:
+        name:
+          - samba
+          - samba-common-bin
+          - nfs-kernel-server
+          - nfs-common
+          - cifs-utils
+        state: present
+
+    - name: "STORAGE — Crear estructura de directorios"
+      ansible.builtin.shell: |
+        mkdir -p /shared/public
+        mkdir -p /shared/departments/rrhh
+        mkdir -p /shared/departments/ventas
+        mkdir -p /shared/departments/administracion
+        mkdir -p /shared/projects
+        chmod -R 777 /shared
+        echo "Directorios creados"
+        ls -la /shared/
+
+    - name: "STORAGE — Configurar NFS exports"
+      ansible.builtin.copy:
+        dest: /etc/exports
+        content: |
+          # NFS exports for vm-storage01
+          # Clientes NFS: VLAN 20 (users), VLAN 30 (services)
+          /shared/public      192.168.12.0/25(rw,sync,no_subtree_check,no_root_squash)
+          /shared/public      192.168.13.0/25(rw,sync,no_subtree_check,no_root_squash)
+          /shared/departments 192.168.13.0/25(rw,sync,no_subtree_check,no_root_squash)
+          /shared/projects    192.168.13.0/25(rw,sync,no_subtree_check,no_root_squash)
+        force: yes
+
+    - name: "STORAGE — Exportar NFS"
+      ansible.builtin.shell: |
+        exportfs -ra
+        exportfs -v
+        echo "NFS exports configurados"
+
+    - name: "STORAGE — Configurar Samba"
+      ansible.builtin.copy:
+        dest: /etc/samba/smb.conf
+        content: |
+          [global]
+             workgroup = {{ samba_workgroup }}
+             server string = vm-storage01 File Server
+             server role = standalone server
+             log file = /var/log/samba/log.%m
+             max log size = 1000
+             logging = file
+             panic action = /usr/share/samba/panic-action %d
+
+             # Seguridad
+             map to guest = Bad User
+             dns proxy = no
+
+             # Compatibilidad
+             unix charset = UTF-8
+             dos charset = CP850
+
+          [public]
+             path = /shared/public
+             comment = Carpeta publica
+             browsable = yes
+             read only = no
+             guest ok = yes
+             create mask = 0777
+             directory mask = 0777
+
+          [departments]
+             path = /shared/departments
+             comment = Carpetas por departamento
+             browsable = yes
+             read only = no
+             valid users = @users
+             create mask = 0770
+             directory mask = 0770
+
+          [projects]
+             path = /shared/projects
+             comment = Proyectos de la empresa
+             browsable = yes
+             read only = no
+             valid users = @users
+             create mask = 0770
+             directory mask = 0770
+
+          [printers]
+             comment = All Printers
+             browseable = no
+             path = /var/spool/samba
+             printable = yes
+             guest ok = no
+             read only = yes
+             create mask = 0700
+        force: yes
+
+    - name: "STORAGE — Crear grupo de usuarios"
+      ansible.builtin.shell: |
+        groupadd -f users
+        echo "Grupo users creado"
+
+    - name: "STORAGE — Crear usuarios de prueba"
+      ansible.builtin.shell: |
+        useradd -m -G users -s /bin/bash adminuser 2>/dev/null || true
+        echo -e "{{ samba_password }}\n{{ samba_password }}" | smbpasswd -a adminuser -s
+        useradd -m -G users -s /bin/bash rrhh_user 2>/dev/null || true
+        echo -e "{{ samba_password }}\n{{ samba_password }}" | smbpasswd -a rrhh_user -s
+        useradd -m -G users -s /bin/bash ventas_user 2>/dev/null || true
+        echo -e "{{ samba_password }}\n{{ samba_password }}" | smbpasswd -a ventas_user -s
+        echo "Usuarios SMB creados"
+
+    - name: "STORAGE — Configurar permisos de carpetas"
+      ansible.builtin.shell: |
+        chown -R root:users /shared/departments
+        chown -R root:users /shared/projects
+        chmod -R 770 /shared/departments
+        chmod -R 770 /shared/projects
+        chmod -R 777 /shared/public
+        ls -la /shared/
+
+    - name: "STORAGE — Habilitar e iniciar servicios"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - smbd
+        - nmbd
+        - nfs-server
+
+    - name: "STORAGE — Abrir puertos en firewall"
+      ansible.builtin.shell: |
+        ufw allow from 192.168.12.0/25 to any port 445
+        ufw allow from 192.168.12.0/25 to any port 139
+        ufw allow from 192.168.13.0/25 to any port 445
+        ufw allow from 192.168.13.0/25 to any port 139
+        ufw allow from 192.168.12.0/25 to any port 2049
+        ufw allow from 192.168.13.0/25 to any port 2049
+        ufw reload
+        echo "Puertos abiertos"
+
+    - name: "STORAGE — Verificar servicios"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "VERIFICACION DE vm-storage01 (File Server)"
+        echo "=========================================="
+        echo ""
+        echo "=== 1. SERVICIOS ==="
+        systemctl is-active smbd && echo "Samba (smbd): OK" || echo "Samba (smbd): FAIL"
+        systemctl is-active nmbd && echo "Samba (nmbd): OK" || echo "Samba (nmbd): FAIL"
+        systemctl is-active nfs-server && echo "NFS Server: OK" || echo "NFS Server: FAIL"
+        echo ""
+        echo "=== 2. PUERTOS ==="
+        ss -tlnp | grep -E "139|445|2049" || echo "Sin puertos"
+        echo ""
+        echo "=== 3. NFS EXPORTS ==="
+        showmount -e localhost
+        echo ""
+        echo "=== 4. SAMBA SHARES ==="
+        smbclient -L localhost -U adminuser%{{ samba_password }} 2>/dev/null || echo "Shares listados"
+        echo ""
+        echo "=== 5. CONECTIVIDAD ==="
+        ping -c 2 192.168.14.1 >/dev/null 2>&1 && echo "Gateway: OK" || echo "Gateway: FAIL"
+        echo ""
+        echo "=========================================="
+        echo "ACCESO SMB: \\\\{{ server_ip }}\\public"
+        echo "ACCESO NFS: {{ server_ip }}:/shared/public"
+        echo "=========================================="
+      changed_when: false
+      register: verif
+
+    - name: "RESULT — Mostrar verificación"
+      ansible.builtin.debug:
+        msg: "{{ verif.stdout_lines }}"

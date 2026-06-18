@@ -146,7 +146,7 @@
         content: |
           $TTL    604800
           @       IN      SOA     vm-dc01.AJ.local. admin.AJ.local. (
-                              1         ; Serial
+                              2         ; Serial (incrementar al editar)
                               604800    ; Refresh
                               86400     ; Retry
                               2419200   ; Expire
@@ -156,7 +156,19 @@
           pfsense         IN      A       192.168.16.1
           core1           IN      A       192.168.10.20
           core2           IN      A       192.168.10.30
-          www             IN      CNAME   vm-dc01
+
+          ; === CORREO (vm-services01) ===
+          webmail         IN      A       192.168.13.11
+
+          ; === FILE SERVER (vm-storage01) ===
+          files           IN      A       192.168.14.11
+
+          ; === MONITOREO (vm-monitor01) ===
+          monitor         IN      A       192.168.17.11
+
+          ; === WEB ERP (AWS EC2) ===
+          erp             IN      A       192.168.11.11
+          www             IN      CNAME   erp
         owner: root
         group: bind
         mode: "0644"
