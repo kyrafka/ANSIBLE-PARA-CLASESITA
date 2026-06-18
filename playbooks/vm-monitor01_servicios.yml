@@ -79,11 +79,14 @@
 
     - name: "MON — Configurar Zabbix Server"
       ansible.builtin.shell: |
+        # Crear directorio PID
+        mkdir -p /run/zabbix
+        chown zabbix:zabbix /run/zabbix
+        
         # Agregar DBPassword si no existe
         if ! grep -q "^DBPassword=" /etc/zabbix/zabbix_server.conf; then
           echo "DBPassword={{ zabbix_password }}" >> /etc/zabbix/zabbix_server.conf
         fi
-        # Also set DBHost
         if ! grep -q "^DBHost=" /etc/zabbix/zabbix_server.conf; then
           echo "DBHost=localhost" >> /etc/zabbix/zabbix_server.conf
         fi
