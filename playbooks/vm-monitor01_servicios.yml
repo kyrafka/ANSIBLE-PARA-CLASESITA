@@ -82,23 +82,31 @@
           Timeout=30
         force: yes
 
-    - name: "MON — Configurar Apache"
-      ansible.builtin.copy:
-        dest: /etc/apache2/conf-available/zabbix.conf
-        content: |
-          php_value max_execution_time 300
-          php_value memory_limit 128M
-          php_value post_max_size 16M
-          php_value upload_max_filesize 2M
-          php_value date.timezone America/Lima
-        force: yes
-
-    - name: "MON — Habilitar Apache"
+    - name: "MON — Configurar Apache para Zabbix"
       ansible.builtin.shell: |
-        a2enconf zabbix
-        a2enmod php8.1
-        a2dissite 000-default.conf
+        # Usar el config que viene con el paquete
+        if [ -f /usr/share/zabbix/apache.conf ]; then
+          cp /usr/share/zabbix/apache.conf /etc/apache2/conf-available/zabbix.conf
+        fi
+        if [ ! -L /etc/apache2/conf-enabled/zabbix.conf ]; then
+          ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/
+        fi
+        # Config PHP
+        sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
+        sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
+        sed -i 's/memory_limit = 128M/memory_limit = 128M/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
+        echo "Apache configurado"
+
+    - name: "MON — Habilitar Apache (Zabbix ya viene configurado)"
+      ansible.builtin.shell: |
+        # Zabbix ya viene con su propio config, solo habilitar
+        ls /etc/apache2/conf-enabled/ | grep zabbix || a2enconf zabbix
+        ls /etc/apache2/conf-available/zabbix.conf
+        a2dissite 000-default.conf 2>/dev/null || true
         systemctl restart apache2
+        systemctl status apache2 --no-pager || true
+        echo "=== Apache status ==="
+        ss -tlnp | grep ':80'
 
     - name: "MON — Instalar Grafana"
       ansible.builtin.shell: |
