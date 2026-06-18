@@ -82,26 +82,40 @@
           Timeout=30
         force: yes
 
-    - name: "MON — Configurar Apache para Zabbix"
-      ansible.builtin.shell: |
-        # Usar el config que viene con el paquete
-        if [ -f /usr/share/zabbix/apache.conf ]; then
-          cp /usr/share/zabbix/apache.conf /etc/apache2/conf-available/zabbix.conf
-        fi
-        if [ ! -L /etc/apache2/conf-enabled/zabbix.conf ]; then
-          ln -sf /etc/apache2/conf-available/zabbix.conf /etc/apache2/conf-enabled/
-        fi
-        # Config PHP
-        sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
-        sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
-        sed -i 's/memory_limit = 128M/memory_limit = 128M/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
-        echo "Apache configurado"
+    - name: "MON — Configurar Apache para Zabbix (VirtualHost)"
+      ansible.builtin.copy:
+        dest: /etc/apache2/conf-available/zabbix.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName localhost
+              DocumentRoot /usr/share/zabbix
+
+              <Directory /usr/share/zabbix>
+                  Require all granted
+              </Directory>
+
+              <Directory /usr/share/zabbix/conf>
+                  Require all denied
+              </Directory>
+
+              <Directory /usr/share/zabbix/include>
+                  Require all denied
+              </Directory>
+          </VirtualHost>
+        force: yes
 
     - name: "MON — Habilitar Apache (Zabbix ya viene configurado)"
       ansible.builtin.shell: |
-        # Crear symlink del contenido de zabbix
+        # Habilitar modulos PHP
+        a2enmod php8.1 rewrite
+        
+        # Limpiar configs anteriores
         rm -f /var/www/html/zabbix
-        ln -sf /usr/share/zabbix /var/www/html/zabbix
+        
+        # PHP config para Zabbix
+        sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
+        sed -i 's/max_execution_time = 30/max_execution_time = 300/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
+        sed -i 's/memory_limit = -1/memory_limit = 128M/' /etc/php/8.1/apache2/php.ini 2>/dev/null || true
         
         # Habilitar configs
         a2enconf zabbix 2>/dev/null || true
@@ -113,6 +127,8 @@
         systemctl status apache2 --no-pager || true
         echo "=== Apache ==="
         ss -tlnp | grep ':80'
+        echo "=== Verificar acceso ==="
+        curl -s http://localhost/zabbix/ | head -5
 
     - name: "MON — Instalar Grafana"
       ansible.builtin.shell: |
