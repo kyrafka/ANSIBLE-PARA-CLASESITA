@@ -14,6 +14,8 @@
   vars:
     zabbix_password: "AdminZbx123!"
     grafana_password: "AdminGrafana123!"
+    server_ip: "192.168.17.11"
+    dns_server: "192.168.16.10"
 
   tasks:
     - name: "MON — Actualizar apt"
