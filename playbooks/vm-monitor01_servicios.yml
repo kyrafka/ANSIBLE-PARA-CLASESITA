@@ -207,17 +207,21 @@
       ansible.builtin.service:
         name: zabbix-server
         enabled: yes
-        state: restarted
-      register: zabbix_start
+        state: started
+      async: 60
+      poll: 5
 
     - name: "MON — Esperar y verificar Zabbix"
       ansible.builtin.shell: |
-        sleep 5
+        sleep 10
         echo "=== Zabbix status ==="
         systemctl status zabbix-server --no-pager || true
         echo ""
         echo "=== Zabbix log (ultimas 15 lineas) ==="
         tail -15 /var/log/zabbix/zabbix_server.log 2>/dev/null || echo "Log no existe"
+        echo ""
+        echo "=== Puerto 10051 ==="
+        ss -tlnp | grep 10051 || echo "10051 no escuchando"
         echo ""
         echo "=== Test acceso ==="
         curl -s -o /dev/null -w "Zabbix HTTP: %{http_code}\n" http://localhost/zabbix/
