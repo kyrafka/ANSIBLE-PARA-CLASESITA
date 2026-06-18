@@ -15,6 +15,8 @@
     domain_name: "AJ.local"
     samba_workgroup: "AJ"
     samba_password: "AdminFile123!"
+    server_ip: "192.168.14.11"
+    dns_server: "192.168.16.10"
 
   tasks:
     - name: "STORAGE — Actualizar apt"
