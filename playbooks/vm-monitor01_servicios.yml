@@ -37,7 +37,7 @@
         wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix.deb
         dpkg -i /tmp/zabbix.deb || true
         apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
+        DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-server-mysql zabbix-sql-scripts zabbix-frontend-php zabbix-apache-conf zabbix-agent
         echo "Zabbix instalado"
 
     - name: "MON — Instalar MariaDB"
@@ -59,16 +59,40 @@
         echo "DB lista"
       changed_when: false
 
+    - name: "MON — Buscar script SQL de Zabbix"
+      ansible.builtin.shell: |
+        SCRIPT=$(find /usr -name "server.sql.gz" 2>/dev/null | grep zabbix | head -1)
+        if [ -z "$SCRIPT" ]; then
+          SCRIPT=$(find /usr -name "mysql.sql.gz" 2>/dev/null | grep zabbix | head -1)
+        fi
+        if [ -z "$SCRIPT" ]; then
+          echo "NONE"
+        else
+          echo "$SCRIPT"
+        fi
+      changed_when: false
+      register: zabbix_sql_script
+
     - name: "MON — Importar schema (con verificacion)"
       ansible.builtin.shell: |
         set -e
+        SCRIPT="{{ zabbix_sql_script.stdout }}"
+        
+        if [ "$SCRIPT" = "NONE" ] || [ -z "$SCRIPT" ]; then
+          echo "ERROR: No se encontro script SQL de Zabbix"
+          find /usr -name "*.gz" 2>/dev/null | grep -i zabbix | head -5
+          exit 1
+        fi
+        
+        echo "Usando script: $SCRIPT"
+        
         echo "Verificando DB existente..."
         COUNT=$(mysql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='zabbix'" 2>/dev/null || echo "0")
         echo "Tablas existentes: $COUNT"
         
         if [ "$COUNT" -lt 10 ]; then
           echo "Importando schema fresco..."
-          zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p'{{ zabbix_password }}' zabbix
+          zcat "$SCRIPT" | mysql -uzabbix -p'{{ zabbix_password }}' zabbix
           echo "Import completado"
         else
           echo "Schema ya existe, saltando import"
