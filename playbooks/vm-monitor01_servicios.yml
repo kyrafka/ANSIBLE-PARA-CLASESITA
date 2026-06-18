@@ -65,13 +65,16 @@
     - name: "MON — Crear directorio zabbix"
       ansible.builtin.shell: |
         mkdir -p /run/zabbix
-        chown zabbix:zabbix /run/zabbix
+        mkdir -p /var/log/zabbix
+        chown zabbix:zabbix /run/zabbix /var/log/zabbix
         chmod 775 /run/zabbix
+        chmod 755 /var/log/zabbix
 
     - name: "MON — Configurar Zabbix Server (sin LogType=console)"
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_server.conf
         content: |
+          LogFile=/var/log/zabbix/zabbix_server.log
           DBHost=localhost
           DBName=zabbix
           DBUser=zabbix
