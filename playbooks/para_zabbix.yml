@@ -1,0 +1,113 @@
+---
+# para_zabbix.yml — Diagnóstico de errores en Zabbix
+- name: "Diagnóstico Zabbix"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+
+  tasks:
+    - name: "=== 1. SERVICIOS ==="
+      ansible.builtin.shell: |
+        echo "--- zabbix-server ---"
+        systemctl status zabbix-server --no-pager || true
+        echo ""
+        echo "--- apache2 ---"
+        systemctl status apache2 --no-pager || true
+        echo ""
+        echo "--- mariadb ---"
+        systemctl status mariadb --no-pager || true
+        echo ""
+        echo "--- grafana-server ---"
+        systemctl status grafana-server --no-pager || true
+      changed_when: false
+      register: servicios
+
+    - name: "=== 2. APACHE LISTENING ==="
+      ansible.builtin.shell: |
+        ss -tlnp | grep -E ':80|:443|:3000' || echo "Nada escuchando"
+      changed_when: false
+      register: listening
+
+    - name: "=== 3. TEST WEB ZABBIX ==="
+      ansible.builtin.shell: |
+        echo "--- curl localhost/zabbix ---"
+        curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost/zabbix/
+        echo ""
+        curl -s http://localhost/zabbix/ | head -10
+        echo ""
+        echo "--- curl localhost:3000 ---"
+        curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:3000/
+        echo ""
+      changed_when: false
+      register: webtest
+
+    - name: "=== 4. ARCHIVOS ZABBIX ==="
+      ansible.builtin.shell: |
+        echo "--- /usr/share/zabbix existe ---"
+        ls -la /usr/share/zabbix/ | head -5
+        echo ""
+        echo "--- /var/www/html/zabbix symlink ---"
+        ls -la /var/www/html/zabbix 2>&1 || echo "No existe"
+        echo ""
+        echo "--- /etc/apache2/conf-available/zabbix.conf ---"
+        cat /etc/apache2/conf-available/zabbix.conf 2>&1 | head -30
+        echo ""
+        echo "--- apache2 enabled mods ---"
+        ls /etc/apache2/mods-enabled/ | grep -E 'php|rewrite'
+      changed_when: false
+      register: archivos
+
+    - name: "=== 5. MARIADB ==="
+      ansible.builtin.shell: |
+        echo "--- test usuario zabbix ---"
+        mysql -u zabbix -pZabbix123 -e "SELECT 1 AS test" 2>&1
+        echo ""
+        echo "--- tablas en DB zabbix ---"
+        mysql -u zabbix -pZabbix123 -e "SHOW TABLES" zabbix 2>&1 | head -10
+        echo ""
+        echo "--- proceso mysqld ---"
+        ps aux | grep mysql | grep -v grep
+      changed_when: false
+      register: mariadb
+
+    - name: "=== 6. LOGS ZABBIX ==="
+      ansible.builtin.shell: |
+        echo "--- zabbix_server.log ---"
+        if [ -f /var/log/zabbix/zabbix_server.log ]; then
+          tail -30 /var/log/zabbix/zabbix_server.log
+        else
+          echo "NO EXISTE /var/log/zabbix/zabbix_server.log"
+        fi
+        echo ""
+        echo "--- zabbix_server.conf ---"
+        cat /etc/zabbix/zabbix_server.conf 2>&1 | grep -v '^#' | grep -v '^$'
+      changed_when: false
+      register: logs
+
+    - name: "=== 7. PHP CONFIG ==="
+      ansible.builtin.shell: |
+        echo "--- php.ini date.timezone ---"
+        grep -i 'date.timezone' /etc/php/8.1/apache2/php.ini 2>&1 || echo "No encontrado"
+        echo ""
+        echo "--- php.ini max_execution_time ---"
+        grep -i 'max_execution_time' /etc/php/8.1/apache2/php.ini 2>&1 || echo "No encontrado"
+        echo ""
+        echo "--- php.ini memory_limit ---"
+        grep -i 'memory_limit' /etc/php/8.1/apache2/php.ini 2>&1 || echo "No encontrado"
+      changed_when: false
+      register: phpconfig
+
+    - name: "=== RESULTADO ==="
+      ansible.builtin.debug:
+        msg:
+          - "{{ servicios.stdout_lines }}"
+          - "{{ listening.stdout_lines }}"
+          - "{{ webtest.stdout_lines }}"
+          - "{{ archivos.stdout_lines }}"
+          - "{{ mariadb.stdout_lines }}"
+          - "{{ logs.stdout_lines }}"
+          - "{{ phpconfig.stdout_lines }}"
