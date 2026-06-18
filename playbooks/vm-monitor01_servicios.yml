@@ -10,8 +10,8 @@
   gather_facts: true
 
   vars:
-    zabbix_password: "AdminZbx123!"
-    grafana_password: "AdminGrafana123!"
+    zabbix_password: "Zabbix123"
+    grafana_password: "Admin123"
 
   tasks:
     - name: "MON — Actualizar apt"
@@ -83,9 +83,8 @@
           DBHost=localhost
           DBName=zabbix
           DBUser=zabbix
-          DBPassword={{ zabbix_password }}
+          DBPassword=Zabbix123
           Timeout=30
-          LogSlowQueries=3000
         force: yes
 
     - name: "MON — Configurar Apache para Zabbix"
@@ -138,12 +137,13 @@
 
     - name: "MON — Iniciar Zabbix Server"
       ansible.builtin.shell: |
-        systemctl enable zabbix-server
-        systemctl restart zabbix-server
-        sleep 5
-        systemctl status zabbix-server --no-pager || true
-        echo "=== Zabbix status ==="
-        ps aux | grep zabbix_server | grep -v grep
+        # Ver logs recientes
+        journalctl -u zabbix-server -n 20 --no-pager || true
+        echo "=== Intentando iniciar zabbix_server directo ==="
+        /usr/sbin/zabbix_server -c /etc/zabbix/zabbix_server.conf -f &
+        sleep 3
+        ps aux | grep zabbix_server | grep -v grep || echo "No hay proceso"
+        kill %1 2>/dev/null || true
 
     - name: "MON — Verificacion"
       ansible.builtin.shell: |
