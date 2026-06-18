@@ -1,6 +1,6 @@
 ---
 # ============================================================================
-# vm-monitor01_servicios.yml — Zabbix + Grafana (PARTE 2)
+# vm-monitor01_servicios.yml — Zabbix + Grafana
 # ============================================================================
 
 - name: "Configurar SERVICIOS vm-monitor01 — Zabbix + Grafana"
@@ -39,83 +39,58 @@
         dpkg -i /tmp/zabbix.deb
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
-        echo "Zabbix instalado"
 
     - name: "MON — Instalar MariaDB"
       ansible.builtin.apt:
         name: mariadb-server
         state: present
 
-    - name: "MON — Configurar MariaDB primero"
+    - name: "MON — Iniciar MariaDB y crear DB"
       ansible.builtin.shell: |
         systemctl enable mariadb
         systemctl start mariadb
         sleep 3
-
-    - name: "MON — Crear DB Zabbix (sin password root)"
-      ansible.builtin.shell: |
         mysql -e "CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
-        mysql -e "CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';"
-        mysql -e "CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';"
+        mysql -e "DROP USER IF EXISTS 'zabbix'@'localhost';"
+        mysql -e "CREATE USER 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';"
         mysql -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';"
-        mysql -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';"
         mysql -e "FLUSH PRIVILEGES;"
-        echo "DB configurada"
+        echo "DB lista"
 
-    - name: "MON — Importar schema de Zabbix"
+    - name: "MON — Importar schema"
       ansible.builtin.shell: |
-        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p{{ zabbix_password }} zabbix 2>&1 || echo "Intento 2"
-        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql --user=zabbix --password={{ zabbix_password }} zabbix
+        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p{{ zabbix_password }} zabbix
         echo "Schema importado"
 
-    - name: "MON — Crear directorio zabbix con permisos"
+    - name: "MON — Crear directorio zabbix"
       ansible.builtin.shell: |
         mkdir -p /run/zabbix
         chown zabbix:zabbix /run/zabbix
-        chmod 755 /run/zabbix
-        ls -la /run/ | grep zabbix
+        chmod 775 /run/zabbix
 
-    - name: "MON — Configurar Zabbix Server"
+    - name: "MON — Configurar Zabbix Server (sin LogType=console)"
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_server.conf
         content: |
-          LogType=console
           DBHost=localhost
           DBName=zabbix
           DBUser=zabbix
-          DBPassword=Zabbix123
+          DBPassword={{ zabbix_password }}
           Timeout=30
         force: yes
 
-    - name: "MON — Configurar Apache para Zabbix"
+    - name: "MON — Configurar Apache"
       ansible.builtin.copy:
         dest: /etc/apache2/conf-available/zabbix.conf
         content: |
-          <VirtualHost *:80>
-              ServerName localhost
-              DocumentRoot /usr/share/zabbix
-
-              <Directory />
-                  Options FollowSymLinks
-                  AllowOverride All
-              </Directory>
-
-              <Directory /usr/share/zabbix>
-                  Options FollowSymLinks
-                  AllowOverride All
-                  Require all granted
-              </Directory>
-
-              php_value max_execution_time 300
-              php_value memory_limit 128M
-              php_value post_max_size 16M
-              php_value upload_max_filesize 2M
-              php_value max_input_vars 5000
-              php_value date.timezone America/Lima
-          </VirtualHost>
+          php_value max_execution_time 300
+          php_value memory_limit 128M
+          php_value post_max_size 16M
+          php_value upload_max_filesize 2M
+          php_value date.timezone America/Lima
         force: yes
 
-    - name: "MON — Habilitar sitios"
+    - name: "MON — Habilitar Apache"
       ansible.builtin.shell: |
         a2enconf zabbix
         a2enmod php8.1
@@ -129,38 +104,26 @@
         apt-get update
         apt-get install -y grafana
 
-    - name: "MON — Configurar Grafana"
+    - name: "MON — Iniciar Grafana"
       ansible.builtin.shell: |
         sed -i 's/;http_port = 3000/http_port = 3000/' /etc/grafana/grafana.ini
         systemctl enable grafana-server
         systemctl start grafana-server
 
-    - name: "MON — Iniciar Zabbix Server"
+    - name: "MON — Iniciar Zabbix"
       ansible.builtin.shell: |
-        # Ver logs recientes
-        journalctl -u zabbix-server -n 20 --no-pager || true
-        echo "=== Intentando iniciar zabbix_server directo ==="
-        /usr/sbin/zabbix_server -c /etc/zabbix/zabbix_server.conf -f &
-        sleep 3
-        ps aux | grep zabbix_server | grep -v grep || echo "No hay proceso"
-        kill %1 2>/dev/null || true
+        systemctl enable zabbix-server
+        systemctl restart zabbix-server
+        sleep 5
+        systemctl status zabbix-server --no-pager || true
 
     - name: "MON — Verificacion"
       ansible.builtin.shell: |
         echo "=== SERVICIOS ==="
-        systemctl is-active zabbix-server && echo "Zabbix Server: OK" || echo "Zabbix Server: FAIL"
+        systemctl is-active zabbix-server && echo "Zabbix: OK" || echo "Zabbix: FAIL"
         systemctl is-active grafana-server && echo "Grafana: OK" || echo "Grafana: FAIL"
         systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
         systemctl is-active mariadb && echo "MariaDB: OK" || echo "MariaDB: FAIL"
-        echo ""
-        echo "=== PUERTOS ==="
-        ss -tlnp | grep -E "80|3000|10051" || echo "Sin puertos"
-        echo ""
-        echo "=== ZABBIX PROCESO ==="
-        ps aux | grep zabbix_server | grep -v grep || echo "Sin proceso zabbix_server"
-        echo ""
-        echo "=== DIRECTORIO PID ==="
-        ls -la /run/zabbix/
         echo ""
         echo "=== ACCESOS ==="
         echo "Zabbix: http://192.168.17.11/zabbix/"
