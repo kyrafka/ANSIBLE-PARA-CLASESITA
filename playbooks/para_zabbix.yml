@@ -91,13 +91,13 @@
     - name: "=== 7. PHP CONFIG ==="
       ansible.builtin.shell: |
         echo "--- php.ini date.timezone ---"
-        grep -i 'date.timezone' /etc/php/8.1/apache2/php.ini 2>&1 || echo "No encontrado"
+        grep -i 'date.timezone' /etc/php/8.3/apache2/php.ini 2>&1 || echo "No encontrado"
         echo ""
         echo "--- php.ini max_execution_time ---"
-        grep -i 'max_execution_time' /etc/php/8.1/apache2/php.ini 2>&1 || echo "No encontrado"
+        grep -i 'max_execution_time' /etc/php/8.3/apache2/php.ini 2>&1 || echo "No encontrado"
         echo ""
         echo "--- php.ini memory_limit ---"
-        grep -i 'memory_limit' /etc/php/8.1/apache2/php.ini 2>&1 || echo "No encontrado"
+        grep -i 'memory_limit' /etc/php/8.3/apache2/php.ini 2>&1 || echo "No encontrado"
       changed_when: false
       register: phpconfig
 
