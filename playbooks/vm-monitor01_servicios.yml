@@ -2,8 +2,6 @@
 # ============================================================================
 # vm-monitor01_servicios.yml — Zabbix + Grafana (PARTE 2)
 # ============================================================================
-# Ejecutar DESPUES de vm-monitor01_network.yml
-# ============================================================================
 
 - name: "Configurar SERVICIOS vm-monitor01 — Zabbix + Grafana"
   hosts: localhost
@@ -14,8 +12,6 @@
   vars:
     zabbix_password: "AdminZbx123!"
     grafana_password: "AdminGrafana123!"
-    server_ip: "192.168.17.11"
-    dns_server: "192.168.16.10"
 
   tasks:
     - name: "MON — Actualizar apt"
@@ -35,15 +31,14 @@
           - php-mbstring
           - php-xml
           - php-bcmath
-          - php-ldap
         state: present
 
-    - name: "MON — Instalar Zabbix repo e instalar Zabbix"
+    - name: "MON — Instalar Zabbix"
       ansible.builtin.shell: |
         wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix.deb
         dpkg -i /tmp/zabbix.deb
         apt-get update
-        apt-get install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
+        DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-agent
         echo "Zabbix instalado"
 
     - name: "MON — Instalar MariaDB"
@@ -51,72 +46,51 @@
         name: mariadb-server
         state: present
 
-    - name: "MON — Iniciar MariaDB"
-      ansible.builtin.systemd:
-        name: mariadb
-        state: started
-        enabled: yes
-
-    - name: "MON — Crear DB Zabbix"
+    - name: "MON — Configurar MariaDB primero"
       ansible.builtin.shell: |
+        systemctl enable mariadb
         systemctl start mariadb
-        sleep 2
-        mysql -uroot << 'EOF'
+        sleep 3
+
+    - name: "MON — Crear DB Zabbix (sin password root)"
+      ansible.builtin.shell: |
+        mysql << 'EOSQL'
         CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
         CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';
         CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';
         GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
         GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';
         FLUSH PRIVILEGES;
-        quit
-        EOF
-        echo "Base de datos Zabbix creada"
+        ALTER USER 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';
+        ALTER USER 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';
+        FLUSH PRIVILEGES;
+        EOSQL
+        echo "DB configurada"
 
     - name: "MON — Importar schema de Zabbix"
       ansible.builtin.shell: |
-        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uroot zabbix
+        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql --user=zabbix --password={{ zabbix_password }} zabbix
         echo "Schema importado"
 
-    - name: "MON — Configurar Zabbix Server"
+    - name: "MON — Crear directorio zabbix con permisos"
       ansible.builtin.shell: |
-        # Crear directorio PID
         mkdir -p /run/zabbix
         chown zabbix:zabbix /run/zabbix
-        
-        # Asegurar que MariaDB está corriendo
-        systemctl restart mariadb
-        sleep 3
-        
-        # Verificar que la DB zabbix existe y tiene tablas
-        TABLES=$(mysql -uroot -N -e "USE zabbix; SHOW TABLES;" 2>/dev/null | wc -l)
-        if [ "$TABLES" -lt 10 ]; then
-          echo "DB zabbix vacia o sin tablas, recreando..."
-          mysql -uroot -e "DROP DATABASE IF EXISTS zabbix;"
-          mysql -uroot -e "CREATE DATABASE zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
-          mysql -uroot -e "CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';"
-          mysql -uroot -e "CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';"
-          mysql -uroot -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';"
-          mysql -uroot -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';"
-          mysql -uroot -e "FLUSH PRIVILEGES;"
-          zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uroot zabbix
-          echo "Schema importado"
-        else
-          echo "DB zabbix ya tiene $TABLES tablas"
-        fi
-        
-        # Agregar DBPassword si no existe
-        if ! grep -q "^DBPassword=" /etc/zabbix/zabbix_server.conf; then
-          echo "DBPassword={{ zabbix_password }}" >> /etc/zabbix/zabbix_server.conf
-        fi
-        if ! grep -q "^DBHost=" /etc/zabbix/zabbix_server.conf; then
-          echo "DBHost=localhost" >> /etc/zabbix/zabbix_server.conf
-        fi
-        
-        systemctl enable zabbix-server
-        systemctl restart zabbix-server
-        sleep 5
-        systemctl status zabbix-server --no-pager || true
-        echo "Zabbix Server configurado"
+        chmod 755 /run/zabbix
+        ls -la /run/ | grep zabbix
+
+    - name: "MON — Configurar Zabbix Server"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_server.conf
+        content: |
+          LogType=console
+          DBHost=localhost
+          DBName=zabbix
+          DBUser=zabbix
+          DBPassword={{ zabbix_password }}
+          Timeout=30
+          LogSlowQueries=3000
+        force: yes
 
     - name: "MON — Configurar Apache para Zabbix"
       ansible.builtin.copy:
@@ -130,13 +104,12 @@
           php_value date.timezone = America/Lima
         force: yes
 
-    - name: "MON — Habilitar sitio Zabbix"
+    - name: "MON — Habilitar sitios"
       ansible.builtin.shell: |
         a2enconf zabbix
         a2enmod php
-        a2disconf default-ssl
+        a2dissite 000-default.conf
         systemctl reload apache2
-        echo "Apache configurado para Zabbix"
 
     - name: "MON — Instalar Grafana"
       ansible.builtin.shell: |
@@ -144,61 +117,47 @@
         echo "deb https://packages.grafana.com/oss/deb stable main" > /etc/apt/sources.list.d/grafana.list
         apt-get update
         apt-get install -y grafana
-        echo "Grafana instalado"
 
-    - name: "MON — Configurar e iniciar Grafana"
+    - name: "MON — Configurar Grafana"
       ansible.builtin.shell: |
         sed -i 's/;http_port = 3000/http_port = 3000/' /etc/grafana/grafana.ini
         systemctl enable grafana-server
         systemctl start grafana-server
-        echo "Grafana iniciado"
 
-    - name: "MON — Habilitar e iniciar Zabbix Agent"
-      ansible.builtin.systemd:
-        name: zabbix-agent
-        state: started
-        enabled: yes
-
-    - name: "MON — Abrir puertos"
+    - name: "MON — Iniciar Zabbix Server"
       ansible.builtin.shell: |
-        ufw allow 80/tcp
-        ufw allow 3000/tcp
-        ufw allow 10051/tcp
-        ufw allow from 192.168.0.0/16 to any port 10051 proto tcp
-        ufw reload
-        echo "Puertos abiertos"
+        systemctl enable zabbix-server
+        systemctl restart zabbix-server
+        sleep 5
+        systemctl status zabbix-server --no-pager || true
+        echo "=== Zabbix status ==="
+        ps aux | grep zabbix_server | grep -v grep
 
-    - name: "MON — Verificar servicios"
+    - name: "MON — Verificacion"
       ansible.builtin.shell: |
-        echo "=========================================="
-        echo "VERIFICACION DE vm-monitor01 (Monitoreo)"
-        echo "=========================================="
-        echo ""
-        echo "=== 1. SERVICIOS ==="
+        echo "=== SERVICIOS ==="
         systemctl is-active zabbix-server && echo "Zabbix Server: OK" || echo "Zabbix Server: FAIL"
-        systemctl is-active zabbix-agent && echo "Zabbix Agent: OK" || echo "Zabbix Agent: FAIL"
         systemctl is-active grafana-server && echo "Grafana: OK" || echo "Grafana: FAIL"
         systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
+        systemctl is-active mariadb && echo "MariaDB: OK" || echo "MariaDB: FAIL"
         echo ""
-        echo "=== 2. PUERTOS ==="
+        echo "=== PUERTOS ==="
         ss -tlnp | grep -E "80|3000|10051" || echo "Sin puertos"
         echo ""
-        echo "=== 3. CONECTIVIDAD ==="
-        ping -c 2 192.168.17.1 >/dev/null 2>&1 && echo "Gateway: OK" || echo "Gateway: FAIL"
-        ping -c 2 192.168.16.10 >/dev/null 2>&1 && echo "vm-dc01: OK" || echo "vm-dc01: FAIL"
+        echo "=== ZABBIX PROCESO ==="
+        ps aux | grep zabbix_server | grep -v grep || echo "Sin proceso zabbix_server"
         echo ""
-        echo "=== 4. URLs ==="
-        echo "Zabbix Frontend: http://192.168.17.11/zabbix/"
+        echo "=== DIRECTORIO PID ==="
+        ls -la /run/zabbix/
+        echo ""
+        echo "=== ACCESOS ==="
+        echo "Zabbix: http://192.168.17.11/zabbix/"
         echo "Grafana: http://192.168.17.11:3000"
-        echo ""
-        echo "=== 5. CREDENCIALES ==="
-        echo "Zabbix - Admin: Admin / zabbix"
-        echo "Grafana - Admin / admin (cambiar al primer login)"
-        echo ""
-        echo "=========================================="
+        echo "Zabbix User: Admin / zabbix"
+        echo "Grafana User: admin / admin"
       changed_when: false
       register: verif
 
-    - name: "RESULT — Mostrar verificación"
+    - name: "RESULT"
       ansible.builtin.debug:
         msg: "{{ verif.stdout_lines }}"
