@@ -1,11 +1,13 @@
 ---
 # ============================================================================
-# vm-services01_servicios.yml — iRedMail Server (PARTE 2)
+# vm-services01_servicios.yml — Servidor de Correo (PARTE 2)
 # ============================================================================
 # Ejecutar DESPUES de vm-services01_network.yml
+# Instala: Postfix + Dovecot + MySQL + Roundcube + Postfix Admin
+# No usa el instalador de iRedMail (evita problemas)
 # ============================================================================
 
-- name: "Configurar SERVICIOS vm-services01 — iRedMail"
+- name: "Configurar SERVICIOS vm-services01 — Correo"
   hosts: localhost
   connection: local
   become: true
@@ -13,11 +15,8 @@
 
   vars:
     domain_name: "AJ.local"
-    mail_domain: "aj.local"
     mail_password: "AdminMail123!"
-    webmail_url: "webmail.AJ.local"
-    server_ip: "192.168.13.11"
-    dns_server: "192.168.16.10"
+    mysql_root_password: "AdminMail123!"
 
   tasks:
     - name: "MAIL — Actualizar apt"
@@ -25,157 +24,301 @@
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: "MAIL — Instalar dependencias base"
+    - name: "MAIL — Instalar paquetes de correo"
       ansible.builtin.apt:
         name:
-          - wget
-          - python3
-          - dnsutils
-          - net-tools
+          - postfix
+          - postfix-mysql
+          - dovecot-core
+          - dovecot-imapd
+          - dovecot-pop3d
+          - dovecot-mysql
+          - dovecot-lmtpd
+          - mysql-server
+          - phpmyadmin
+          - roundcube
+          - roundcube-mysql
+          - roundcube-core
+          - roundcube-plugins
+          - php
+          - php-mysql
+          - php-imap
+          - php-mbstring
+          - php-xml
+          - php-curl
+          - php-json
+          - php-zip
+          - php-gd
+          - php-bcmath
+          - apache2
+          - php-apcu
+          - libapache2-mod-php
+          - mailutils
+          - spamassassin
+          - clamav
+          - clamav-daemon
+          - fail2ban
         state: present
-
-    - name: "MAIL — Deshabilitar AppArmor"
-      ansible.builtin.shell: |
-        systemctl stop apparmor
-        systemctl disable apparmor
-        update-rc.d apparmor disable
-        echo "AppArmor deshabilitado"
+        update_cache: yes
 
     - name: "MAIL — Configurar hostname"
       ansible.builtin.shell: |
         hostnamectl set-hostname mail.{{ domain_name }}
-        echo "{{ server_ip }} mail.{{ domain_name }} mail" >> /etc/hosts
+        hostnamectl set-transient hostname mail.{{ domain_name }}
+        sed -i '/^127.0.1.1/d' /etc/hosts
         echo "127.0.1.1 mail.{{ domain_name }} mail" >> /etc/hosts
         hostname -f
-        echo "Hostname configurado"
 
-    - name: "MAIL — Configurar DNS resolver"
+    - name: "MAIL — Configurar Postfix"
       ansible.builtin.copy:
-        dest: /etc/resolv.conf
+        dest: /etc/postfix/main.cf
         content: |
-          nameserver {{ dns_server }}
-          nameserver 8.8.8.8
-          search {{ domain_name }}
+          # Configuración básica de Postfix
+          myhostname = mail.{{ domain_name }}
+          mydomain = {{ domain_name }}
+          myorigin = $mydomain
+          inet_interfaces = all
+          inet_protocols = ipv4
+          destination_concurrency_limit = 2
+          alias_maps = hash:/etc/aliases
+          alias_database = hash:/etc/aliases
+          mynetworks = 127.0.0.0/8 192.168.0.0/16 10.0.0.0/8
+          mailbox_size_limit = 0
+          message_size_limit = 52428800
+          recipient_delimiter = +
+
+          # Directorios de correo
+          home_mailbox = Maildir/
+          mailbox_command =
+
+          # SASL
+          smtpd_sasl_auth_enable = yes
+          smtpd_sasl_type = dovecot
+          smtpd_sasl_path = private/auth
+          smtpd_sasl_security_options = noanonymous
+          broken_sasl_auth_clients = yes
+
+          # TLS
+          smtpd_use_tls = yes
+          smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem
+          smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key
+          smtp_tls_security_level = may
+
+          # Restricciones
+          smtpd_client_restrictions = permit_mynetworks, reject_unknown_client_hostname, permit
+          smtpd_helo_restrictions = permit_mynetworks, reject_invalid_helo_hostname, reject_non_fqdn_helo_hostname, reject_unknown_helo_hostname, permit
+          smtpd_sender_restrictions = permit_mynetworks, reject_unknown_sender_domain, reject_non_fqdn_sender, permit
+          smtpd_recipient_restrictions = permit_mynetworks, reject_unknown_recipient_domain, reject_non_fqdn_recipient, reject_unlisted_recipient, permit
         force: yes
 
-    - name: "MAIL — Verificar conectividad DNS"
-      ansible.builtin.shell: |
-        echo "Verificando DNS..."
-        nslookup {{ domain_name }} || echo "DNS local no responde"
-        nslookup google.com || echo "DNS externo no responde"
-        nslookup mail.{{ domain_name }} || echo "MX lookup fallara"
-
-    - name: "MAIL — Crear directorio temporal"
-      ansible.builtin.file:
-        path: /tmp/iredmail
-        state: directory
-        mode: "0755"
-
-    - name: "MAIL — Descargar iRedMail"
-      ansible.builtin.shell: |
-        cd /tmp
-        wget -q https://github.com/iredmail/iRedMail/archive/refs/tags/1.7.2.tar.gz -O iredmail.tar.gz
-        tar -xzf iredmail.tar.gz
-        cd iRedMail-1.7.2
-        echo "iRedMail descargado"
-        ls -la
-
-    - name: "MAIL — Respaldar config si existe"
-      ansible.builtin.shell: |
-        if [ -f /opt/iredmail/.settings.m ]; then
-          cp /opt/iredmail/.settings.m /tmp/settings.m.bak.$(date +%s)
-          echo "Settings respaldado"
-        fi
-        echo "OK"
-
-    - name: "MAIL — Generar config para instalación desatendida"
+    - name: "MAIL — Configurar Postfix master.cf"
       ansible.builtin.copy:
-        dest: /tmp/iredmail/config.txt
+        dest: /etc/postfix/master.cf
         content: |
-          # iRedMail Configuration
-          export HOSTNAME='mail'
-          export DOMAIN='{{ domain_name }}'
-          export MTA='POSTFIX'
-          export ESE='MYSQL'
-          export WEB_SERVER='NGINX'
-          export IREDADMIN_MILTER='yes'
-          export IREDMAIL_PROVIDER='https://www.iredmail.org'
-          export FIRST_USER='admin'
-          export FIRST_USER_PASSWD='{{ mail_password }}'
-          export MYSQL_ROOT_PASSWD='{{ mail_password }}'
-          export VMAIL_DB_BIND_PASSWD='{{ mail_password }}'
-          export VMAIL_DB_ADMIN_PASSWD='{{ mail_password }}'
-          export AMAVISD_DB_PASSWD='{{ mail_password }}'
-          export CLUEBRINGER_DB_PASSWD='{{ mail_password }}'
-          export IREDAPD_DB_PASSWD='{{ mail_password }}'
-          export IREDADMIN_DB_PASSWD='{{ mail_password }}'
-          export RNGD_FILE='/dev/urandom'
+          smtp      inet  n       -       y       -       -       smtpd
+          pickup    unix  n       -       y       60      1       pickup
+          cleanup   unix  n       -       y       -       0       cleanup
+          qmgr      unix  n       -       n       300     1       qmgr
+          tlsmgr    unix  -       -       y       1000?   1       tlsmgr
+          rewrite   unix  -       -       y       -       -       trivial-rewrite
+          bounce    unix  -       -       y       -       0       bounce
+          defer     unix  -       -       y       -       0       bounce
+          trace     unix  -       -       y       -       0       verify
+          flush     unix  n       -       y       1000?   0       flush
+          proxymap  unix  -       -       n       -       -       proxymap
+          proxywrite unix -       -       n       -       1       proxymap
+          smtp      unix  -       -       y       -       -       smtp
+          relay     unix  -       -       y       -       -       smtp
+          showq     unix  n       -       y       -       -       showq
+          error     unix  -       -       y       -       -       error
+          retry     unix  -       -       y       -       0       retry
+          discard   unix  -       -       y       -       0       discard
+          local     unix  -       n       n       -       -       local
+          virtual   unix  -       n       n       -       -       virtual
+          lmtp      unix  -       -       y       -       -       lmtp
+          anvil     unix  -       -       y       -       1       anvil
+          scache    unix  -       -       y       -       1       scache
+          discard   unix  -       -       y       -       0       discard
+          tlsmgr    unix  -       -       y       1000?   1       tlsmgr
 
-    - name: "MAIL — Instalar iRedMail (desatendido)"
-      ansible.builtin.shell: |
-        cd /tmp/iRedMail-1.7.2
-        bash iRedMail.sh --config /tmp/iredmail/config.txt << 'EOF'
-        y
-        y
-        y
-        y
-        EOF
-        echo "iRedMail instalado"
+          submission inet n       -       y       -       -       smtpd
+            -o syslog_name=postfix/submission
+            -o smtpd_tls_security_level=encrypt
+            -o smtpd_sasl_auth_enable=yes
+            -o smtpd_tls_auth_only=yes
 
-    - name: "MAIL — Configurar Nginx para webmail"
-      ansible.builtin.shell: |
-        if [ -f /etc/nginx/sites-available/iredmail ]; then
-          ln -sf /etc/nginx/sites-available/iredmail /etc/nginx/sites-enabled/iredmail
-          rm -f /etc/nginx/sites-enabled/default
-          nginx -t && systemctl reload nginx
-          echo "Nginx configurado"
-        fi
+          smtps     inet  n       -       y       -       -       smtpd
+            -o syslog_name=postfix/smtps
+            -o smtpd_tls_wrappermode=yes
+            -o smtpd_sasl_auth_enable=yes
+        force: yes
 
-    - name: "MAIL — Crear usuario de prueba"
+    - name: "MAIL — Crear usuario admin de correo"
       ansible.builtin.shell: |
-        cd /opt/iredmail/tools
-        python3 create_user.py admin@{{ domain_name }} {{ mail_password }} || echo "Usuario puede existir"
-        echo "Usuario admin@{{ domain_name }} creado/verificado"
+        useradd -m -s /bin/bash admin 2>/dev/null || true
+        mkdir -p /home/admin/Maildir
+        chown -R admin:admin /home/admin
+        echo "admin:$(openssl passwd -1 {{ mail_password }})" | chpasswd
 
-    - name: "MAIL — Abrir puertos en firewall"
+    - name: "MAIL — Configurar MySQL"
       ansible.builtin.shell: |
-        ufw allow 22/tcp
-        ufw allow 80/tcp
-        ufw allow 443/tcp
+        systemctl enable mysql
+        systemctl start mysql
+        mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}';"
+        mysql -e "CREATE DATABASE IF NOT EXISTS postfix;"
+
+    - name: "MAIL — Configurar Dovecot"
+      ansible.builtin.copy:
+        dest: /etc/dovecot/dovecot.conf
+        content: |
+          protocols = imap pop3 lmtp
+          listen = *
+          disable__plaintext_auth = no
+          mail_location = maildir:~/Maildir
+          namespace inbox {
+            inbox = yes
+          }
+          service imap-login {
+            inet_listener imap {
+              port = 143
+            }
+            inet_listener imaps {
+              port = 993
+              ssl = yes
+            }
+          }
+          service pop3-login {
+            inet_listener pop3 {
+              port = 110
+            }
+            inet_listener pop3s {
+              port = 995
+              ssl = yes
+            }
+          }
+          service lmtp {
+            unix_listener /var/spool/postfix/private/dovecot-lmtp {
+              mode = 0600
+              user = postfix
+              group = postfix
+            }
+          }
+          service auth {
+            unix_listener /var/spool/postfix/private/auth {
+              mode = 0600
+              user = postfix
+              group = postfix
+            }
+            unix_listener auth-userdb {
+              mode = 0660
+              user = postfix
+            }
+          }
+          service auth-worker {
+            user = root
+          }
+          passdb {
+            driver = passwd
+          }
+          userdb {
+            driver = passwd
+          }
+          ssl = no
+        force: yes
+
+    - name: "MAIL — Configurar Apache para Roundcube"
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/roundcube.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName mail.{{ domain_name }}
+              DocumentRoot /var/lib/roundcube
+
+              <Directory /var/lib/roundcube>
+                  Options -FollowSymLinks
+                  AllowOverride All
+              </Directory>
+
+              <Directory /var/lib/roundcube/plugins/*/enigmail/>
+                  Options -FollowSymLinks
+              </Directory>
+
+              # Roundcube aliases
+              Alias /roundcube /var/lib/roundcube
+              Alias /webmail /var/lib/roundcube
+
+              ErrorLog ${APACHE_LOG_DIR}/roundcube_error.log
+              CustomLog ${APACHE_LOG_DIR}/roundcube_access.log combined
+          </VirtualHost>
+        force: yes
+
+    - name: "MAIL — Habilitar sitios de Apache"
+      ansible.builtin.shell: |
+        a2ensite roundcube.conf
+        a2enmod rewrite
+        a2enmod php
+        a2dissite 000-default.conf
+        a2dissite default-ssl.conf
+        systemctl reload apache2
+
+    - name: "MAIL — Crear enlace simbólico webmail
+      ansible.builtin.shell: |
+        ln -sf /var/lib/roundcube /var/www/html/webmail
+        ln -sf /var/lib/roundcube /var/www/html/mail
+
+    - name: "MAIL — Iniciar servicios"
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - mysql
+        - postfix
+        - dovecot
+        - apache2
+
+    - name: "MAIL — Firewall"
+      ansible.builtin.shell: |
         ufw allow 25/tcp
         ufw allow 465/tcp
         ufw allow 587/tcp
         ufw allow 993/tcp
         ufw allow 995/tcp
+        ufw allow 80/tcp
+        ufw allow 443/tcp
         ufw allow 110/tcp
         ufw allow 143/tcp
-        ufw reload
         echo "Puertos abiertos"
 
-    - name: "MAIL — Verificar servicios"
+    - name: "MAIL — Crear Maildir para admin"
+      ansible.builtin.shell: |
+        mkdir -p /home/admin/Maildir/{new,cur,tmp}
+        chown -R admin:admin /home/admin/Maildir
+        chmod -R 700 /home/admin/Maildir
+
+    - name: "MAIL — Verificación"
       ansible.builtin.shell: |
         echo "=========================================="
-        echo "VERIFICACION DE vm-services01 (iRedMail)"
+        echo "VERIFICACION DE vm-services01 (Correo)"
         echo "=========================================="
         echo ""
         echo "=== 1. SERVICIOS ==="
         systemctl is-active postfix && echo "Postfix: OK" || echo "Postfix: FAIL"
         systemctl is-active dovecot && echo "Dovecot: OK" || echo "Dovecot: FAIL"
-        systemctl is-active nginx && echo "Nginx: OK" || echo "Nginx: FAIL"
         systemctl is-active mysql && echo "MySQL: OK" || echo "MySQL: FAIL"
-        systemctl is-active iredadmin && echo "iRedAdmin: OK" || echo "iRedAdmin: FAIL"
+        systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
         echo ""
         echo "=== 2. PUERTOS ==="
-        ss -tlnp | grep -E "25|80|443|110|143|465|587|993|995" || echo "Sin puertos abiertos"
+        ss -tlnp | grep -E "25|465|587|993|995|80|443|110|143" || echo "Sin puertos"
         echo ""
-        echo "=== 3. DNS ==="
-        nslookup {{ domain_name }}
-        echo ""
-        echo "=== 4. ACCESOS ==="
-        echo "Webmail: https://{{ webmail_url }}/mail/"
-        echo "Admin Panel: https://{{ webmail_url }}/iredadmin/"
-        echo "Usuario: admin@{{ domain_name }}"
+        echo "=== 3. ACCESOS ==="
+        echo "Webmail: http://192.168.13.11/webmail/"
+        echo "Roundcube: http://192.168.13.11/mail/"
+        echo "Usuario: admin"
         echo "Contraseña: {{ mail_password }}"
+        echo ""
+        echo "=== 4. TEST ENVIO DE CORREO ==="
+        echo "Test mail" | mail -s "Prueba" admin@{{ domain_name }} && echo "Mail enviado" || echo "Mail falló"
         echo ""
         echo "=========================================="
       changed_when: false
