@@ -83,6 +83,27 @@
         mkdir -p /run/zabbix
         chown zabbix:zabbix /run/zabbix
         
+        # Asegurar que MariaDB está corriendo
+        systemctl restart mariadb
+        sleep 3
+        
+        # Verificar que la DB zabbix existe y tiene tablas
+        TABLES=$(mysql -uroot -N -e "USE zabbix; SHOW TABLES;" 2>/dev/null | wc -l)
+        if [ "$TABLES" -lt 10 ]; then
+          echo "DB zabbix vacia o sin tablas, recreando..."
+          mysql -uroot -e "DROP DATABASE IF EXISTS zabbix;"
+          mysql -uroot -e "CREATE DATABASE zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
+          mysql -uroot -e "CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';"
+          mysql -uroot -e "CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';"
+          mysql -uroot -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';"
+          mysql -uroot -e "GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';"
+          mysql -uroot -e "FLUSH PRIVILEGES;"
+          zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uroot zabbix
+          echo "Schema importado"
+        else
+          echo "DB zabbix ya tiene $TABLES tablas"
+        fi
+        
         # Agregar DBPassword si no existe
         if ! grep -q "^DBPassword=" /etc/zabbix/zabbix_server.conf; then
           echo "DBPassword={{ zabbix_password }}" >> /etc/zabbix/zabbix_server.conf
@@ -90,9 +111,10 @@
         if ! grep -q "^DBHost=" /etc/zabbix/zabbix_server.conf; then
           echo "DBHost=localhost" >> /etc/zabbix/zabbix_server.conf
         fi
+        
         systemctl enable zabbix-server
         systemctl restart zabbix-server
-        sleep 3
+        sleep 5
         systemctl status zabbix-server --no-pager || true
         echo "Zabbix Server configurado"
 
