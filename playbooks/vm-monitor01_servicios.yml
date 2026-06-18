@@ -59,10 +59,14 @@
 
     - name: "MON — Crear DB Zabbix"
       ansible.builtin.shell: |
+        systemctl start mariadb
+        sleep 2
         mysql -uroot << 'EOF'
         CREATE DATABASE IF NOT EXISTS zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
         CREATE USER IF NOT EXISTS 'zabbix'@'localhost' IDENTIFIED BY '{{ zabbix_password }}';
+        CREATE USER IF NOT EXISTS 'zabbix'@'%' IDENTIFIED BY '{{ zabbix_password }}';
         GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
+        GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'%';
         FLUSH PRIVILEGES;
         quit
         EOF
@@ -70,14 +74,23 @@
 
     - name: "MON — Importar schema de Zabbix"
       ansible.builtin.shell: |
-        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -p{{ zabbix_password }} zabbix
+        zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uroot zabbix
         echo "Schema importado"
 
     - name: "MON — Configurar Zabbix Server"
       ansible.builtin.shell: |
-        sed -i 's/# DBPassword=/DBPassword={{ zabbix_password }}/' /etc/zabbix/zabbix_server.conf
+        # Agregar DBPassword si no existe
+        if ! grep -q "^DBPassword=" /etc/zabbix/zabbix_server.conf; then
+          echo "DBPassword={{ zabbix_password }}" >> /etc/zabbix/zabbix_server.conf
+        fi
+        # Also set DBHost
+        if ! grep -q "^DBHost=" /etc/zabbix/zabbix_server.conf; then
+          echo "DBHost=localhost" >> /etc/zabbix/zabbix_server.conf
+        fi
         systemctl enable zabbix-server
         systemctl restart zabbix-server
+        sleep 3
+        systemctl status zabbix-server --no-pager || true
         echo "Zabbix Server configurado"
 
     - name: "MON — Configurar Apache para Zabbix"
