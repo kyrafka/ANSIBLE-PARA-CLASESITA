@@ -99,13 +99,19 @@
 
     - name: "MON — Habilitar Apache (Zabbix ya viene configurado)"
       ansible.builtin.shell: |
-        # Zabbix ya viene con su propio config, solo habilitar
-        ls /etc/apache2/conf-enabled/ | grep zabbix || a2enconf zabbix
-        ls /etc/apache2/conf-available/zabbix.conf
+        # Crear symlink del contenido de zabbix
+        rm -f /var/www/html/zabbix
+        ln -sf /usr/share/zabbix /var/www/html/zabbix
+        
+        # Habilitar configs
+        a2enconf zabbix 2>/dev/null || true
         a2dissite 000-default.conf 2>/dev/null || true
+        a2dissite default-ssl.conf 2>/dev/null || true
+        
+        # Reiniciar
         systemctl restart apache2
         systemctl status apache2 --no-pager || true
-        echo "=== Apache status ==="
+        echo "=== Apache ==="
         ss -tlnp | grep ':80'
 
     - name: "MON — Instalar Grafana"
