@@ -65,6 +65,10 @@
         export DEBIAN_FRONTEND=noninteractive
         export APT_LISTCHANGES_FRONTEND=none
         
+        # Responder preguntas de conffile de asterisk ANTES de instalar
+        echo "asterisk-config asterisk-config/replace_files boolean true" | debconf-set-selections
+        echo "asterisk asterisk/replace_files boolean true" | debconf-set-selections
+        
         dpkg --configure -a 2>/dev/null || true
         
         for pkg in asterisk asterisk-config asteriskk asterisk-modules; do
@@ -76,13 +80,13 @@
         
         echo "dpkg limpio"
         
-        # Instalar asterisk-config primero (sin prompts)
-        yes | dpkg --configure --force-confdef asterisk-config 2>&1 || \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" asterisk-config 2>&1 || true
+        # Instalar asterisk-config
+        DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk-config
+        echo "asterisk-config instalado"
         
         # Instalar asterisk
-        yes | dpkg --configure --force-confdef asterisk 2>&1 || \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" asterisk 2>&1 || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk
+        echo "asterisk instalado"
         
         # Arreglar dependencias rotas
         DEBIAN_FRONTEND=noninteractive apt-get install -f -y
