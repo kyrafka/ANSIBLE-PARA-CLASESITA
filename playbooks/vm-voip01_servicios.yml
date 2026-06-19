@@ -1,12 +1,12 @@
 ---
 # ============================================================================
-# vm-voip01_servicios.yml — VitalPBX VoIP (Asterisk + GUI)
+# vm-voip01_servicios.yml — Asterisk VoIP + GUI
 # ============================================================================
 # IP: 192.168.15.11 (VLAN 50)
-# GUI: https://192.168.15.11
+# Extensiones: 100, 101, 102 (secret: 100secret, 101secret, 102secret)
 # ============================================================================
 
-- name: "Configurar SERVICIOS vm-voip01 — VitalPBX VoIP"
+- name: "Configurar SERVICIOS vm-voip01 — Asterisk VoIP"
   hosts: localhost
   connection: local
   become: true
@@ -17,23 +17,43 @@
     admin_password: "Admin123"
 
   tasks:
+    - name: "VOIP — Verificar espacio en disco"
+      ansible.builtin.shell: |
+        DF=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//')
+        echo "Disco usado: ${DF}%"
+        if [ "$DF" -gt 90 ]; then
+          echo "ERROR: Disco casi lleno (${DF}%)"
+          exit 1
+        fi
+        echo "Espacio OK"
+      changed_when: false
+
     - name: "VOIP — Instalar dependencias"
       ansible.builtin.shell: |
+        set -e
         apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg curl apache2 php php-mysql php-gd php-mbstring php-xml php-bcmath php-curl libapache2-mod-php mariadb-server fail2ban htop net-tools iputils-ping socat ssl-cert asterisk
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          wget gnupg curl apache2 php php-mysql php-gd php-mbstring \
+          php-xml php-bcmath php-curl libapache2-mod-php \
+          mariadb-server fail2ban htop net-tools iputils-ping socat \
+          ssl-cert asterisk
         echo "Dependencias instaladas"
 
-    - name: "VOIP — Iniciar MariaDB"
+    - name: "VOIP — Verificar Asterisk instalado"
       ansible.builtin.shell: |
-        systemctl enable mariadb
-        systemctl start mariadb
-        sleep 2
-        echo "MariaDB iniciado"
+        set -e
+        echo "=== Verificando Asterisk ==="
+        which asterisk && echo "asterisk bin: OK" || { echo "ERROR: asterisk no encontrado"; exit 1; }
+        asterisk --version || { echo "ERROR: asterisk no corre"; exit 1; }
+        echo "Asterisk instalado OK"
+      changed_when: false
+      register: verif_asterisk
 
     - name: "VOIP — Crear usuario asterisk"
       ansible.builtin.group:
         name: asterisk
         state: present
+      failed_when: false
 
     - name: "VOIP — Crear usuario asterisk"
       ansible.builtin.user:
@@ -43,73 +63,74 @@
         shell: /usr/sbin/nologin
         home: /var/lib/asterisk
         create_home: no
+      failed_when: false
+
+    - name: "VOIP — Iniciar MariaDB"
+      ansible.builtin.shell: |
+        systemctl enable mariadb
+        systemctl restart mariadb
+        sleep 3
+        systemctl status mariadb --no-pager | head -5
+        echo "MariaDB iniciado"
+
+    - name: "VOIP — Verificar MariaDB"
+      ansible.builtin.shell: |
+        set -e
+        echo "=== Verificando MariaDB ==="
+        mysql -e "SELECT 1" 2>&1 && echo "MariaDB: OK" || { echo "ERROR: MariaDB no responde"; exit 1; }
+      changed_when: false
 
     - name: "VOIP — Configurar hostname y DNS"
       ansible.builtin.shell: |
         hostnamectl set-hostname vm-voip01 --static
         echo "vm-voip01" > /etc/hostname
-        
         if ! grep -q "192.168.15.11.*voip.AJ.local" /etc/hosts; then
           echo "192.168.15.11 voip.AJ.local vm-voip01" >> /etc/hosts
         fi
-        
-        echo "Hostname configurado"
-        hostname
+        echo "Hostname: $(hostname)"
 
-    - name: "VOIP — Configurar PHP (detectado {{ php_version.stdout }})"
+    - name: "VOIP — Configurar PHP"
       ansible.builtin.shell: |
         PHPINI="/etc/php/8.3/apache2/php.ini"
-        
         if [ -f "$PHPINI" ]; then
           sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' "$PHPINI"
           sed -i 's/max_execution_time = 30/max_execution_time = 300/' "$PHPINI"
           sed -i 's/memory_limit = -1/memory_limit = 256M/' "$PHPINI"
           sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 64M/' "$PHPINI"
-          echo "PHP configurado en $PHPINI"
+          echo "PHP configurado"
         else
-          echo "WARNING: $PHPINI no existe"
+          echo "WARNING: PHP ini no encontrado"
         fi
 
-    - name: "VOIP — Configurar Apache para VitalPBX"
+    - name: "VOIP — Configurar Apache"
       ansible.builtin.copy:
         dest: /etc/apache2/sites-available/vitalpbx.conf
         content: |
           <VirtualHost *:80>
               ServerName voip.AJ.local
-              Redirect permanent / https://voip.AJ.local/
-          </VirtualHost>
-
-          <VirtualHost *:443>
-              ServerName voip.AJ.local
               DocumentRoot /var/www/html/vitalpbx
-
               <Directory /var/www/html/vitalpbx>
                   Options -Indexes +FollowSymLinks
                   AllowOverride All
                   Require all granted
               </Directory>
-
-              SSLEngine on
-              SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
-              SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
           </VirtualHost>
         force: yes
         mode: "0644"
 
-    - name: "VOIP — Habilitar Apache VitalPBX"
+    - name: "VOIP — Habilitar Apache"
       ansible.builtin.shell: |
         a2enmod php8.3 rewrite ssl headers 2>/dev/null || true
         a2dissite 000-default.conf 2>/dev/null || true
         a2ensite vitalpbx.conf 2>/dev/null || true
-        
         if [ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]; then
           apt-get install -y ssl-cert
         fi
-        
         systemctl restart apache2
-        echo "Apache configurado y reiniciado"
+        systemctl status apache2 --no-pager | head -5
+        echo "Apache OK"
 
-    - name: "VOIP — Configurar fail2ban para SIP"
+    - name: "VOIP — Configurar fail2ban"
       ansible.builtin.copy:
         dest: /etc/fail2ban/jail.local
         content: |
@@ -133,11 +154,16 @@
           bantime = 7200
         force: yes
 
+    - name: "VOIP — Iniciar fail2ban"
+      ansible.builtin.service:
+        name: fail2ban
+        enabled: yes
+        state: started
+
     - name: "VOIP — Configurar firewall UFW"
       ansible.builtin.shell: |
         systemctl enable ufw 2>/dev/null || true
         ufw --force enable
-        
         ufw allow 22/tcp comment 'SSH'
         ufw allow 80/tcp comment 'HTTP'
         ufw allow 443/tcp comment 'HTTPS'
@@ -145,15 +171,22 @@
         ufw allow 5060/udp comment 'SIP UDP'
         ufw allow 5061/tcp comment 'SIP TLS'
         ufw allow 10000:20000/udp comment 'RTP Audio'
-        
         ufw reload
         ufw status numbered
-        echo "Firewall configurado"
+        echo "Firewall OK"
 
-    - name: "VOIP — Configurar Asterisk"
-      ansible.builtin.shell: |
-        mkdir -p /etc/asterisk
-        chown -R asterisk:asterisk /etc/asterisk
+    - name: "VOIP — Crear directorios Asterisk"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: asterisk
+        group: asterisk
+        mode: "0755"
+      loop:
+        - /etc/asterisk
+        - /var/lib/asterisk
+        - /var/log/asterisk
+        - /var/spool/asterisk
 
     - name: "VOIP — Configurar sip.conf"
       ansible.builtin.copy:
@@ -170,25 +203,23 @@
           disallow=all
           allow=ulaw
           allow=alaw
-          allow=g729
           alwaysauthreject=yes
           canreinvite=no
-          pedantic=no
-          
+
           [100]
           type=friend
           host=dynamic
           secret=100secret
           context=from-internal
           callerid="Extension 100" <100>
-          
+
           [101]
           type=friend
           host=dynamic
           secret=101secret
           context=from-internal
           callerid="Extension 101" <101>
-          
+
           [102]
           type=friend
           host=dynamic
@@ -204,14 +235,7 @@
       ansible.builtin.copy:
         dest: /etc/asterisk/extensions.conf
         content: |
-          [from-external]
-          exten => 100,1,Answer()
-          same => n,Wait(1)
-          same => n,Playback(hello-world)
-          same => n,Hangup()
-
           [from-internal]
-          include => from-external
           exten => 100,1,Answer()
           same => n,Wait(1)
           same => n,Playback(hello-world)
@@ -224,17 +248,6 @@
           same => n,Wait(1)
           same => n,Playback(hello-world)
           same => n,Hangup()
-        force: yes
-        mode: "0644"
-        owner: asterisk
-        group: asterisk
-
-    - name: "VOIP — Configurar modules.conf"
-      ansible.builtin.copy:
-        dest: /etc/asterisk/modules.conf
-        content: |
-          [modules]
-          autoload=yes
         force: yes
         mode: "0644"
         owner: asterisk
@@ -257,20 +270,21 @@
       ansible.builtin.shell: |
         systemctl enable asterisk
         systemctl restart asterisk
-        
         sleep 5
-        
-        echo "=== Asterisk Status ==="
-        asterisk -rx "core show version" 2>/dev/null || echo "Asterisk CLI no responde"
-        
-        systemctl status asterisk --no-pager || true
+        echo "=== Asterisk status ==="
+        systemctl status asterisk --no-pager | head -10
+        echo "=== Asterisk version ==="
+        asterisk -rx "core show version" 2>/dev/null || echo "CLI no responde"
+        echo "Asterisk iniciado"
 
-    - name: "VOIP — Crear página web de acceso"
+    - name: "VOIP — Recargar Asterisk"
       ansible.builtin.shell: |
-        mkdir -p /var/www/html/vitalpbx/admin
-        chown -R www-data:www-data /var/www/html/vitalpbx
+        asterisk -rx "sip reload" 2>/dev/null || true
+        asterisk -rx "dialplan reload" 2>/dev/null || true
+        sleep 2
+        echo "Asterisk recargado"
 
-    - name: "VOIP — Index HTML"
+    - name: "VOIP — Crear pagina web"
       ansible.builtin.copy:
         dest: /var/www/html/vitalpbx/index.html
         content: |
@@ -278,24 +292,19 @@
           <html lang="es">
           <head>
               <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>VitalPBX - VoIP</title>
+              <title>VoIP - vm-voip01</title>
               <style>
-                  body { font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                  .container { text-align: center; background: #16213e; padding: 40px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-                  h1 { color: #e94560; font-size: 2.5em; }
-                  .info { margin: 20px 0; font-size: 1.2em; }
-                  .btn { display: inline-block; padding: 15px 40px; background: #e94560; color: #fff; text-decoration: none; border-radius: 5px; font-size: 1.2em; margin: 10px; }
-                  .btn:hover { background: #c7304a; }
-                  .credentials { background: #0f3460; padding: 15px; border-radius: 5px; margin-top: 20px; }
+                  body { font-family: Arial; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                  .container { text-align: center; background: #16213e; padding: 40px; border-radius: 10px; }
+                  h1 { color: #e94560; }
+                  .cred { background: #0f3460; padding: 15px; border-radius: 5px; margin-top: 20px; }
               </style>
           </head>
           <body>
               <div class="container">
-                  <h1>VoIP</h1>
-                  <p class="info">Central VoIP - vm-voip01</p>
-                  <p class="info">Dominio: voip.AJ.local</p>
-                  <div class="credentials">
+                  <h1>ASTERISK VoIP</h1>
+                  <p>vm-voip01 - VLAN 50</p>
+                  <div class="cred">
                       <p><strong>Extensiones SIP:</strong></p>
                       <p>100 / 100secret</p>
                       <p>101 / 101secret</p>
@@ -309,43 +318,23 @@
         owner: www-data
         group: www-data
 
-    - name: "VOIP — Admin redirect"
-      ansible.builtin.copy:
-        dest: /var/www/html/vitalpbx/admin/index.php
-        content: |
-          <?php
-          header('Location: /');
-          exit;
-        force: yes
-        mode: "0644"
-        owner: www-data
-        group: www-data
-
-    - name: "VOIP — Recargar Asterisk"
-      ansible.builtin.shell: |
-        asterisk -rx "core reload" 2>/dev/null || true
-        echo "Asterisk recargado"
-
-    - name: "VOIP — Verificacion"
+    - name: "VOIP — Verificacion final"
       ansible.builtin.shell: |
         echo "=== SERVICIOS ==="
         systemctl is-active asterisk && echo "Asterisk: OK" || echo "Asterisk: FAIL"
         systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
         systemctl is-active mariadb && echo "MariaDB: OK" || echo "MariaDB: FAIL"
         systemctl is-active fail2ban && echo "Fail2ban: OK" || echo "Fail2ban: FAIL"
-        systemctl is-active ufw && echo "UFW: OK" || echo "UFW: FAIL"
         echo ""
         echo "=== PUERTOS ==="
-        ss -tlnp | grep -E '80|:443|5060|10000'
+        ss -tlnp | grep -E '80|:443|5060|10000' || echo "Ninguno"
         echo ""
         echo "=== ACCESOS ==="
-        echo "Web GUI: https://192.168.15.11/"
+        echo "Web: http://192.168.15.11/"
         echo "Asterisk CLI: sudo asterisk -r"
         echo ""
-        echo "=== EXTENSIONES SIP ==="
-        echo "  100 (secret: 100secret)"
-        echo "  101 (secret: 101secret)"
-        echo "  102 (secret: 102secret)"
+        echo "=== EXTENSIONES ==="
+        asterisk -rx "sip show peers" 2>/dev/null || echo "No se pudo mostrar peers"
       changed_when: false
       register: verif
 
