@@ -225,58 +225,106 @@
 
     - name: "VOIP — Configurar Asterisk"
       ansible.builtin.shell: |
-        # Configuración básica de Asterisk
         mkdir -p /etc/asterisk
-        
-        # sip.conf básico
-        cat > /etc/asterisk/sip.conf << 'EOF'
-[general]
-context=from-external
-bindport=5060
-bindaddr=0.0.0.0
-srvlookup=yes
-qualify=yes
-nat=no
-directrtpsetup=yes
-disallow=all
-allow=ulaw
-allow=alaw
-allow=g729
-alwaysauthreject=yes
-canreinvite=no
-pedantic=no
-EOF
-
-        # extensions.conf básico
-        cat > /etc/asterisk/extensions.conf << 'EOF'
-[from-external]
-exten => 100,1,Answer()
-same => n,Wait(1)
-same => n,Playback(hello-world)
-same => n,Hangup()
-
-[default]
-include => from-external
-EOF
-
-        # modules.conf
-        cat > /etc/asterisk/modules.conf << 'EOF'
-[modules]
-autoload=yes
-noload => res_config_mysql.so
-load => res_pjsip.so
-load => res_hep.so
-EOF
-
         chown -R asterisk:asterisk /etc/asterisk
-        
-        # Configurar Asterisk para acceso web
-        cat > /etc/asterisk/manager.conf << 'EOF'
-[admin]
-secret = admin123
-read = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
-write = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
-EOF
+
+    - name: "VOIP — Configurar sip.conf"
+      ansible.builtin.copy:
+        dest: /etc/asterisk/sip.conf
+        content: |
+          [general]
+          context=from-external
+          bindport=5060
+          bindaddr=0.0.0.0
+          srvlookup=yes
+          qualify=yes
+          nat=no
+          directrtpsetup=yes
+          disallow=all
+          allow=ulaw
+          allow=alaw
+          allow=g729
+          alwaysauthreject=yes
+          canreinvite=no
+          pedantic=no
+          
+          [100]
+          type=friend
+          host=dynamic
+          secret=100secret
+          context=from-internal
+          callerid="Extension 100" <100>
+          
+          [101]
+          type=friend
+          host=dynamic
+          secret=101secret
+          context=from-internal
+          callerid="Extension 101" <101>
+          
+          [102]
+          type=friend
+          host=dynamic
+          secret=102secret
+          context=from-internal
+          callerid="Extension 102" <102>
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
+
+    - name: "VOIP — Configurar extensions.conf"
+      ansible.builtin.copy:
+        dest: /etc/asterisk/extensions.conf
+        content: |
+          [from-external]
+          exten => 100,1,Answer()
+          same => n,Wait(1)
+          same => n,Playback(hello-world)
+          same => n,Hangup()
+
+          [from-internal]
+          include => from-external
+          exten => 100,1,Answer()
+          same => n,Wait(1)
+          same => n,Playback(hello-world)
+          same => n,Hangup()
+          exten => 101,1,Answer()
+          same => n,Wait(1)
+          same => n,Playback(hello-world)
+          same => n,Hangup()
+          exten => 102,1,Answer()
+          same => n,Wait(1)
+          same => n,Playback(hello-world)
+          same => n,Hangup()
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
+
+    - name: "VOIP — Configurar modules.conf"
+      ansible.builtin.copy:
+        dest: /etc/asterisk/modules.conf
+        content: |
+          [modules]
+          autoload=yes
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
+
+    - name: "VOIP — Configurar manager.conf"
+      ansible.builtin.copy:
+        dest: /etc/asterisk/manager.conf
+        content: |
+          [admin]
+          secret = admin123
+          read = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
+          write = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
 
         echo "Asterisk configurado"
 
@@ -294,90 +342,64 @@ EOF
 
     - name: "VOIP — Crear página web de acceso"
       ansible.builtin.shell: |
-        mkdir -p /var/www/html/vitalpbx
-        
-        cat > /var/www/html/vitalpbx/index.html << 'EOF'
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VitalPBX - VoIP</title>
-    <style>
-        body { font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .container { text-align: center; background: #16213e; padding: 40px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-        h1 { color: #e94560; font-size: 2.5em; }
-        .info { margin: 20px 0; font-size: 1.2em; }
-        .btn { display: inline-block; padding: 15px 40px; background: #e94560; color: #fff; text-decoration: none; border-radius: 5px; font-size: 1.2em; margin: 10px; }
-        .btn:hover { background: #c7304a; }
-        .credentials { background: #0f3460; padding: 15px; border-radius: 5px; margin-top: 20px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>☎️ VitalPBX</h1>
-        <p class="info">Central VoIP - vm-voip01</p>
-        <p class="info">Dominio: voip.AJ.local</p>
-        <div>
-            <a href="/admin" class="btn">Panel de Administración</a>
-            <a href="/pbx" class="btn">PBX Panel</a>
-        </div>
-        <div class="credentials">
-            <p><strong>Credenciales de Acceso:</strong></p>
-            <p>Admin: admin / Admin123</p>
-            <p>SSH: ubuntu@192.168.15.11</p>
-        </div>
-    </div>
-</body>
-</html>
-EOF
-
-        # Crear directorio de admin (placeholder)
         mkdir -p /var/www/html/vitalpbx/admin
-        cat > /var/www/html/vitalpbx/admin/index.php << 'EOF'
-<?php
-header('Location: /');
-exit;
-EOF
-
         chown -R www-data:www-data /var/www/html/vitalpbx
-        echo "Página web creada"
 
-    - name: "VOIP — Crear extensiones de prueba"
+    - name: "VOIP — Index HTML"
+      ansible.builtin.copy:
+        dest: /var/www/html/vitalpbx/index.html
+        content: |
+          <!DOCTYPE html>
+          <html lang="es">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>VitalPBX - VoIP</title>
+              <style>
+                  body { font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                  .container { text-align: center; background: #16213e; padding: 40px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+                  h1 { color: #e94560; font-size: 2.5em; }
+                  .info { margin: 20px 0; font-size: 1.2em; }
+                  .btn { display: inline-block; padding: 15px 40px; background: #e94560; color: #fff; text-decoration: none; border-radius: 5px; font-size: 1.2em; margin: 10px; }
+                  .btn:hover { background: #c7304a; }
+                  .credentials { background: #0f3460; padding: 15px; border-radius: 5px; margin-top: 20px; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>VoIP</h1>
+                  <p class="info">Central VoIP - vm-voip01</p>
+                  <p class="info">Dominio: voip.AJ.local</p>
+                  <div class="credentials">
+                      <p><strong>Extensiones SIP:</strong></p>
+                      <p>100 / 100secret</p>
+                      <p>101 / 101secret</p>
+                      <p>102 / 102secret</p>
+                  </div>
+              </div>
+          </body>
+          </html>
+        force: yes
+        mode: "0644"
+        owner: www-data
+        group: www-data
+
+    - name: "VOIP — Admin redirect"
+      ansible.builtin.copy:
+        dest: /var/www/html/vitalpbx/admin/index.php
+        content: |
+          <?php
+          header('Location: /');
+          exit;
+        force: yes
+        mode: "0644"
+        owner: www-data
+        group: www-data
+
+    - name: "VOIP — Recargar Asterisk"
       ansible.builtin.shell: |
-        # Agregar extensiones SIP de prueba en Asterisk
-        cat >> /etc/asterisk/sip.conf << 'EOF'
-
-; Extensiones de prueba
-[100]
-type=friend
-host=dynamic
-secret=100secret
-context=from-internal
-callerid="Extension 100" <100>
-
-[101]
-type=friend
-host=dynamic
-secret=101secret
-context=from-internal
-callerid="Extension 101" <101>
-
-[102]
-type=friend
-host=dynamic
-secret=102secret
-context=from-internal
-callerid="Extension 102" <102>
-EOF
-
-        asterisk -rx "sip reload" 2>/dev/null || true
-        echo "Extensiones creadas"
-        echo ""
-        echo "Extensiones SIP:"
-        echo "  100 - Password: 100secret"
-        echo "  101 - Password: 101secret"
-        echo "  102 - Password: 102secret"
+        asterisk -rx "core reload" 2>/dev/null || true
+        echo "Asterisk recargado"
 
     - name: "VOIP — Verificacion"
       ansible.builtin.shell: |
