@@ -62,6 +62,8 @@
     - name: "VOIP — Limpiar dpkg e instalar dependencias"
       ansible.builtin.shell: |
         set -e
+        export DEBIAN_FRONTEND=noninteractive
+        export APT_LISTCHANGES_FRONTEND=none
         
         dpkg --configure -a 2>/dev/null || true
         
@@ -74,13 +76,18 @@
         
         echo "dpkg limpio"
         
-        # Instalar asterisk-config PRIMERO para evitar dependencia rota
-        DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk-config 2>/dev/null || true
+        # Instalar asterisk-config primero (sin prompts)
+        yes | dpkg --configure --force-confdef asterisk-config 2>&1 || \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" asterisk-config 2>&1 || true
         
-        # Ahora instalar asterisk con todas sus dependencias
-        DEBIAN_FRONTEND=noninteractive apt-get install -f -y asterisk
+        # Instalar asterisk
+        yes | dpkg --configure --force-confdef asterisk 2>&1 || \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" asterisk 2>&1 || true
         
-        # Instalar resto de dependencias
+        # Arreglar dependencias rotas
+        DEBIAN_FRONTEND=noninteractive apt-get install -f -y
+        
+        # Instalar resto
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
           wget gnupg curl apache2 php php-mysql php-gd php-mbstring \
           php-xml php-bcmath php-curl libapache2-mod-php \
