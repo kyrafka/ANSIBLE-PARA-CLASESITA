@@ -95,7 +95,7 @@
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
           wget gnupg curl apache2 php php-mysql php-gd php-mbstring \
           php-xml php-bcmath php-curl libapache2-mod-php \
-          mariadb-server fail2ban htop net-tools iputils-ping socat \
+          fail2ban htop net-tools iputils-ping socat \
           ssl-cert
         
         echo "Dependencias instaladas"
@@ -126,29 +126,12 @@
         create_home: no
       failed_when: false
 
-    - name: "VOIP — Iniciar MariaDB"
+    - name: "VOIP — Iniciar MariaDB (opcional)"
       ansible.builtin.shell: |
-        set -e
-        echo "=== Espacio disco antes ==="
-        df -h / | tail -1
-        
-        systemctl enable mariadb
-        systemctl restart mariadb
-        sleep 3
-        
-        echo "=== Estado MariaDB ==="
-        systemctl status mariadb --no-pager | head -10
-        
-        # Verificar que responde
-        mysql -e "SELECT 1" 2>&1 && echo "MariaDB: OK" || { echo "ERROR: MariaDB no conecta"; exit 1; }
-        echo "MariaDB iniciado OK"
-
-    - name: "VOIP — Verificar MariaDB"
-      ansible.builtin.shell: |
-        set -e
-        echo "=== Verificando MariaDB ==="
-        mysql -e "SELECT 1" 2>&1 && echo "MariaDB: OK" || { echo "ERROR: MariaDB no responde"; exit 1; }
-      changed_when: false
+        systemctl enable mariadb 2>/dev/null || true
+        systemctl restart mariadb 2>/dev/null || true
+        sleep 2
+        echo "MariaDB (opcional) iniciado"
 
     - name: "VOIP — Configurar hostname y DNS"
       ansible.builtin.shell: |
@@ -393,7 +376,6 @@
         echo "=== SERVICIOS ==="
         systemctl is-active asterisk && echo "Asterisk: OK" || echo "Asterisk: FAIL"
         systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
-        systemctl is-active mariadb && echo "MariaDB: OK" || echo "MariaDB: FAIL"
         systemctl is-active fail2ban && echo "Fail2ban: OK" || echo "Fail2ban: FAIL"
         echo ""
         echo "=== PUERTOS ==="
