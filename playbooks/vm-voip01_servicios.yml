@@ -67,55 +67,18 @@
           - ssl-cert
         state: present
 
-    - name: "VOIP — Instalar repositorio VitalPBX"
-      ansible.builtin.shell: |
-        set -e
-        
-        # Agregar repositorio VitalPBX
-        echo "deb [arch=amd64] https://apt.vitalpbx.com:8443/ bullseye main" > /etc/apt/sources.list.d/vitalpbx.list
-        
-        # Descargar e instalar clave GPG
-        wget -q -O /tmp/vitalpbx.gpg "https://apt.vitalpbx.com:8443/key.gpg" 2>&1 || {
-          echo "AVISO: No se pudo descargar clave GPG, intentando sin ella..."
-        }
-        
-        apt-key add /tmp/vitalpbx.gpg 2>/dev/null || true
-        
-        apt-get update -qq 2>/dev/null || {
-          echo "Repositorio VitalPBX no respondió, instalando Asterisk + FreePBX manualmente..."
-          echo "SKIP_REPO=1" > /tmp/vitalpbx_skip
-        }
-        
-        echo "Repositorio configurado"
+    - name: "VOIP — Instalar Asterisk"
+      ansible.builtin.apt:
+        name: asterisk
+        state: present
+        update_cache: yes
 
-    - name: "VOIP — Instalar Asterisk y VitalPBX"
-      ansible.builtin.shell: |
-        set -e
-        
-        if [ -f /tmp/vitalpbx_skip ]; then
-          echo "Instalando Asterisk manualmente (repo no disponible)..."
-          DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk
-        else
-          echo "Instalando VitalPBX desde repositorio..."
-          DEBIAN_FRONTEND=noninteractive apt-get install -y vitalpbx
-        fi
-        
-        echo "Asterisk/VitalPBX instalado"
-
-    - name: "VOIP — Configurar MariaDB para VitalPBX"
+    - name: "VOIP — Iniciar MariaDB"
       ansible.builtin.shell: |
         systemctl enable mariadb
         systemctl start mariadb
-        sleep 3
-        
-        # Crear DB para VitalPBX
-        mysql -e "CREATE DATABASE IF NOT EXISTS vitalpbx CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
-        mysql -e "DROP USER IF EXISTS 'vitalpbx'@'localhost';"
-        mysql -e "CREATE USER 'vitalpbx'@'localhost' IDENTIFIED BY '{{ admin_password }}';"
-        mysql -e "GRANT ALL PRIVILEGES ON vitalpbx.* TO 'vitalpbx'@'localhost';"
-        mysql -e "FLUSH PRIVILEGES;"
-        
-        echo "MariaDB configurado para VitalPBX"
+        sleep 2
+        echo "MariaDB iniciado"
 
     - name: "VOIP — Configurar hostname y DNS"
       ansible.builtin.shell: |
