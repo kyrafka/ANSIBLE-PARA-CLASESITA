@@ -1,0 +1,226 @@
+---
+# ============================================================================
+# vm-voip01_servicios.yml — 3CX VoIP PBX
+# ============================================================================
+# IP: 192.168.15.11 (VLAN 50)
+# GUI: https://192.168.15.11:5000
+# ============================================================================
+
+- name: "Configurar SERVICIOS vm-voip01 — 3CX VoIP"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    voip_domain: "voip.AJ.local"
+    admin_password: "Admin123"
+    email_alerts: "admin@AJ.local"
+
+  tasks:
+    - name: "VOIP — Actualizar apt"
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "VOIP — Instalar dependencias"
+      ansible.builtin.apt:
+        name:
+          - wget
+          - gnupg
+          - curl
+          - postfix
+          - dovecot-core
+          - dovecot-imapd
+          - fail2ban
+          - htop
+          - net-tools
+          - iputils-ping
+        state: present
+
+    - name: "VOIP — Detectar version de SO"
+      ansible.builtin.shell: |
+        lsb_release -cs
+      changed_when: false
+      register: os_version
+
+    - name: "VOIP — Agregar repositorio 3CX"
+      ansible.builtin.shell: |
+        set -e
+        
+        OS_CODENAME="{{ os_version.stdout }}"
+        echo "SO: $OS_CODENAME"
+        
+        if [ "$OS_CODENAME" = "jammy" ]; then
+          CODENAME="jammy"
+        elif [ "$OS_CODENAME" = "noble" ]; then
+          CODENAME="noble"
+        else
+          CODENAME="jammy"
+        fi
+        
+        echo "Codename para 3CX: $CODENAME"
+        
+        rm -f /etc/apt/sources.list.d/3cx.list
+        
+        echo "deb [arch=amd64] https://repo.3cx.com/3cxpbx jammy main" > /etc/apt/sources.list.d/3cx.list
+        
+        wget -q https://repo.3cx.com/3cx-pbx.pub -O /tmp/3cx-pbx.pub 2>&1 || {
+          echo "AVISO: No se pudo descargar clave GPG de repositorio 3CX"
+          echo "Intentando instalacion directa..."
+        }
+        
+        apt-key add /tmp/3cx-pbx.pub 2>/dev/null || true
+        
+        apt-get update -qq
+        echo "Repositorio 3CX configurado"
+
+    - name: "VOIP — Instalar 3CX"
+      ansible.builtin.shell: |
+        set -e
+        
+        echo "Buscando paquete 3CX..."
+        
+        # Intentar con el meta-package (recomendado por 3CX)
+        apt-get update -qq 2>/dev/null || true
+        
+        DEBIAN_FRONTEND=noninteractive apt-get install -y 3cxpbx 2>&1 | tail -20 || {
+          echo "Instalacion por apt falló, intentando descarga directa..."
+          
+          # Descarga directa del .deb desde 3CX
+          mkdir -p /tmp/3cx
+          
+          # URL actual (puede cambiar, verificar en https://www.3cx.com/docs/linux/)
+          wget -q -O /tmp/3cx/3cxpbx.deb "https://downloads.3cx.com/downloads/3cxpbx_20.0.37.18_amd64.deb" 2>&1 || {
+            echo "ERROR: No se pudo descargar 3CX"
+            echo "Descarga manualmente desde: https://www.3cx.com/docs/linux/"
+            exit 1
+          }
+          
+          dpkg -i /tmp/3cx/3cxpbx.deb || {
+            apt-get install -f -y
+          }
+        }
+        
+        echo "3CX instalado"
+
+    - name: "VOIP — Configurar hostname y DNS"
+      ansible.builtin.shell: |
+        hostnamectl set-hostname vm-voip01 --static
+        echo "vm-voip01" > /etc/hostname
+        
+        # Agregar al hosts
+        if ! grep -q "192.168.15.11.*voip.AJ.local" /etc/hosts; then
+          echo "192.168.15.11 voip.AJ.local vm-voip01" >> /etc/hosts
+        fi
+        
+        echo "Hostname configurado"
+        hostname
+        cat /etc/hosts | grep voip
+
+    - name: "VOIP — Configurar firewall (UFW)"
+      ansible.builtin.shell: |
+        systemctl enable ufw 2>/dev/null || true
+        ufw --force enable
+        
+        # Puertos 3CX
+        ufw allow 5000/tcp comment '3CX Web Console'
+        ufw allow 5060/tcp comment 'SIP'
+        ufw allow 5061/tcp comment 'SIP TLS'
+        ufw allow 10000:20000/udp comment 'RTP Audio'
+        ufw allow 22/tcp comment 'SSH'
+        
+        ufw reload
+        ufw status numbered
+
+    - name: "VOIP — Configurar Postfix (alertas email)"
+      ansible.builtin.shell: |
+        postconf -e "myhostname = voip.AJ.local"
+        postconf -e "mydomain = AJ.local"
+        postconf -e "myorigin = \$mydomain"
+        postconf -e "relayhost = [192.168.13.11]:25"
+        postconf -e "smtp_connection_cache_destinations = voip.AJ.local"
+        
+        systemctl restart postfix
+        systemctl status postfix --no-pager || true
+        echo "Postfix configurado"
+
+    - name: "VOIP — Configurar fail2ban para SIP"
+      ansible.builtin.copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime = 3600
+          findtime = 600
+          maxretry = 5
+          
+          [sshd]
+          enabled = true
+          port = 22
+          filter = sshd
+          logpath = /var/log/auth.log
+          
+          [3cx-sip]
+          enabled = true
+          port = 5060,5061
+          filter = 3cx-sip
+          logpath = /var/log/3cxpbx/3cxpbx.log
+          maxretry = 10
+          bantime = 7200
+        force: yes
+
+    - name: "VOIP — Iniciar fail2ban"
+      ansible.builtin.service:
+        name: fail2ban
+        enabled: yes
+        state: started
+
+    - name: "VOIP — Iniciar 3CX"
+      ansible.builtin.shell: |
+        set -e
+        
+        # Esperar a que el servicio esté disponible
+        sleep 5
+        
+        # Iniciar 3CX service
+        systemctl enable 3cxpbx 2>/dev/null || true
+        systemctl start 3cxpbx 2>/dev/null || true
+        systemctl restart 3cxpbx 2>/dev/null || true
+        
+        sleep 10
+        
+        echo "=== 3CX Status ==="
+        systemctl status 3cxpbx --no-pager || true
+        
+        echo ""
+        echo "=== 3CX Log ==="
+        tail -30 /var/log/3cxpbx/3cxpbx.log 2>/dev/null || echo "Log no encontrado"
+        
+        echo ""
+        echo "=== Puertos escuchando ==="
+        ss -tlnp | grep -E '5000|5060|10000'
+
+    - name: "VOIP — Verificacion"
+      ansible.builtin.shell: |
+        echo "=== SERVICIOS ==="
+        systemctl is-active 3cxpbx && echo "3CX: OK" || echo "3CX: FAIL"
+        systemctl is-active postfix && echo "Postfix: OK" || echo "Postfix: FAIL"
+        systemctl is-active fail2ban && echo "Fail2ban: OK" || echo "Fail2ban: FAIL"
+        systemctl is-active ufw && echo "UFW: OK" || echo "UFW: FAIL"
+        echo ""
+        echo "=== ACCESOS ==="
+        echo "3CX Console: https://192.168.15.11:5000"
+        echo "SSH: ubuntu@192.168.15.11"
+        echo ""
+        echo "=== NOTAS ==="
+        echo "Primera vez que accedes a la consola web:"
+        echo "1. Ir a https://192.168.15.11:5000"
+        echo "2. Crear admin user y password"
+        echo "3. Configurar dominio: voip.AJ.local"
+        echo "4. Activar extensiones SIP"
+      changed_when: false
+      register: verif
+
+    - name: "RESULT"
+      ansible.builtin.debug:
+        msg: "{{ verif.stdout_lines }}"
