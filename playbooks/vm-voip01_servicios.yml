@@ -62,9 +62,10 @@
     - name: "VOIP — Limpiar dpkg e instalar dependencias"
       ansible.builtin.shell: |
         set -e
+        
         dpkg --configure -a 2>/dev/null || true
         
-        for pkg in asterisk asterisk-config asteriskk; do
+        for pkg in asterisk asterisk-config asteriskk asterisk-modules; do
           dpkg --remove --force-remove-reinstreq $pkg 2>/dev/null || true
         done
         
@@ -73,11 +74,18 @@
         
         echo "dpkg limpio"
         
+        # Instalar asterisk-config PRIMERO para evitar dependencia rota
+        DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk-config 2>/dev/null || true
+        
+        # Ahora instalar asterisk con todas sus dependencias
+        DEBIAN_FRONTEND=noninteractive apt-get install -f -y asterisk
+        
+        # Instalar resto de dependencias
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
           wget gnupg curl apache2 php php-mysql php-gd php-mbstring \
           php-xml php-bcmath php-curl libapache2-mod-php \
           mariadb-server fail2ban htop net-tools iputils-ping socat \
-          ssl-cert asterisk
+          ssl-cert
         
         echo "Dependencias instaladas"
 
