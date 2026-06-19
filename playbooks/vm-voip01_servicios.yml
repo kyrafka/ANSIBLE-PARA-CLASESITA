@@ -144,44 +144,43 @@
         fi
 
     - name: "VOIP — Configurar Apache para VitalPBX"
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/vitalpbx.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName voip.AJ.local
+              Redirect permanent / https://voip.AJ.local/
+          </VirtualHost>
+
+          <VirtualHost *:443>
+              ServerName voip.AJ.local
+              DocumentRoot /var/www/html/vitalpbx
+
+              <Directory /var/www/html/vitalpbx>
+                  Options -Indexes +FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+
+              SSLEngine on
+              SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
+              SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+          </VirtualHost>
+        force: yes
+        mode: "0644"
+
+    - name: "VOIP — Habilitar Apache VitalPBX"
       ansible.builtin.shell: |
-        a2enmod php{{ php_version.stdout }} rewrite ssl headers
-        a2enmod socache_shmcb 2>/dev/null || true
-        
-        # Config de Apache para VitalPBX
-        cat > /etc/apache2/sites-available/vitalpbx.conf << 'EOF'
-<VirtualHost *:80>
-    ServerName voip.AJ.local
-    Redirect permanent / https://voip.AJ.local/
-</VirtualHost>
-
-<VirtualHost *:443>
-    ServerName voip.AJ.local
-    DocumentRoot /var/www/html/vitalpbx
-
-    <Directory /var/www/html/vitalpbx>
-        Options -Indexes +FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
-
-    SSLEngine on
-    SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
-    SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
-</VirtualHost>
-EOF
-
+        a2enmod php{{ php_version.stdout }} rewrite ssl headers 2>/dev/null || true
         a2dissite 000-default.conf 2>/dev/null || true
         a2ensite vitalpbx.conf 2>/dev/null || true
-        a2enconf apache2 2>/dev/null || true
         
-        # Generar certificados autofirmados si no existen
         if [ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]; then
           apt-get install -y ssl-cert
         fi
         
         systemctl restart apache2
-        echo "Apache configurado"
+        echo "Apache configurado y reiniciado"
 
     - name: "VOIP — Configurar fail2ban para SIP"
       ansible.builtin.copy:
