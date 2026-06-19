@@ -326,8 +326,6 @@
         owner: asterisk
         group: asterisk
 
-        echo "Asterisk configurado"
-
     - name: "VOIP — Iniciar Asterisk"
       ansible.builtin.shell: |
         systemctl enable asterisk
