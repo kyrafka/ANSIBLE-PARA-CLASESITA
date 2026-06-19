@@ -105,7 +105,7 @@
         set -e
         echo "=== Verificando Asterisk ==="
         which asterisk && echo "asterisk bin: OK" || { echo "ERROR: asterisk no encontrado"; exit 1; }
-        asterisk --version || { echo "ERROR: asterisk no corre"; exit 1; }
+        /usr/sbin/asterisk -V 2>&1 || /usr/sbin/asterisk -v 2>&1 || { echo "ERROR: asterisk no corre"; exit 1; }
         echo "Asterisk instalado OK"
       changed_when: false
       register: verif_asterisk
