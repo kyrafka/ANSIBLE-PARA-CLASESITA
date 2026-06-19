@@ -133,7 +133,7 @@
           
           # Docker
           UserParameter=docker.status,systemctl is-active docker 2>/dev/null || echo "inactive"
-          UserParameter=docker.containers,docker ps --format "{{.Names}}" 2>/dev/null | wc -l || echo "0"
+          UserParameter=docker.containers,docker ps 2>/dev/null | tail -n +2 | wc -l || echo "0"
           
           # Postfix/Dovecot
           UserParameter=mail.postfix,systemctl is-active postfix 2>/dev/null || echo "inactive"
