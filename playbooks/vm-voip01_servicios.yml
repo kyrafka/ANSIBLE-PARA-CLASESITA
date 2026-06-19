@@ -30,6 +30,20 @@
         sleep 2
         echo "MariaDB iniciado"
 
+    - name: "VOIP — Crear usuario asterisk"
+      ansible.builtin.group:
+        name: asterisk
+        state: present
+
+    - name: "VOIP — Crear usuario asterisk"
+      ansible.builtin.user:
+        name: asterisk
+        group: asterisk
+        system: yes
+        shell: /usr/sbin/nologin
+        home: /var/lib/asterisk
+        create_home: no
+
     - name: "VOIP — Configurar hostname y DNS"
       ansible.builtin.shell: |
         hostnamectl set-hostname vm-voip01 --static
