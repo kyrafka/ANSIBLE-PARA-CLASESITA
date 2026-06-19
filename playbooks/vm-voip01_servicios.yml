@@ -17,61 +17,11 @@
     admin_password: "Admin123"
 
   tasks:
-    - name: "VOIP — Actualizar apt"
-      ansible.builtin.apt:
-        update_cache: yes
-        cache_valid_time: 3600
-
-    - name: "VOIP — Detener NetworkManager y servicios innecesarios"
-      ansible.builtin.shell: |
-        systemctl stop NetworkManager 2>/dev/null || true
-        systemctl disable NetworkManager 2>/dev/null || true
-        systemctl stop systemd-resolved 2>/dev/null || true
-        echo "Servicios de red detenidos para configuración manual"
-
-    - name: "VOIP — Detectar versión de PHP"
-      ansible.builtin.shell: |
-        if [ -f /etc/php/8.3/apache2/php.ini ]; then
-          echo "8.3"
-        elif [ -f /etc/php/8.2/apache2/php.ini ]; then
-          echo "8.2"
-        elif [ -f /etc/php/8.1/apache2/php.ini ]; then
-          echo "8.1"
-        else
-          ls /etc/php/ 2>/dev/null || echo "none"
-        fi
-      changed_when: false
-      register: php_version
-
     - name: "VOIP — Instalar dependencias"
-      ansible.builtin.apt:
-        name:
-          - wget
-          - gnupg
-          - curl
-          - apache2
-          - php
-          - php-mysql
-          - php-gd
-          - php-mbstring
-          - php-xml
-          - php-bcmath
-          - php-curl
-          - libapache2-mod-php
-          - mariadb-server
-          - fail2ban
-          - htop
-          - net-tools
-          - iputils-ping
-          - socat
-          - ssl-cert
-        state: present
-
-    - name: "VOIP — Instalar Asterisk"
-      ansible.builtin.apt:
-        name: asterisk
-        state: present
-        update_cache: yes
+      ansible.builtin.shell: |
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y wget gnupg curl apache2 php php-mysql php-gd php-mbstring php-xml php-bcmath php-curl libapache2-mod-php mariadb-server fail2ban htop net-tools iputils-ping socat ssl-cert asterisk
+        echo "Dependencias instaladas"
 
     - name: "VOIP — Iniciar MariaDB"
       ansible.builtin.shell: |
@@ -94,7 +44,7 @@
 
     - name: "VOIP — Configurar PHP (detectado {{ php_version.stdout }})"
       ansible.builtin.shell: |
-        PHPINI="/etc/php/{{ php_version.stdout }}/apache2/php.ini"
+        PHPINI="/etc/php/8.3/apache2/php.ini"
         
         if [ -f "$PHPINI" ]; then
           sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' "$PHPINI"
@@ -134,7 +84,7 @@
 
     - name: "VOIP — Habilitar Apache VitalPBX"
       ansible.builtin.shell: |
-        a2enmod php{{ php_version.stdout }} rewrite ssl headers 2>/dev/null || true
+        a2enmod php8.3 rewrite ssl headers 2>/dev/null || true
         a2dissite 000-default.conf 2>/dev/null || true
         a2ensite vitalpbx.conf 2>/dev/null || true
         
