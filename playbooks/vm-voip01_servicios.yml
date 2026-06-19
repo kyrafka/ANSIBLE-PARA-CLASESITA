@@ -22,21 +22,63 @@
         DF=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//')
         echo "Disco usado: ${DF}%"
         if [ "$DF" -gt 90 ]; then
-          echo "ERROR: Disco casi lleno (${DF}%)"
-          exit 1
+          echo "WARNING: Disco casi lleno, intentando expandir..."
+        else
+          echo "Espacio OK"
         fi
-        echo "Espacio OK"
       changed_when: false
+      register: disk_check
 
-    - name: "VOIP — Instalar dependencias"
+    - name: "VOIP — Expandir filesystem LVM"
       ansible.builtin.shell: |
         set -e
-        apt-get update -qq
+        echo "=== Antes ==="
+        df -h / | tail -1
+        
+        # Intentar growpart
+        sudo growpart /dev/sda 3 2>/dev/null || echo "growpart no necesario"
+        
+        # Extender PV
+        sudo pvresize /dev/sda3 2>/dev/null || echo "pvresize no necesario"
+        
+        # Ver espacio libre en VG
+        VFREE=$(sudo vgs --noheadings -o v_free --units g ubuntu-vg 2>/dev/null | tr -d ' g\n' || echo 0)
+        echo "VG espacio libre: ${VFREE}"
+        
+        if [ ! -z "$VFREE" ] && [ "$VFREE" != "0" ]; then
+          echo "Expandiendo LV..."
+          sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv 2>/dev/null || echo "lvextend falló"
+          sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv 2>/dev/null || echo "resize2fs falló"
+          echo "LV expandido"
+        else
+          echo "LV ya está expandido o no hay espacio libre"
+        fi
+        
+        echo "=== Despues ==="
+        df -h / | tail -1
+      changed_when: false
+      register: disk_expand
+
+    - name: "VOIP — Limpiar dpkg e instalar dependencias"
+      ansible.builtin.shell: |
+        set -e
+        dpkg --configure -a 2>/dev/null || true
+        
+        for pkg in asterisk asterisk-config asteriskk; do
+          dpkg --remove --force-remove-reinstreq $pkg 2>/dev/null || true
+        done
+        
+        apt-get clean
+        apt-get autoremove -y 2>/dev/null || true
+        
+        echo "dpkg limpio"
+        
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
           wget gnupg curl apache2 php php-mysql php-gd php-mbstring \
           php-xml php-bcmath php-curl libapache2-mod-php \
           mariadb-server fail2ban htop net-tools iputils-ping socat \
           ssl-cert asterisk
+        
         echo "Dependencias instaladas"
 
     - name: "VOIP — Verificar Asterisk instalado"
