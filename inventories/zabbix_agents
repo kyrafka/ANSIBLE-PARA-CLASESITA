@@ -1,0 +1,20 @@
+# Inventario Zabbix Agents
+# Todos los servidores que tendran Zabbix Agent
+
+[zabbix_agents]
+core1       ansible_host=192.168.10.20
+core2       ansible_host=192.168.10.30
+vm-services01    ansible_host=192.168.13.11
+vm-storage01     ansible_host=192.168.14.11
+vm-web01         ansible_host=192.168.12.11
+vm-docker01      ansible_host=192.168.13.12
+vm-voip01        ansible_host=192.168.15.11
+vm-monitor01     ansible_host=192.168.17.11
+
+[ssh_group:children]
+zabbix_agents
+
+[ssh_group:vars]
+ansible_user=ubuntu
+ansible_become=yes
+ansible_ssh_private_key_file=~/.ssh/id_rsa

@@ -1,0 +1,182 @@
+---
+# ============================================================================
+# zabbix_agents.yml — Instalar Zabbix Agent en todos los servidores
+# ============================================================================
+# Instala agente en: cores, y todas las VMs de servicios
+# ============================================================================
+
+- name: "Instalar Zabbix Agent en servidor"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_server: "192.168.17.11"
+    zabbix_agent_port: "10050"
+    zabbix_server_port: "10051"
+
+  tasks:
+    - name: "AGN — Detectar SO"
+      ansible.builtin.shell: |
+        if command -v apt-get &>/dev/null; then
+          echo "debian"
+        elif command -v yum &>/dev/null; then
+          echo "rhel"
+        else
+          echo "unknown"
+        fi
+      changed_when: false
+      register: os_type
+
+    - name: "AGN — Detectar hostname"
+      ansible.builtin.shell: |
+        hostname
+      changed_when: false
+      register: actual_hostname
+
+    - name: "AGN — Instalar Zabbix Agent (Debian/Ubuntu)"
+      ansible.builtin.shell: |
+        set -e
+        
+        if [ "{{ os_type.stdout }}" != "debian" ]; then
+          echo "SO no soportado para este metodo: {{ os_type.stdout }}"
+          exit 0
+        fi
+        
+        # Instalar repo y agente
+        if ! command -v zabbix_agentd &>/dev/null; then
+          echo "Instalando Zabbix Agent..."
+          wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix_agent.deb
+          dpkg -i /tmp/zabbix_agent.deb || true
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-agent
+          echo "Zabbix Agent instalado"
+        else
+          echo "Zabbix Agent ya instalado"
+        fi
+        
+        # Verificar instalacion
+        which zabbix_agentd && echo "Binario: OK" || echo "ERROR: binario no encontrado"
+      when: os_type.stdout == "debian"
+      register: agent_install
+
+    - name: "AGN — Detectar nombre de host para Zabbix"
+      ansible.builtin.shell: |
+        # Intentar detectar el nombre corto del host
+        hostname -s 2>/dev/null || hostname
+      changed_when: false
+      register: zabbix_hostname
+
+    - name: "AGN — Configurar Zabbix Agent"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agentd.conf
+        content: |
+          PidFile=/run/zabbix/zabbix_agentd.pid
+          LogFile=/var/log/zabbix/zabbix_agentd.log
+          LogFileSize=10
+          
+          Server={{ zabbix_server }}
+          ServerActive={{ zabbix_server }}
+          Hostname={{ zabbix_hostname.stdout }}
+          
+          # TLS (deshabilitado para simplicidad)
+          TLSConnect=unencrypted
+          TLSAccept=unencrypted
+          
+          # Puertos
+          ListenPort={{ zabbix_agent_port }}
+          
+          # Incluir configs adicionales
+          Include=/etc/zabbix/zabbix_agentd.conf.d/*.conf
+          
+          # Chequeos basicos
+          RefreshActiveChecks=60
+          BufferSend=5
+          BufferSize=100
+        force: yes
+        mode: "0644"
+      register: agent_config
+
+    - name: "AGN — Crear directorio para chequeueos adicionales"
+      ansible.builtin.file:
+        path: /etc/zabbix/zabbix_agentd.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: "AGN — Configurar UserParameters para servicios"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agentd.conf.d/userparams.conf
+        content: |
+          # Servicios del sistema
+          UserParameter=services.state[*],systemctl is-active $1 2>/dev/null || echo "inactive"
+          UserParameter=services.enabled[*],systemctl is-enabled $1 2>/dev/null || echo "disabled"
+          
+          # Asterisk (si existe)
+          UserParameter=asterisk.peers,asterisk -rx "sip show peers" 2>/dev/null | grep -c "OK" || echo "0"
+          UserParameter=asterisk.status,systemctl is-active asterisk 2>/dev/null || echo "inactive"
+          
+          # Apache/Nginx
+          UserParameter=apache.status,systemctl is-active apache2 2>/dev/null || echo "inactive"
+          UserParameter=nginx.status,systemctl is-active nginx 2>/dev/null || echo "inactive"
+          
+          # Docker
+          UserParameter=docker.status,systemctl is-active docker 2>/dev/null || echo "inactive"
+          UserParameter=docker.containers,docker ps --format "{{.Names}}" 2>/dev/null | wc -l || echo "0"
+          
+          # Postfix/Dovecot
+          UserParameter=mail.postfix,systemctl is-active postfix 2>/dev/null || echo "inactive"
+          UserParameter=mail.dovecot,systemctl is-active dovecot 2>/dev/null || echo "inactive"
+          
+          # Samba
+          UserParameter=samba.status,systemctl is-active smbd 2>/dev/null || echo "inactive"
+          
+          # HAProxy
+          UserParameter=haproxy.status,systemctl is-active haproxy 2>/dev/null || echo "inactive"
+          
+          # CPU y Memoria
+          UserParameter=system.cpu.util,top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//'
+          UserParameter=system.mem.used,free -m | grep Mem | awk '{print $3}'
+          UserParameter=system.mem.total,free -m | grep Mem | awk '{print $2}'
+        force: yes
+        mode: "0644"
+
+    - name: "AGN — Crear directorios y permisos"
+      ansible.builtin.shell: |
+        mkdir -p /run/zabbix
+        mkdir -p /var/log/zabbix
+        chown zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
+        chmod 755 /run/zabbix
+        chmod 755 /var/log/zabbix
+        echo "Directorios OK"
+
+    - name: "AGN — Iniciar Zabbix Agent"
+      ansible.builtin.shell: |
+        systemctl enable zabbix-agent
+        systemctl restart zabbix-agent
+        sleep 3
+        systemctl status zabbix-agent --no-pager | head -10
+        echo "Zabbix Agent iniciado"
+      register: agent_start
+
+    - name: "AGN — Verificacion"
+      ansible.builtin.shell: |
+        echo "=== Zabbix Agent Status ==="
+        systemctl is-active zabbix-agent && echo "Agent: OK" || echo "Agent: FAIL"
+        echo ""
+        echo "=== Escuchando en puerto 10050 ==="
+        ss -tlnp | grep 10050 || echo "No escuchando en 10050"
+        echo ""
+        echo "=== Test de conectividad al Zabbix Server ==="
+        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/{{ zabbix_server_port }}" 2>&1 && echo "Zabbix Server: reachable" || echo "Zabbix Server: unreachable"
+        echo ""
+        echo "=== Logs del Agent (ultimas 5 lineas) ==="
+        tail -5 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Log vacio o no existe"
+      changed_when: false
+      register: verif
+
+    - name: "AGN — Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ zabbix_hostname.stdout }}"
+          - "Zabbix Server: {{ zabbix_server }}"
+          - "{{ verif.stdout_lines }}"
