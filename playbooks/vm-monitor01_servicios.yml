@@ -204,12 +204,14 @@
         state: started
 
     - name: "MON — Iniciar Zabbix"
-      ansible.builtin.service:
-        name: zabbix-server
-        enabled: yes
-        state: started
-      async: 60
-      poll: 5
+      ansible.builtin.shell: |
+        mkdir -p /run/zabbix /var/log/zabbix
+        chown zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
+        chmod 755 /run/zabbix /var/log/zabbix
+        systemctl enable zabbix-server
+        systemctl restart zabbix-server
+        sleep 5
+        systemctl status zabbix-server --no-pager | head -10
 
     - name: "MON — Esperar y verificar Zabbix"
       ansible.builtin.shell: |
