@@ -12,9 +12,9 @@
 
   tasks:
     - name: "MON — Actualizar apt"
-      ansible.builtin.apt:
-        update_cache: yes
-        cache_valid_time: 3600
+      ansible.builtin.shell: |
+        apt-get update -qq 2>/dev/null || apt-get update
+        echo "apt cache actualizada"
 
     - name: "MON — Instalar dependencias"
       ansible.builtin.apt:
