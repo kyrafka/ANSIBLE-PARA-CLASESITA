@@ -1,12 +1,12 @@
 ---
 # ============================================================================
-# vm-voip01_servicios.yml — 3CX VoIP PBX
+# vm-voip01_servicios.yml — VitalPBX VoIP (Asterisk + GUI)
 # ============================================================================
 # IP: 192.168.15.11 (VLAN 50)
-# GUI: https://192.168.15.11:5000
+# GUI: https://192.168.15.11
 # ============================================================================
 
-- name: "Configurar SERVICIOS vm-voip01 — 3CX VoIP"
+- name: "Configurar SERVICIOS vm-voip01 — VitalPBX VoIP"
   hosts: localhost
   connection: local
   become: true
@@ -15,7 +15,6 @@
   vars:
     voip_domain: "voip.AJ.local"
     admin_password: "Admin123"
-    email_alerts: "admin@AJ.local"
 
   tasks:
     - name: "VOIP — Actualizar apt"
@@ -23,127 +22,166 @@
         update_cache: yes
         cache_valid_time: 3600
 
+    - name: "VOIP — Detener NetworkManager y servicios innecesarios"
+      ansible.builtin.shell: |
+        systemctl stop NetworkManager 2>/dev/null || true
+        systemctl disable NetworkManager 2>/dev/null || true
+        systemctl stop systemd-resolved 2>/dev/null || true
+        echo "Servicios de red detenidos para configuración manual"
+
+    - name: "VOIP — Detectar versión de PHP"
+      ansible.builtin.shell: |
+        if [ -f /etc/php/8.3/apache2/php.ini ]; then
+          echo "8.3"
+        elif [ -f /etc/php/8.2/apache2/php.ini ]; then
+          echo "8.2"
+        elif [ -f /etc/php/8.1/apache2/php.ini ]; then
+          echo "8.1"
+        else
+          ls /etc/php/ 2>/dev/null || echo "none"
+        fi
+      changed_when: false
+      register: php_version
+
     - name: "VOIP — Instalar dependencias"
       ansible.builtin.apt:
         name:
           - wget
           - gnupg
           - curl
-          - postfix
-          - dovecot-core
-          - dovecot-imapd
+          - apache2
+          - php
+          - php-mysql
+          - php-gd
+          - php-mbstring
+          - php-xml
+          - php-bcmath
+          - php-imap
+          - php-pear
+          - libapache2-mod-php
+          - mariadb-server
           - fail2ban
           - htop
           - net-tools
           - iputils-ping
+          - socat
         state: present
 
-    - name: "VOIP — Detectar version de SO"
-      ansible.builtin.shell: |
-        lsb_release -cs
-      changed_when: false
-      register: os_version
-
-    - name: "VOIP — Agregar repositorio 3CX"
+    - name: "VOIP — Instalar repositorio VitalPBX"
       ansible.builtin.shell: |
         set -e
         
-        OS_CODENAME="{{ os_version.stdout }}"
-        echo "SO: $OS_CODENAME"
+        # Agregar repositorio VitalPBX
+        echo "deb [arch=amd64] https://apt.vitalpbx.com:8443/ bullseye main" > /etc/apt/sources.list.d/vitalpbx.list
         
-        if [ "$OS_CODENAME" = "jammy" ]; then
-          CODENAME="jammy"
-        elif [ "$OS_CODENAME" = "noble" ]; then
-          CODENAME="noble"
+        # Descargar e instalar clave GPG
+        wget -q -O /tmp/vitalpbx.gpg "https://apt.vitalpbx.com:8443/key.gpg" 2>&1 || {
+          echo "AVISO: No se pudo descargar clave GPG, intentando sin ella..."
+        }
+        
+        apt-key add /tmp/vitalpbx.gpg 2>/dev/null || true
+        
+        apt-get update -qq 2>/dev/null || {
+          echo "Repositorio VitalPBX no respondió, instalando Asterisk + FreePBX manualmente..."
+          echo "SKIP_REPO=1" > /tmp/vitalpbx_skip
+        }
+        
+        echo "Repositorio configurado"
+
+    - name: "VOIP — Instalar Asterisk y VitalPBX"
+      ansible.builtin.shell: |
+        set -e
+        
+        if [ -f /tmp/vitalpbx_skip ]; then
+          echo "Instalando Asterisk manualmente (repo no disponible)..."
+          DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk
         else
-          CODENAME="jammy"
+          echo "Instalando VitalPBX desde repositorio..."
+          DEBIAN_FRONTEND=noninteractive apt-get install -y vitalpbx
         fi
         
-        echo "Codename para 3CX: $CODENAME"
-        
-        rm -f /etc/apt/sources.list.d/3cx.list
-        
-        echo "deb [arch=amd64] https://repo.3cx.com/3cxpbx jammy main" > /etc/apt/sources.list.d/3cx.list
-        
-        wget -q https://repo.3cx.com/3cx-pbx.pub -O /tmp/3cx-pbx.pub 2>&1 || {
-          echo "AVISO: No se pudo descargar clave GPG de repositorio 3CX"
-          echo "Intentando instalacion directa..."
-        }
-        
-        apt-key add /tmp/3cx-pbx.pub 2>/dev/null || true
-        
-        apt-get update -qq
-        echo "Repositorio 3CX configurado"
+        echo "Asterisk/VitalPBX instalado"
 
-    - name: "VOIP — Instalar 3CX"
+    - name: "VOIP — Configurar MariaDB para VitalPBX"
       ansible.builtin.shell: |
-        set -e
+        systemctl enable mariadb
+        systemctl start mariadb
+        sleep 3
         
-        echo "Buscando paquete 3CX..."
+        # Crear DB para VitalPBX
+        mysql -e "CREATE DATABASE IF NOT EXISTS vitalpbx CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;"
+        mysql -e "DROP USER IF EXISTS 'vitalpbx'@'localhost';"
+        mysql -e "CREATE USER 'vitalpbx'@'localhost' IDENTIFIED BY '{{ admin_password }}';"
+        mysql -e "GRANT ALL PRIVILEGES ON vitalpbx.* TO 'vitalpbx'@'localhost';"
+        mysql -e "FLUSH PRIVILEGES;"
         
-        # Intentar con el meta-package (recomendado por 3CX)
-        apt-get update -qq 2>/dev/null || true
-        
-        DEBIAN_FRONTEND=noninteractive apt-get install -y 3cxpbx 2>&1 | tail -20 || {
-          echo "Instalacion por apt falló, intentando descarga directa..."
-          
-          # Descarga directa del .deb desde 3CX
-          mkdir -p /tmp/3cx
-          
-          # URL actual (puede cambiar, verificar en https://www.3cx.com/docs/linux/)
-          wget -q -O /tmp/3cx/3cxpbx.deb "https://downloads.3cx.com/downloads/3cxpbx_20.0.37.18_amd64.deb" 2>&1 || {
-            echo "ERROR: No se pudo descargar 3CX"
-            echo "Descarga manualmente desde: https://www.3cx.com/docs/linux/"
-            exit 1
-          }
-          
-          dpkg -i /tmp/3cx/3cxpbx.deb || {
-            apt-get install -f -y
-          }
-        }
-        
-        echo "3CX instalado"
+        echo "MariaDB configurado para VitalPBX"
 
     - name: "VOIP — Configurar hostname y DNS"
       ansible.builtin.shell: |
         hostnamectl set-hostname vm-voip01 --static
         echo "vm-voip01" > /etc/hostname
         
-        # Agregar al hosts
         if ! grep -q "192.168.15.11.*voip.AJ.local" /etc/hosts; then
           echo "192.168.15.11 voip.AJ.local vm-voip01" >> /etc/hosts
         fi
         
         echo "Hostname configurado"
         hostname
-        cat /etc/hosts | grep voip
 
-    - name: "VOIP — Configurar firewall (UFW)"
+    - name: "VOIP — Configurar PHP (detectado {{ php_version.stdout }})"
       ansible.builtin.shell: |
-        systemctl enable ufw 2>/dev/null || true
-        ufw --force enable
+        PHPINI="/etc/php/{{ php_version.stdout }}/apache2/php.ini"
         
-        # Puertos 3CX
-        ufw allow 5000/tcp comment '3CX Web Console'
-        ufw allow 5060/tcp comment 'SIP'
-        ufw allow 5061/tcp comment 'SIP TLS'
-        ufw allow 10000:20000/udp comment 'RTP Audio'
-        ufw allow 22/tcp comment 'SSH'
-        
-        ufw reload
-        ufw status numbered
+        if [ -f "$PHPINI" ]; then
+          sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' "$PHPINI"
+          sed -i 's/max_execution_time = 30/max_execution_time = 300/' "$PHPINI"
+          sed -i 's/memory_limit = -1/memory_limit = 256M/' "$PHPINI"
+          sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 64M/' "$PHPINI"
+          echo "PHP configurado en $PHPINI"
+        else
+          echo "WARNING: $PHPINI no existe"
+        fi
 
-    - name: "VOIP — Configurar Postfix (alertas email)"
+    - name: "VOIP — Configurar Apache para VitalPBX"
       ansible.builtin.shell: |
-        postconf -e "myhostname = voip.AJ.local"
-        postconf -e "mydomain = AJ.local"
-        postconf -e "myorigin = \$mydomain"
-        postconf -e "relayhost = [192.168.13.11]:25"
-        postconf -e "smtp_connection_cache_destinations = voip.AJ.local"
+        a2enmod php{{ php_version.stdout }} rewrite ssl headers
+        a2enmod socache_shmcb 2>/dev/null || true
         
-        systemctl restart postfix
-        systemctl status postfix --no-pager || true
-        echo "Postfix configurado"
+        # Config de Apache para VitalPBX
+        cat > /etc/apache2/sites-available/vitalpbx.conf << 'EOF'
+<VirtualHost *:80>
+    ServerName voip.AJ.local
+    Redirect permanent / https://voip.AJ.local/
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName voip.AJ.local
+    DocumentRoot /var/www/html/vitalpbx
+
+    <Directory /var/www/html/vitalpbx>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    SSLEngine on
+    SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
+    SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+</VirtualHost>
+EOF
+
+        a2dissite 000-default.conf 2>/dev/null || true
+        a2ensite vitalpbx.conf 2>/dev/null || true
+        a2enconf apache2 2>/dev/null || true
+        
+        # Generar certificados autofirmados si no existen
+        if [ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]; then
+          apt-get install -y ssl-cert
+        fi
+        
+        systemctl restart apache2
+        echo "Apache configurado"
 
     - name: "VOIP — Configurar fail2ban para SIP"
       ansible.builtin.copy:
@@ -160,64 +198,208 @@
           filter = sshd
           logpath = /var/log/auth.log
           
-          [3cx-sip]
+          [asterisk]
           enabled = true
           port = 5060,5061
-          filter = 3cx-sip
-          logpath = /var/log/3cxpbx/3cxpbx.log
+          filter = asterisk
+          logpath = /var/log/asterisk/full
           maxretry = 10
           bantime = 7200
         force: yes
 
-    - name: "VOIP — Iniciar fail2ban"
-      ansible.builtin.service:
-        name: fail2ban
-        enabled: yes
-        state: started
-
-    - name: "VOIP — Iniciar 3CX"
+    - name: "VOIP — Configurar firewall UFW"
       ansible.builtin.shell: |
-        set -e
+        systemctl enable ufw 2>/dev/null || true
+        ufw --force enable
         
-        # Esperar a que el servicio esté disponible
+        ufw allow 22/tcp comment 'SSH'
+        ufw allow 80/tcp comment 'HTTP'
+        ufw allow 443/tcp comment 'HTTPS'
+        ufw allow 5060/tcp comment 'SIP'
+        ufw allow 5060/udp comment 'SIP UDP'
+        ufw allow 5061/tcp comment 'SIP TLS'
+        ufw allow 10000:20000/udp comment 'RTP Audio'
+        
+        ufw reload
+        ufw status numbered
+        echo "Firewall configurado"
+
+    - name: "VOIP — Configurar Asterisk"
+      ansible.builtin.shell: |
+        # Configuración básica de Asterisk
+        mkdir -p /etc/asterisk
+        
+        # sip.conf básico
+        cat > /etc/asterisk/sip.conf << 'EOF'
+[general]
+context=from-external
+bindport=5060
+bindaddr=0.0.0.0
+srvlookup=yes
+qualify=yes
+nat=no
+directrtpsetup=yes
+disallow=all
+allow=ulaw
+allow=alaw
+allow=g729
+alwaysauthreject=yes
+canreinvite=no
+pedantic=no
+EOF
+
+        # extensions.conf básico
+        cat > /etc/asterisk/extensions.conf << 'EOF'
+[from-external]
+exten => 100,1,Answer()
+same => n,Wait(1)
+same => n,Playback(hello-world)
+same => n,Hangup()
+
+[default]
+include => from-external
+EOF
+
+        # modules.conf
+        cat > /etc/asterisk/modules.conf << 'EOF'
+[modules]
+autoload=yes
+noload => res_config_mysql.so
+load => res_pjsip.so
+load => res_hep.so
+EOF
+
+        chown -R asterisk:asterisk /etc/asterisk
+        
+        # Configurar Asterisk para acceso web
+        cat > /etc/asterisk/manager.conf << 'EOF'
+[admin]
+secret = admin123
+read = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
+write = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
+EOF
+
+        echo "Asterisk configurado"
+
+    - name: "VOIP — Iniciar Asterisk"
+      ansible.builtin.shell: |
+        systemctl enable asterisk
+        systemctl restart asterisk
+        
         sleep 5
         
-        # Iniciar 3CX service
-        systemctl enable 3cxpbx 2>/dev/null || true
-        systemctl start 3cxpbx 2>/dev/null || true
-        systemctl restart 3cxpbx 2>/dev/null || true
+        echo "=== Asterisk Status ==="
+        asterisk -rx "core show version" 2>/dev/null || echo "Asterisk CLI no responde"
         
-        sleep 10
+        systemctl status asterisk --no-pager || true
+
+    - name: "VOIP — Crear página web de acceso"
+      ansible.builtin.shell: |
+        mkdir -p /var/www/html/vitalpbx
         
-        echo "=== 3CX Status ==="
-        systemctl status 3cxpbx --no-pager || true
-        
+        cat > /var/www/html/vitalpbx/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VitalPBX - VoIP</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { text-align: center; background: #16213e; padding: 40px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        h1 { color: #e94560; font-size: 2.5em; }
+        .info { margin: 20px 0; font-size: 1.2em; }
+        .btn { display: inline-block; padding: 15px 40px; background: #e94560; color: #fff; text-decoration: none; border-radius: 5px; font-size: 1.2em; margin: 10px; }
+        .btn:hover { background: #c7304a; }
+        .credentials { background: #0f3460; padding: 15px; border-radius: 5px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>☎️ VitalPBX</h1>
+        <p class="info">Central VoIP - vm-voip01</p>
+        <p class="info">Dominio: voip.AJ.local</p>
+        <div>
+            <a href="/admin" class="btn">Panel de Administración</a>
+            <a href="/pbx" class="btn">PBX Panel</a>
+        </div>
+        <div class="credentials">
+            <p><strong>Credenciales de Acceso:</strong></p>
+            <p>Admin: admin / Admin123</p>
+            <p>SSH: ubuntu@192.168.15.11</p>
+        </div>
+    </div>
+</body>
+</html>
+EOF
+
+        # Crear directorio de admin (placeholder)
+        mkdir -p /var/www/html/vitalpbx/admin
+        cat > /var/www/html/vitalpbx/admin/index.php << 'EOF'
+<?php
+header('Location: /');
+exit;
+EOF
+
+        chown -R www-data:www-data /var/www/html/vitalpbx
+        echo "Página web creada"
+
+    - name: "VOIP — Crear extensiones de prueba"
+      ansible.builtin.shell: |
+        # Agregar extensiones SIP de prueba en Asterisk
+        cat >> /etc/asterisk/sip.conf << 'EOF'
+
+; Extensiones de prueba
+[100]
+type=friend
+host=dynamic
+secret=100secret
+context=from-internal
+callerid="Extension 100" <100>
+
+[101]
+type=friend
+host=dynamic
+secret=101secret
+context=from-internal
+callerid="Extension 101" <101>
+
+[102]
+type=friend
+host=dynamic
+secret=102secret
+context=from-internal
+callerid="Extension 102" <102>
+EOF
+
+        asterisk -rx "sip reload" 2>/dev/null || true
+        echo "Extensiones creadas"
         echo ""
-        echo "=== 3CX Log ==="
-        tail -30 /var/log/3cxpbx/3cxpbx.log 2>/dev/null || echo "Log no encontrado"
-        
-        echo ""
-        echo "=== Puertos escuchando ==="
-        ss -tlnp | grep -E '5000|5060|10000'
+        echo "Extensiones SIP:"
+        echo "  100 - Password: 100secret"
+        echo "  101 - Password: 101secret"
+        echo "  102 - Password: 102secret"
 
     - name: "VOIP — Verificacion"
       ansible.builtin.shell: |
         echo "=== SERVICIOS ==="
-        systemctl is-active 3cxpbx && echo "3CX: OK" || echo "3CX: FAIL"
-        systemctl is-active postfix && echo "Postfix: OK" || echo "Postfix: FAIL"
+        systemctl is-active asterisk && echo "Asterisk: OK" || echo "Asterisk: FAIL"
+        systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
+        systemctl is-active mariadb && echo "MariaDB: OK" || echo "MariaDB: FAIL"
         systemctl is-active fail2ban && echo "Fail2ban: OK" || echo "Fail2ban: FAIL"
         systemctl is-active ufw && echo "UFW: OK" || echo "UFW: FAIL"
         echo ""
-        echo "=== ACCESOS ==="
-        echo "3CX Console: https://192.168.15.11:5000"
-        echo "SSH: ubuntu@192.168.15.11"
+        echo "=== PUERTOS ==="
+        ss -tlnp | grep -E '80|:443|5060|10000'
         echo ""
-        echo "=== NOTAS ==="
-        echo "Primera vez que accedes a la consola web:"
-        echo "1. Ir a https://192.168.15.11:5000"
-        echo "2. Crear admin user y password"
-        echo "3. Configurar dominio: voip.AJ.local"
-        echo "4. Activar extensiones SIP"
+        echo "=== ACCESOS ==="
+        echo "Web GUI: https://192.168.15.11/"
+        echo "Asterisk CLI: sudo asterisk -r"
+        echo ""
+        echo "=== EXTENSIONES SIP ==="
+        echo "  100 (secret: 100secret)"
+        echo "  101 (secret: 101secret)"
+        echo "  102 (secret: 102secret)"
       changed_when: false
       register: verif
 

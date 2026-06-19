@@ -169,6 +169,9 @@
           ; === WEB ERP (AWS EC2) ===
           erp             IN      A       192.168.11.11
           www             IN      CNAME   erp
+
+          ; === VOIP (vm-voip01) ===
+          voip            IN      A       192.168.15.11
         owner: root
         group: bind
         mode: "0644"
