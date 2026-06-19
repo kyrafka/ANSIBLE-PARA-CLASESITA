@@ -128,11 +128,20 @@
 
     - name: "VOIP — Iniciar MariaDB"
       ansible.builtin.shell: |
+        set -e
+        echo "=== Espacio disco antes ==="
+        df -h / | tail -1
+        
         systemctl enable mariadb
         systemctl restart mariadb
         sleep 3
-        systemctl status mariadb --no-pager | head -5
-        echo "MariaDB iniciado"
+        
+        echo "=== Estado MariaDB ==="
+        systemctl status mariadb --no-pager | head -10
+        
+        # Verificar que responde
+        mysql -e "SELECT 1" 2>&1 && echo "MariaDB: OK" || { echo "ERROR: MariaDB no conecta"; exit 1; }
+        echo "MariaDB iniciado OK"
 
     - name: "VOIP — Verificar MariaDB"
       ansible.builtin.shell: |
