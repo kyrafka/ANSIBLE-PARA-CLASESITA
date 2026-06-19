@@ -119,7 +119,7 @@
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_agentd.conf.d/userparams.conf
         content: |
-# Servicios del sistema
+          # Servicios del sistema
           UserParameter=services.state[*],systemctl is-active $1 2>/dev/null || echo "inactive"
           UserParameter=services.enabled[*],systemctl is-enabled $1 2>/dev/null || echo "disabled"
           
