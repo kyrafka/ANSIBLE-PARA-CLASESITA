@@ -1,0 +1,84 @@
+---
+# checar_error.yml — Diagnosticar problema de Zabbix Web
+- name: "Diagnosticar error Zabbix Web"
+  hosts: localhost
+  connection: local
+  become: true
+
+  tasks:
+    - name: "1. Permisos de /usr/share/zabbix"
+      ansible.builtin.shell: |
+        echo "=== Permisos de /usr/share/zabbix ==="
+        ls -la /usr/share/zabbix/ | head -10
+        echo ""
+        echo "=== Permisos conf ==="
+        ls -la /usr/share/zabbix/conf/
+        echo ""
+        stat /usr/share/zabbix/conf
+
+    - name: "2. Usuario de Apache"
+      ansible.builtin.shell: |
+        echo "=== Usuario de Apache ==="
+        grep -i "user\|group" /etc/apache2/apache2.conf | head -5
+        echo ""
+        echo "=== Propietario proceso Apache ==="
+        ps aux | grep apache2 | head -3
+
+    - name: "3. Probar escribir como www-data"
+      ansible.builtin.shell: |
+        echo "=== Test de escritura como www-data ==="
+        sudo -u www-data touch /usr/share/zabbix/conf/test.txt 2>&1 && echo "OK: www-data puede escribir" || echo "ERROR: www-data NO puede escribir"
+        sudo -u www-data rm -f /usr/share/zabbix/conf/test.txt 2>&1
+
+    - name: "4. Permisos SELinux/AppArmor (si existe)"
+      ansible.builtin.shell: |
+        echo "=== AppArmor status ==="
+        aa-status 2>/dev/null || echo "AppArmor no instalado o inactivo"
+        echo ""
+        echo "=== SELinux status ==="
+        getenforce 2>/dev/null || echo "SELinux no instalado"
+
+    - name: "5. Espacio en disco"
+      ansible.builtin.shell: |
+        echo "=== Espacio disco ==="
+        df -h /usr/share/zabbix
+        echo ""
+        du -sh /usr/share/zabbix
+
+    - name: "6. Logs de Apache (ultimas 20 lineas)"
+      ansible.builtin.shell: |
+        echo "=== Apache error log ==="
+        tail -20 /var/log/apache2/error.log 2>/dev/null || echo "No hay log"
+        echo ""
+        echo "=== Apache access log (ultimas 5 de Zabbix) ==="
+        tail -5 /var/log/apache2/access.log 2>/dev/null | grep zabbix || echo "No hay logs"
+
+    - name: "7. Test config Zabbix Apache"
+      ansible.builtin.shell: |
+        echo "=== Test config Apache ==="
+        apache2ctl configtest 2>&1
+
+    - name: "8. Fixear todo automaticamente"
+      ansible.builtin.shell: |
+        echo "=== Aplicando fix de permisos ==="
+        chown -R www-data:www-data /usr/share/zabbix
+        chmod -R 755 /usr/share/zabbix
+        chmod -R 777 /usr/share/zabbix/conf
+        chmod -R 777 /usr/share/zabbix/include
+        chmod -R 777 /usr/share/zabbix/tests
+        chmod 777 /usr/share/zabbix
+        echo "=== Verificando ==="
+        ls -la /usr/share/zabbix/conf/
+        echo ""
+        echo "=== Test escritura ==="
+        sudo -u www-data touch /usr/share/zabbix/conf/test_write.txt 2>&1 && echo "ESCRITURA OK" || echo "ERROR ESCRITURA"
+        sudo -u www-data rm -f /usr/share/zabbix/conf/test_write.txt
+        echo "=== Fix completado ==="
+      register: fix_result
+
+    - name: "RESULTADO"
+      ansible.builtin.debug:
+        msg:
+          - "Si el fix dice ESCRITURA OK, actualiza la pagina de Zabbix y prueba de nuevo"
+          - "Si sigue fallando, revisá el output de arriba"
+          - "{{ fix_result.stdout_lines }}"

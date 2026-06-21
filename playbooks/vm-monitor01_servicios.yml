@@ -152,7 +152,9 @@
         if [ -f "$PHPINI" ]; then
           sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' "$PHPINI"
           sed -i 's/max_execution_time = 30/max_execution_time = 300/' "$PHPINI"
+          sed -i 's/max_input_time = 60/max_input_time = 300/' "$PHPINI"
           sed -i 's/memory_limit = -1/memory_limit = 128M/' "$PHPINI"
+          sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 16M/' "$PHPINI"
           echo "PHP configurado en $PHPINI"
         else
           echo "WARNING: $PHPINI no existe"
@@ -209,7 +211,19 @@
         chown zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
         chmod 755 /run/zabbix /var/log/zabbix
         systemctl enable zabbix-server
-        systemctl restart zabbix-server
+
+    - name: "MON — Fix permisos Zabbix Web"
+      ansible.builtin.shell: |
+        echo "=== Fixing Zabbix web permissions ==="
+        chown -R www-data:www-data /usr/share/zabbix 2>/dev/null || true
+        chmod -R 755 /usr/share/zabbix 2>/dev/null || true
+        chmod -R 777 /usr/share/zabbix/conf 2>/dev/null || true
+        chmod -R 777 /usr/share/zabbix/include 2>/dev/null || true
+        chmod -R 777 /usr/share/zabbix/tests 2>/dev/null || true
+        ls -la /usr/share/zabbix/conf
+        echo "Permisosfixeados"
+
+    - name: "MON — Iniciar Zabbix Server"
         sleep 5
         systemctl status zabbix-server --no-pager | head -10
 
