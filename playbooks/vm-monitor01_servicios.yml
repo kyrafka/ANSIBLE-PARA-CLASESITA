@@ -256,6 +256,7 @@
         echo "Permisosfixeados"
 
     - name: "MON — Iniciar Zabbix Server"
+      ansible.builtin.shell: |
         sleep 5
         systemctl status zabbix-server --no-pager | head -10
 
