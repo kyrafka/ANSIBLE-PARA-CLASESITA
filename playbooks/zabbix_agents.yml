@@ -1,8 +1,4 @@
 ---
-# ============================================================================
-# zabbix_agents.yml — Instalar Zabbix Agent (solo ejecución local)
-# ============================================================================
-
 - name: "Instalar Zabbix Agent"
   hosts: localhost
   connection: local
@@ -12,39 +8,68 @@
     zabbix_server: "192.168.17.11"
 
   tasks:
-    - name: "AGN — Crear usuario zabbix"
+    - name: "AGN — Verificar si Zabbix Agent ya funciona"
       ansible.builtin.shell: |
-        if id zabbix &>/dev/null; then
-          echo "Usuario zabbix ya existe"
+        if [ -x /usr/sbin/zabbix_agentd ]; then
+          echo "INSTALADO"
+          /usr/sbin/zabbix_agentd -V 2>&1 | head -1
         else
-          useradd --system --no-create-home --shell /usr/sbin/nologin zabbix
-          echo "Usuario zabbix creado"
+          echo "NO_INSTALADO"
         fi
-        id zabbix
+      changed_when: false
+      register: check_agent
 
-    - name: "AGN — Instalar Zabbix Agent"
+    - name: "AGN — Instalar Zabbix Agent si no existe"
       ansible.builtin.shell: |
+        set -e
         export DEBIAN_FRONTEND=noninteractive
         
-        # Verificar si YA está instalado Y funciona
-        if [ -x /usr/sbin/zabbix_agentd ]; then
-          echo "YA INSTALADO"
-          /usr/sbin/zabbix_agentd -V 2>&1 | head -1
-          exit 0
-        fi
-        
-        echo "=== Instalando Zabbix Agent ==="
+        echo "=== Descargando repo Zabbix ==="
         wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix.deb
-        dpkg -i /tmp/zabbix.deb
-        apt-get update
+        
+        echo "=== Instalando repo ==="
+        dpkg -i /tmp/zabbix.deb || true
+        
+        echo "=== Actualizando apt ==="
+        apt-get update -qq
+        
+        echo "=== Instalando zabbix-agent ==="
         apt-get install -y zabbix-agent
-        echo "=== Verificando ==="
-        ls -la /usr/sbin/zabbix_agentd 2>/dev/null && echo "OK" || echo "FALLO"
+        
+        echo "=== Verificacion ==="
+        ls -la /usr/sbin/zabbix_agentd
+        /usr/sbin/zabbix_agentd -V 2>&1 | head -1
+      when: check_agent.stdout == "NO_INSTALADO"
+      register: install_result
 
     - name: "AGN — Obtener hostname"
       ansible.builtin.shell: hostname -s
       changed_when: false
       register: host_name
+
+    - name: "AGN — Crear usuario zabbix"
+      ansible.builtin.user:
+        name: zabbix
+        system: yes
+        shell: /usr/sbin/nologin
+        create_home: no
+        state: present
+      failed_when: false
+
+    - name: "AGN — Crear directorios"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /run/zabbix
+        - /var/log/zabbix
+        - /etc/zabbix/zabbix_agentd.conf.d
+
+    - name: "AGN — Asignar permisos"
+      ansible.builtin.shell: |
+        chown -R zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
+        echo "Permisos asignados"
 
     - name: "AGN — Configurar Zabbix Agent"
       ansible.builtin.copy:
@@ -63,27 +88,18 @@
         force: yes
         mode: "0644"
 
-    - name: "AGN — Crear directorios"
-      ansible.builtin.shell: |
-        mkdir -p /run/zabbix /var/log/zabbix /etc/zabbix/zabbix_agentd.conf.d
-        chown -R zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
-        chmod 755 /run/zabbix /var/log/zabbix
-        echo "Directorios listos"
-        ls -la /run/zabbix /var/log/zabbix
-
     - name: "AGN — Iniciar Zabbix Agent"
-      ansible.builtin.shell: |
-        systemctl enable zabbix-agent
-        systemctl restart zabbix-agent
-        sleep 3
-        systemctl status zabbix-agent --no-pager
+      ansible.builtin.service:
+        name: zabbix-agent
+        enabled: yes
+        state: restarted
 
     - name: "AGN — Verificacion final"
       ansible.builtin.shell: |
         echo "=== Hostname: $(hostname -s) ==="
         systemctl is-active zabbix-agent && echo "Agent: OK" || echo "Agent: FAIL"
         ss -tlnp | grep 10050 || echo "Puerto 10050 no escuchando"
-        tail -10 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs"
+        tail -5 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs"
       changed_when: false
       register: verif
 
