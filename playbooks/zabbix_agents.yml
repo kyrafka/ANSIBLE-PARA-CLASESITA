@@ -1,4 +1,8 @@
 ---
+# ============================================================================
+# zabbix_agents.yml — Instalación limpia de Zabbix Agent
+# ============================================================================
+
 - name: "Instalar Zabbix Agent"
   hosts: localhost
   connection: local
@@ -6,54 +10,75 @@
 
   vars:
     zabbix_server: "192.168.17.11"
+    zabbix_version: "7.0-2+ubuntu24.04"
 
   tasks:
-    - name: "AGN — Verificar si Zabbix Agent ya funciona"
+    - name: "AGN — LIMPIEZA: Remover instalaciones anteriores de Zabbix"
       ansible.builtin.shell: |
-        if [ -x /usr/sbin/zabbix_agentd ]; then
-          echo "INSTALADO"
-          /usr/sbin/zabbix_agentd -V 2>&1 | head -1
-        else
-          echo "NO_INSTALADO"
-        fi
-      changed_when: false
-      register: check_agent
+        echo "=== LIMPIEZA DE ZABBIX ANTERIOR ==="
+        
+        # Detener cualquier proceso zabbix
+        pkill -9 zabbix_agentd 2>/dev/null || true
+        pkill -9 zabbix_agentd.conf 2>/dev/null || true
+        
+        # Desactivar y remover servicio
+        systemctl stop zabbix-agent 2>/dev/null || true
+        systemctl disable zabbix-agent 2>/dev/null || true
+        systemctl daemon-reload
+        
+        # Remover paquetes completamente
+        dpkg --remove --force-remove-reinstreq zabbix-agent zabbix-agent2 2>/dev/null || true
+        apt-get purge -y zabbix-agent zabbix-agent2 zabbix-agent-config 2>/dev/null || true
+        apt-get autoremove -y
+        
+        # Remover archivos de configuración
+        rm -rf /etc/zabbix /etc/zabbix_agentd.conf.d /var/log/zabbix /run/zabbix
+        rm -f /tmp/zabbix.deb /tmp/zabbix_agent.deb
+        
+        # Limpiar apt
+        apt-get clean
+        
+        echo "LIMPIEZA COMPLETA"
 
-    - name: "AGN — Arreglar paquetes rotos de Zabbix"
+    - name: "AGN — VERIFICAR: Estado actual"
       ansible.builtin.shell: |
-        dpkg --configure -a 2>/dev/null || true
-        dpkg --remove --force-remove-reinstreq zabbix-agent zabbix-agent-config 2>/dev/null || true
-        echo "Paquetes rotos limpiados"
+        echo "=== VERIFICANDO ESTADO ACTUAL ==="
+        echo "Binario zabbix_agentd: $(which zabbix_agentd 2>/dev/null || echo 'NO EXISTE')"
+        echo "Servicio systemd: $(systemctl list-units --type=service --all 2>/dev/null | grep zabbix-agent || echo 'NO EXISTE')"
+        echo "Paquetes instalados: $(dpkg -l 2>/dev/null | grep zabbix-agent || echo 'NINGUNO')"
 
-    - name: "AGN — Instalar Zabbix Agent si no existe"
+    - name: "AGN — INSTALAR: Repo y paquete Zabbix Agent"
       ansible.builtin.shell: |
+        set -e
         export DEBIAN_FRONTEND=noninteractive
         export APT_LISTCHANGES_FRONTEND=none
         
-        echo "=== Descargando repo Zabbix ==="
+        echo "=== DESCARGANDO REPO ==="
         wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix.deb
+        echo "Repo descargado"
         
-        echo "=== Instalando repo ==="
+        echo "=== INSTALANDO REPO ==="
         dpkg -i /tmp/zabbix.deb || true
         
-        echo "=== Actualizando apt ==="
+        echo "=== ACTUALIZANDO APT ==="
         apt-get update -qq
         
-        echo "=== Instalando zabbix-agent (sin prompts) ==="
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confnew" zabbix-agent
+        echo "=== INSTALANDO ZABBIX-AGENT ==="
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          -o Dpkg::Options::="--force-confnew" \
+          -o Dpkg::Options::="--force-confdef" \
+          zabbix-agent
         
-        echo "=== Verificacion ==="
-        ls -la /usr/sbin/zabbix_agentd
-        /usr/sbin/zabbix_agentd -V 2>&1 | head -1
-      when: check_agent.stdout == "NO_INSTALADO"
-      register: install_result
+        echo "=== VERIFICANDO DESPUES DE INSTALAR ==="
+        ls -la /usr/sbin/zabbix_agentd 2>/dev/null && echo "BINARIO OK" || echo "BINARIO FALLO"
+        dpkg -l | grep zabbix-agent || echo "PAQUETE NO INSTALADO"
+      register: install_output
 
-    - name: "AGN — Obtener hostname"
-      ansible.builtin.shell: hostname -s
-      changed_when: false
-      register: host_name
+    - name: "AGN — MOSTRAR resultado instalacion"
+      ansible.builtin.debug:
+        msg: "{{ install_output.stdout_lines }}"
 
-    - name: "AGN — Crear usuario zabbix"
+    - name: "AGN — CREAR usuario zabbix"
       ansible.builtin.user:
         name: zabbix
         system: yes
@@ -62,22 +87,32 @@
         state: present
       failed_when: false
 
-    - name: "AGN — Crear directorios"
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0755"
-      loop:
-        - /run/zabbix
-        - /var/log/zabbix
-        - /etc/zabbix/zabbix_agentd.conf.d
-
-    - name: "AGN — Asignar permisos"
+    - name: "AGN — RECARGAR systemd y habilitar servicio"
       ansible.builtin.shell: |
-        chown -R zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
-        echo "Permisos asignados"
+        echo "=== RECARGANDO SYSTEMD ==="
+        systemctl daemon-reload
+        
+        echo "=== HABILITANDO SERVICIO ==="
+        systemctl enable zabbix-agent
+        systemctl start zabbix-agent
+        sleep 3
+        
+        echo "=== ESTADO DEL SERVICIO ==="
+        systemctl status zabbix-agent --no-pager | head -15
 
-    - name: "AGN — Configurar Zabbix Agent"
+    - name: "AGN — CREAR directorios necesarios"
+      ansible.builtin.shell: |
+        mkdir -p /run/zabbix /var/log/zabbix /etc/zabbix/zabbix_agentd.conf.d
+        chown -R zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
+        chmod 755 /run/zabbix /var/log/zabbix
+        ls -la /run/zabbix /var/log/zabbix
+
+    - name: "AGN — OBTENER hostname"
+      ansible.builtin.shell: hostname -s
+      changed_when: false
+      register: host_name
+
+    - name: "AGN — CONFIGURAR Zabbix Agent"
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_agentd.conf
         content: |
@@ -94,21 +129,39 @@
         force: yes
         mode: "0644"
 
-    - name: "AGN — Iniciar Zabbix Agent"
-      ansible.builtin.service:
-        name: zabbix-agent
-        enabled: yes
-        state: restarted
-
-    - name: "AGN — Verificacion final"
+    - name: "AGN — REINICIAR servicio con nueva config"
       ansible.builtin.shell: |
-        echo "=== Hostname: $(hostname -s) ==="
-        systemctl is-active zabbix-agent && echo "Agent: OK" || echo "Agent: FAIL"
-        ss -tlnp | grep 10050 || echo "Puerto 10050 no escuchando"
-        tail -5 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs"
+        echo "=== REINICIANDO ZABBIX AGENT ==="
+        systemctl restart zabbix-agent
+        sleep 3
+        
+        echo "=== ESTADO FINAL ==="
+        systemctl is-active zabbix-agent && echo "AGENT: OK" || echo "AGENT: FAIL"
+        ss -tlnp | grep 10050 || echo "PUERTO 10050: no escuchando"
+
+    - name: "AGN — VERIFICACION FINAL"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "  RESUMEN INSTALACION ZABBIX AGENT"
+        echo "=========================================="
+        echo "Hostname: $(hostname -s)"
+        echo "Zabbix Server: {{ zabbix_server }}"
+        echo ""
+        echo "=== SERVICIO ==="
+        systemctl is-active zabbix-agent && echo "Status: ACTIVO" || echo "Status: INACTIVO"
+        systemctl status zabbix-agent --no-pager | head -5
+        echo ""
+        echo "=== RED ==="
+        ss -tlnp | grep 10050
+        echo ""
+        echo "=== CONECTIVIDAD AL SERVER ==="
+        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>&1 && echo "Zabbix Server: ALCANZABLE" || echo "Zabbix Server: NO ALCANZABLE"
+        echo ""
+        echo "=== LOGS (ultimas 10 lineas) ==="
+        tail -10 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs"
       changed_when: false
       register: verif
 
-    - name: "AGN — Resultado"
+    - name: "AGN — RESULTADO"
       ansible.builtin.debug:
         msg: "{{ verif.stdout_lines }}"
