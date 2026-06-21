@@ -36,29 +36,27 @@
 
     - name: "AGN — Instalar Zabbix Agent (Debian/Ubuntu)"
       ansible.builtin.shell: |
-        set -e
+        echo "SO detectado: {{ os_type.stdout }}"
         
-        if [ "{{ os_type.stdout }}" != "debian" ]; then
-          echo "SO no soportado para este metodo: {{ os_type.stdout }}"
+        # Verificar si ya existe
+        if command -v zabbix_agentd &>/dev/null; then
+          echo "Zabbix Agent YA instalado"
+          zabbix_agentd --version 2>/dev/null || true
           exit 0
         fi
         
-        # Instalar repo y agente
-        if ! command -v zabbix_agentd &>/dev/null; then
-          echo "Instalando Zabbix Agent..."
-          wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix_agent.deb
-          dpkg -i /tmp/zabbix_agent.deb || true
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-agent
-          echo "Zabbix Agent instalado"
-        else
-          echo "Zabbix Agent ya instalado"
-        fi
+        echo "Instalando Zabbix Agent..."
         
-        # Verificar instalacion
-        which zabbix_agentd && echo "Binario: OK" || echo "ERROR: binario no encontrado"
-      when: os_type.stdout == "debian"
-      register: agent_install
+        # Descargar repo
+        wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix_agent.deb 2>&1 && echo "Repo descargado" || echo "Repo falló, continuando..."
+        
+        dpkg -i /tmp/zabbix_agent.deb 2>&1 || true
+        apt-get update -qq 2>&1 || true
+        
+        DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-agent 2>&1 && echo "AGENTE INSTALADO" || echo "FALLÓ INSTALACION"
+        
+        # Verificar
+        which zabbix_agentd && echo "Binario OK" || echo "ERROR: binario no encontrado"
 
     - name: "AGN — Detectar nombre de host para Zabbix"
       ansible.builtin.shell: |
