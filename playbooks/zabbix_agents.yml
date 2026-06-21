@@ -12,29 +12,34 @@
     zabbix_server: "192.168.17.11"
 
   tasks:
+    - name: "AGN — Crear usuario zabbix"
+      ansible.builtin.shell: |
+        if id zabbix &>/dev/null; then
+          echo "Usuario zabbix ya existe"
+        else
+          useradd --system --no-create-home --shell /usr/sbin/nologin zabbix
+          echo "Usuario zabbix creado"
+        fi
+        id zabbix
+
     - name: "AGN — Instalar Zabbix Agent"
       ansible.builtin.shell: |
         export DEBIAN_FRONTEND=noninteractive
         
-        # Verificar si ya existe
-        if command -v zabbix_agentd &>/dev/null; then
-          echo "YA INSTALADO: $(which zabbix_agentd)"
-          zabbix_agentd -V 2>&1 | head -1
+        # Verificar si YA está instalado Y funciona
+        if [ -x /usr/sbin/zabbix_agentd ]; then
+          echo "YA INSTALADO"
+          /usr/sbin/zabbix_agentd -V 2>&1 | head -1
           exit 0
         fi
         
         echo "=== Instalando Zabbix Agent ==="
-        
-        # Descargar repo
         wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix.deb
         dpkg -i /tmp/zabbix.deb
-        
         apt-get update
         apt-get install -y zabbix-agent
-        
-        echo "=== Verificando instalacion ==="
-        which zabbix_agentd
-        dpkg -l | grep zabbix-agent
+        echo "=== Verificando ==="
+        ls -la /usr/sbin/zabbix_agentd 2>/dev/null && echo "OK" || echo "FALLO"
 
     - name: "AGN — Obtener hostname"
       ansible.builtin.shell: hostname -s
@@ -59,15 +64,12 @@
         mode: "0644"
 
     - name: "AGN — Crear directorios"
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        owner: zabbix
-        mode: "0755"
-      loop:
-        - /run/zabbix
-        - /var/log/zabbix
-        - /etc/zabbix/zabbix_agentd.conf.d
+      ansible.builtin.shell: |
+        mkdir -p /run/zabbix /var/log/zabbix /etc/zabbix/zabbix_agentd.conf.d
+        chown -R zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
+        chmod 755 /run/zabbix /var/log/zabbix
+        echo "Directorios listos"
+        ls -la /run/zabbix /var/log/zabbix
 
     - name: "AGN — Iniciar Zabbix Agent"
       ansible.builtin.shell: |
