@@ -19,10 +19,16 @@
       changed_when: false
       register: check_agent
 
+    - name: "AGN — Arreglar paquetes rotos de Zabbix"
+      ansible.builtin.shell: |
+        dpkg --configure -a 2>/dev/null || true
+        dpkg --remove --force-remove-reinstreq zabbix-agent zabbix-agent-config 2>/dev/null || true
+        echo "Paquetes rotos limpiados"
+
     - name: "AGN — Instalar Zabbix Agent si no existe"
       ansible.builtin.shell: |
-        set -e
         export DEBIAN_FRONTEND=noninteractive
+        export APT_LISTCHANGES_FRONTEND=none
         
         echo "=== Descargando repo Zabbix ==="
         wget -q https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb -O /tmp/zabbix.deb
@@ -33,8 +39,8 @@
         echo "=== Actualizando apt ==="
         apt-get update -qq
         
-        echo "=== Instalando zabbix-agent ==="
-        apt-get install -y zabbix-agent
+        echo "=== Instalando zabbix-agent (sin prompts) ==="
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confnew" zabbix-agent
         
         echo "=== Verificacion ==="
         ls -la /usr/sbin/zabbix_agentd
