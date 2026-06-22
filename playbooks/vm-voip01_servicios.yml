@@ -213,20 +213,12 @@
         enabled: yes
         state: started
 
-    - name: "VOIP — Configurar firewall UFW"
+    - name: "VOIP — Desactivar UFW (pfSense maneja el firewall)"
       ansible.builtin.shell: |
-        systemctl enable ufw 2>/dev/null || true
-        ufw --force enable
-        ufw allow 22/tcp comment 'SSH'
-        ufw allow 80/tcp comment 'HTTP'
-        ufw allow 443/tcp comment 'HTTPS'
-        ufw allow 5060/tcp comment 'SIP'
-        ufw allow 5060/udp comment 'SIP UDP'
-        ufw allow 5061/tcp comment 'SIP TLS'
-        ufw allow 10000:20000/udp comment 'RTP Audio'
-        ufw reload
-        ufw status numbered
-        echo "Firewall OK"
+        systemctl stop ufw 2>/dev/null || true
+        systemctl disable ufw 2>/dev/null || true
+        ufw disable 2>/dev/null || true
+        echo "UFW desactivado - pfSense maneja el firewall"
 
     - name: "VOIP — Crear directorios Asterisk"
       ansible.builtin.file:
