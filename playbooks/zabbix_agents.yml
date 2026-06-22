@@ -119,8 +119,8 @@
           PidFile=/run/zabbix/zabbix_agentd.pid
           LogFile=/var/log/zabbix/zabbix_agentd.log
           LogFileSize=10
-          Server={{ zabbix_server }}
-          ServerActive={{ zabbix_server }}
+          Server={{ zabbix_server }},127.0.0.1
+          ServerActive={{ zabbix_server }},127.0.0.1
           Hostname={{ host_name.stdout }}
           TLSConnect=unencrypted
           TLSAccept=unencrypted
