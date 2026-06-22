@@ -1,20 +1,20 @@
 global_defs {
     router_id {{ core_id }}
     vrrp_version 2
-    vrrp_garp_master_delay 10
-    vrrp_garp_master_repeat 3
-    vrrp_gna_interval 5
+    vrrp_garp_master_delay 15
+    vrrp_garp_master_repeat 2
+    vrrp_gna_interval 0
     script_user root
     enable_script_security
-    max_auto_priority 10
+    max_auto_priority 0
 }
 
 vrrp_script check_interlink {
     script "/usr/local/bin/check_interlink.sh"
-    interval 10
-    weight -20
-    fall 3
-    rise 3
+    interval 15
+    weight -30
+    fall 5
+    rise 2
 }
 
 {% for vlan in vlans %}
@@ -23,7 +23,7 @@ vrrp_instance VI_VLAN{{ vlan.id }} {
     interface {{ nic_int1 }}
     virtual_router_id {{ vlan.vrid }}
     priority {{ core_priority }}
-    advert_int 5
+    advert_int 10
     {% if core_state == 'BACKUP' %}
     nopreempt
     {% endif %}
