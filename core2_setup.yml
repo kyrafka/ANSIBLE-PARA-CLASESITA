@@ -202,58 +202,49 @@
             vlans:
               v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}
               v10-trunk2: {id: 10, link: {{ nic_trunk2 }}}
-              v10-int:    {id: 10, link: {{ nic_int1 }}}
               v20-trunk1: {id: 20, link: {{ nic_trunk1 }}}
               v20-trunk2: {id: 20, link: {{ nic_trunk2 }}}
-              v20-int:    {id: 20, link: {{ nic_int1 }}}
               v21-trunk1: {id: 21, link: {{ nic_trunk1 }}}
               v21-trunk2: {id: 21, link: {{ nic_trunk2 }}}
-              v21-int:    {id: 21, link: {{ nic_int1 }}}
               v30-trunk1: {id: 30, link: {{ nic_trunk1 }}}
               v30-trunk2: {id: 30, link: {{ nic_trunk2 }}}
-              v30-int:    {id: 30, link: {{ nic_int1 }}}
               v40-trunk1: {id: 40, link: {{ nic_trunk1 }}}
               v40-trunk2: {id: 40, link: {{ nic_trunk2 }}}
-              v40-int:    {id: 40, link: {{ nic_int1 }}}
               v50-trunk1: {id: 50, link: {{ nic_trunk1 }}}
               v50-trunk2: {id: 50, link: {{ nic_trunk2 }}}
-              v50-int:    {id: 50, link: {{ nic_int1 }}}
               v60-trunk1: {id: 60, link: {{ nic_trunk1 }}}
               v60-trunk2: {id: 60, link: {{ nic_trunk2 }}}
-              v60-int:    {id: 60, link: {{ nic_int1 }}}
               v70-trunk1: {id: 70, link: {{ nic_trunk1 }}}
               v70-trunk2: {id: 70, link: {{ nic_trunk2 }}}
-              v70-int:    {id: 70, link: {{ nic_int1 }}}
               v999-trunk1: {id: 999, link: {{ nic_trunk1 }}}
               v999-trunk2: {id: 999, link: {{ nic_trunk2 }}}
-              v999-int:    {id: 999, link: {{ nic_int1 }}}
             bridges:
               br10:
-                interfaces: [v10-trunk1, v10-trunk2, v10-int]
+                interfaces: [v10-trunk1, v10-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br20:
-                interfaces: [v20-trunk1, v20-trunk2, v20-int]
+                interfaces: [v20-trunk1, v20-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br21:
-                interfaces: [v21-trunk1, v21-trunk2, v21-int]
+                interfaces: [v21-trunk1, v21-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br30:
-                interfaces: [v30-trunk1, v30-trunk2, v30-int]
+                interfaces: [v30-trunk1, v30-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br40:
-                interfaces: [v40-trunk1, v40-trunk2, v40-int]
+                interfaces: [v40-trunk1, v40-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br50:
-                interfaces: [v50-trunk1, v50-trunk2, v50-int]
+                interfaces: [v50-trunk1, v50-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br60:
-                interfaces: [v60-trunk1, v60-trunk2, v60-int]
+                interfaces: [v60-trunk1, v60-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br70:
-                interfaces: [v70-trunk1, v70-trunk2, v70-int]
+                interfaces: [v70-trunk1, v70-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
               br999:
-                interfaces: [v999-trunk1, v999-trunk2, v999-int]
+                interfaces: [v999-trunk1, v999-trunk2]
                 parameters: {stp: true, forward-delay: 20, max-age: 25}
 
     - name: "POST — Crear script de verificacion del interlink"
