@@ -1,0 +1,80 @@
+---
+# ============================================================================
+# test_auto_restart_apache.yml
+# Prueba simple: Detiene apache2 y verifica que Zabbix lo reinicia
+# ============================================================================
+
+- name: "Test Auto-Restart Apache"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    target_vm: "192.168.11.11"  # vm-web01
+    service: "apache2"
+
+  tasks:
+    - name: "TEST 1 — Verificar estado actual de apache2"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Auto-Restart Apache2"
+        echo "=========================================="
+        echo ""
+        echo "Estado actual de Apache2 en vm-web01:"
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@{{ target_vm }} \
+          "systemctl status {{ service }} --no-pager | head -10" 2>&1 || \
+          echo "No se pudo conectar via SSH"
+        echo ""
+        echo "=========================================="
+
+    - name: "TEST 2 — DETENER Apache2 (simular caída)"
+      ansible.builtin.shell: |
+        echo "DETENIENDO {{ service }} en {{ target_vm }}..."
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@{{ target_vm }} \
+          "sudo systemctl stop {{ service }} && echo '✅ {{ service }} DETENIDO'" 2>&1
+        echo ""
+        echo "⏰ Hora de detención: $(date '+%H:%M:%S')"
+        echo "⏰ Zabbix detectará en ~2 minutos"
+        echo "⏰ Recovery esperado en ~3-4 minutos"
+        echo ""
+
+    - name: "TEST 3 — Verificar que Zabbix detecta el problema"
+      ansible.builtin.pause:
+        seconds: 120
+        prompt: |
+          ==========================================
+          VERIFICAR EN ZABBIX
+          ==========================================
+          
+          1. Ve a Zabbix Web UI
+          2. Ve a: Monitor → Problems
+          3. Deberías ver: "Apache2 service is down" o similar
+          
+          Presiona ENTER cuando hayas verificado,
+          o espera 2 minutos para continuar...
+        echo: yes
+
+    - name: "TEST 4 — Verificar si Apache2 se reinició automáticamente"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "VERIFICANDO RECOVERY"
+        echo "=========================================="
+        echo ""
+        echo "Hora actual: $(date '+%H:%M:%S')"
+        echo ""
+        echo "Estado de Apache2 en vm-web01:"
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@{{ target_vm }} \
+          "systemctl status {{ service }} --no-pager | head -10" 2>&1
+        echo ""
+        echo "=========================================="
+        echo "SI Apache2 está CORRIENDO → ✅ Zabbix lo reinició!"
+        echo "SI Apache2 está DETENIDO → ❌ Zabbix no pudo reiniciarlo"
+        echo "=========================================="
+
+    - name: "TEST 5 — Iniciar Apache2 manualmente (cleanup)"
+      ansible.builtin.shell: |
+        echo "Iniciando Apache2 manualmente para dejar todo正常运行..."
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@{{ target_vm }} \
+          "sudo systemctl start {{ service }} && echo '✅ Apache2 iniciado'" 2>&1
+        echo ""
+        echo "TEST COMPLETADO ✅"

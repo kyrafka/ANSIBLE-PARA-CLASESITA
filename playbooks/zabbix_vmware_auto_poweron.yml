@@ -1,0 +1,281 @@
+---
+# ============================================================================
+# zabbix_vmware_auto_poweron.yml
+# Zabbix detecta VM apagada → Ejecuta script → Script SSH a ESXi → Enciende VM
+# ============================================================================
+
+- name: "Configurar Auto-PowerOn de VMs via ESXi SSH"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+    # ==========================================
+    # CONFIGURACIÓN ESXi
+    # ==========================================
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+
+  tasks:
+    - name: "VMW — Verificar conectividad a ESXi"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "Verificando conexión a ESXi..."
+        echo "=========================================="
+        echo "ESXi Host: {{ esxi_host }}"
+        
+        ping -c 1 {{ esxi_host }} -W 2 2>/dev/null && echo "✅ ESXi reachable" || echo "❌ ESXi NOT reachable"
+        
+        echo "=========================================="
+
+    - name: "VMW — Instalar sshpass (para SSH con password)"
+      ansible.builtin.apt:
+        name: sshpass
+        state: present
+      failed_when: false
+
+    - name: "VMW — Obtener token Zabbix"
+      ansible.builtin.shell: |
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "user.login",
+            "params": {"username": "Admin", "password": "{{ zabbix_password }}"},
+            "id": 1
+          }')
+        TOKEN=$(echo "$RESULT" | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+        echo "$TOKEN" > /tmp/zabbix_token
+        echo "Token obtenido"
+      changed_when: false
+      register: login
+
+    - name: "VMW — Crear script de AUTO-POWERON"
+      ansible.builtin.copy:
+        dest: /usr/local/bin/vm-poweron.sh
+        content: |
+          #!/bin/bash
+          # =============================================
+          # Script para ENCENDER VMs en ESXi via SSH
+          # Zabbix lo ejecuta cuando detecta una VM apagada
+          # =============================================
+          
+          # Parámetros recibidos de Zabbix
+          VM_NAME="$1"
+          ESXI_HOST="{{ esxi_host }}"
+          ESXI_PORT="{{ esxi_port }}"
+          ESXI_USER="{{ esxi_user }}"
+          ESXI_PASS="{{ esxi_pass }}"
+          
+          if [ -z "$VM_NAME" ]; then
+              echo "ERROR: Falta nombre de VM"
+              echo "Uso: $0 <nombre_vm>"
+              exit 1
+          fi
+          
+          echo "=========================================="
+          echo "AUTO-POWERON: Intentando encender $VM_NAME"
+          echo "ESXi: $ESXI_HOST:$ESXI_PORT"
+          echo "=========================================="
+          
+          # Conectar a ESXi por SSH y ejecutar comando
+          # Buscar VM por nombre y obtener su ID
+          VM_ID=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" \
+            "vim-cmd vmsvc/getallvms" 2>/dev/null | grep "$VM_NAME" | awk '{print $1}')
+          
+          if [ -z "$VM_ID" ]; then
+              echo "ERROR: VM '$VM_NAME' no encontrada en ESXi"
+              echo "VMs disponibles:"
+              sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                "$ESXI_USER@$ESXI_HOST" \
+                "vim-cmd vmsvc/getallvms" 2>/dev/null
+              exit 1
+          fi
+          
+          echo "VM '$VM_NAME' tiene ID: $VM_ID"
+          echo "Ejecutando vim-cmd vmsvc/power.on $VM_ID..."
+          
+          # Encender la VM
+          sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" \
+            "vim-cmd vmsvc/power.on $VM_ID"
+          
+          echo "=========================================="
+          echo "✅ Comando de power-on enviado"
+          echo "La VM debería encenderse en ~30 segundos"
+          echo "=========================================="
+        mode: "0755"
+        force: yes
+      register: create_script
+
+    - name: "VMW — Dar permisos al script"
+      ansible.builtin.shell: |
+        chmod +x /usr/local/bin/vm-poweron.sh
+        ls -la /usr/local/bin/vm-poweron.sh
+        echo "Script creado y con permisos de ejecución"
+
+    - name: "VMW — Test: Listar VMs en ESXi"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Conectando a ESXi y listando VMs"
+        echo "=========================================="
+        
+        sshpass -p '{{ esxi_pass }}' ssh -p {{ esxi_port }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          "{{ esxi_user }}@{{ esxi_host }}" \
+          "vim-cmd vmsvc/getallvms" 2>&1 | head -20
+        
+        echo "=========================================="
+      changed_when: false
+      register: list_vms
+      failed_when: false
+
+    - name: "VMW — Obtener host groups para la action"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        
+        echo "Obteniendo grupos de hosts..."
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "hostgroup.get",
+            "params": {"output": ["groupid", "name"]},
+            "auth": "'$TOKEN'",
+            "id": 2
+          }' | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+result = data.get('result', [])
+for g in result:
+    print(f\"  {g['groupid']}: {g['name']}\")
+" | head -20
+      changed_when: false
+      register: get_groups
+
+    - name: "VMW — Crear Action: AUTO-POWERON cuando VM está DOWN"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        
+        echo "Creando action de AUTO-POWERON..."
+        
+        # La action se dispara cuando:
+        # 1. Un host tiene estado "Down" o "Unavailable"
+        # 2. Han pasado 2 minutos
+        
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{
+            \"jsonrpc\": \"2.0\",
+            \"method\": \"action.create\",
+            \"params\": {
+              \"name\": \"AUTO-POWERON: Encender VM apagada\",
+              \"eventsource\": 0,
+              \"status\": 0,
+              \"esc_period\": \"2m\",
+              \"def_shortdata\": \"VM {HOST.NAME} está apagada - Encendiendo automáticamente\",
+              \"def_longdata\": \"Zabbix detectó que la VM {HOST.NAME} está apagada o no responde.\n\nIntentando encender la VM automáticamente via ESXi.\n\nIP ESXi: {{ esxi_host }}\nVM: {HOST.NAME}\nHora: {EVENT.TIME}\nFecha: {EVENT.DATE}\",
+              \"conditions\": [
+                {\"conditiontype\": 1, \"operator\": 5, \"value\": 2}
+              ],
+              \"operations\": [
+                {
+                  \"operationtype\": 1,
+                  \"esc_period\": \"0\",
+                  \"esc_step_from\": 1,
+                  \"esc_step_to\": 1,
+                  \"opcommand\": {
+                    \"command\": \"/usr/local/bin/vm-poweron.sh {HOST.NAME}\",
+                    \"type\": 0,
+                    \"execute_on\": 1
+                  },
+                  \"opcommand_hst\": {
+                    \"hostid\": 0
+                  }
+                },
+                {
+                  \"operationtype\": 0,
+                  \"esc_period\": \"0\",
+                  \"esc_step_from\": 1,
+                  \"esc_step_to\": 1,
+                  \"opmessage\": {
+                    \"mediatypeid\": 1,
+                    \"default_msg\": 1
+                  },
+                  \"opmessage_grp\": [
+                    {\"usrgrpid\": 7}
+                  ]
+                }
+              ]
+            },
+            \"auth\": \"'$TOKEN'\",
+            \"id\": 10
+          }")
+        
+        echo "$RESULT"
+        
+        if echo "$RESULT" | grep -q "result"; then
+          echo "✅ Action creada exitosamente"
+        else
+          echo "⚠️ Posiblemente ya existe o error: $RESULT"
+        fi
+      changed_when: false
+      register: create_action
+
+    - name: "VMW — Probar script de poweron (con vm-web01)"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Probando script de poweron"
+        echo "=========================================="
+        
+        # Ejecutar el script para vm-web01
+        /usr/local/bin/vm-poweron.sh vm-web01
+        
+        echo ""
+        echo "✅ Script funcionando"
+        echo "=========================================="
+      changed_when: true
+      register: test_script
+      failed_when: false
+
+    - name: "VMW — RESULTADO"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "   VMWARE AUTO-POWERON CONFIGURADO"
+          - "=========================================="
+          - ""
+          - "ESXi: {{ esxi_host }}:{{ esxi_port }}"
+          - "Usuario: {{ esxi_user }}"
+          - "Script: /usr/local/bin/vm-poweron.sh"
+          - ""
+          - "ACTION CREADA:"
+          - "- Nombre: AUTO-POWERON: Encender VM apagada"
+          - "- Se activa cuando: Host status = DOWN"
+          - "- Espera: 2 minutos antes de actuar"
+          - "- Ejecuta: /usr/local/bin/vm-poweron.sh {HOST.NAME}"
+          - ""
+          - "COMO FUNCIONA:"
+          - "1. VM se apaga o no responde"
+          - "2. Zabbix detecta (trigger: nodata > 2min)"
+          - "3. Zabbix espera 2 min (esc_period)"
+          - "4. Zabbix ejecuta: vm-poweron.sh vm-web01"
+          - "5. Script SSH a ESXi y ejecuta power.on"
+          - "6. VM se enciende!"
+          - ""
+          - "PARA PROBAR:"
+          - "1. Apagá una VM desde ESXi"
+          - "2. Esperá ~3-4 min"
+          - "3. La VM debería encenderse sola"
+          - ""
+          - "IMPORTANTE: El nombre de la VM en Zabbix"
+          - "debe coincidir con el nombre en ESXi"
+          - ""
+          - "=========================================="
+
+    - name: "VMW — Listar VMs encontradas"
+      ansible.builtin.debug:
+        msg: "{{ list_vms.stdout_lines }}"

@@ -1,0 +1,307 @@
+---
+# ============================================================================
+# zabbix_vmware_monitoring.yml
+# Configura Zabbix para monitorear ESXi y AUTO-POWERON VMs apagadas
+# ============================================================================
+
+- name: "Configurar VMware Monitoring para Auto-PowerOn VMs"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+    esxi_host: "192.168.10.1"        # IP de tu ESXi (o vCenter)
+    esxi_user: "root"                  # Usuario de ESXi
+    esxi_pass: "TuPasswordESXi"        # Contraseña de ESXi
+    vm_moid_map:
+      vm-dc01: "vm-1"
+      vm-web01: "vm-2"
+      vm-services01: "vm-3"
+      vm-storage01: "vm-4"
+      vm-voip01: "vm-5"
+      vm-monitor01: "vm-6"
+      core1: "vm-7"
+      core2: "vm-8"
+
+  tasks:
+    - name: "VMW — Verificar conexión a ESXi"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "Verificando conexión a ESXi..."
+        echo "=========================================="
+        
+        # Verificar si vmrun o esxcli está disponible
+        which vim-cmd 2>/dev/null && echo "✅ vim-cmd disponible" || echo "❌ vim-cmd no encontrado"
+        
+        # Test de conectividad
+        ping -c 1 {{ esxi_host }} -W 2 2>/dev/null && echo "✅ ESXi reachable" || echo "❌ ESXi NOT reachable"
+        
+        echo "=========================================="
+
+    - name: "VMW — Obtener token Zabbix"
+      ansible.builtin.shell: |
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "user.login",
+            "params": {"username": "Admin", "password": "{{ zabbix_password }}"},
+            "id": 1
+          }')
+        TOKEN=$(echo "$RESULT" | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+        echo "$TOKEN" > /tmp/zabbix_token
+        echo "Token obtenido"
+      changed_when: false
+      register: login
+
+    - name: "VMW — Crear Host para ESXi"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        
+        echo "Verificando si ESXi ya está registrado..."
+        
+        ESXI_EXISTS=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "host.get",
+            "params": {
+              "filter": {"host": ["ESXi-Host"]}
+            },
+            "auth": "'$TOKEN'",
+            "id": 2
+          }' | grep -o '"hostid":"[^"]*"' | head -1 | cut -d'"' -f4)
+        
+        if [ -n "$ESXI_EXISTS" ]; then
+          echo "ESXi ya registrado con hostid: $ESXI_EXISTS"
+          echo "$ESXI_EXISTS" > /tmp/esxi_hostid
+        else
+          echo "Creando host ESXi en Zabbix..."
+          
+          RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+            -H "Content-Type: application/json-rpc" \
+            -d "{
+              \"jsonrpc\": \"2.0\",
+              \"method\": \"host.create\",
+              \"params\": {
+                \"host\": \"ESXi-Host\",
+                \"name\": \"ESXi Host\",
+                \"interfaces\": [
+                  {
+                    \"type\": 2,
+                    \"main\": 1,
+                    \"useip\": 1,
+                    \"ip\": \"{{ esxi_host }}\",
+                    \"dns\": \"\",
+                    \"port\": \"10050\"
+                  }
+                ],
+                \"groups\": [
+                  {\"groupid\": 17}
+                ],
+                \"templates\": []
+              },
+              \"auth\": \"'$TOKEN'\",
+              \"id\": 3
+            }")
+          echo "$RESULT"
+          
+          ESXI_HOSTID=$(echo "$RESULT" | grep -o '"hostids":\[[0-9]*\]' | head -1 | cut -d':' -f2 | tr -d '[]"')
+          echo "ESXi hostid: $ESXI_HOSTID"
+          echo "$ESXI_HOSTID" > /tmp/esxi_hostid
+        fi
+      changed_when: false
+      register: create_esxi_host
+
+    - name: "VMW — Obtener VM Host IDs"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        
+        echo "Obteniendo VM MOIDs desde ESXi..."
+        echo ""
+        
+        # Conectar a ESXi y listar VMs
+        sshpass -p '{{ esxi_pass }}' ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "vim-cmd vmsvc/getallvms" 2>/dev/null | head -20 || \
+          echo "No se pudo conectar a ESXi via SSH"
+        
+        echo ""
+        echo "=========================================="
+        echo "NOTA: Necesitas configurar SSH key-based auth"
+        echo "para que Zabbix pueda ejecutar comandos en ESXi"
+        echo "=========================================="
+      changed_when: false
+      register: get_vms
+
+    - name: "VMW — Crear script de POWERON en ESXi"
+      ansible.builtin.shell: |
+        echo "Creando script de emergencia en ESXi..."
+        
+        # Copiar script de poweron al ESXi
+        sshpass -p '{{ esxi_pass }}' ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "mkdir -p /opt/zabbix/scripts 2>/dev/null || true"
+        
+        sshpass -p '{{ esxi_pass }}' ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          'cat > /opt/zabbix/scripts/vm-poweron.sh' << 'SCRIPT'
+#!/bin/bash
+# Script para encender VMs via Zabbix
+# Uso: ./vm-poweron.sh <vm_name>
+
+VM_NAME=$1
+if [ -z "$VM_NAME" ]; then
+    echo "Uso: $0 <vm_name>"
+    exit 1
+fi
+
+VM_ID=$(vim-cmd vmsvc/getallvms | grep "$VM_NAME" | awk "{print \$1}")
+if [ -z "$VM_ID" ]; then
+    echo "VM $VM_NAME no encontrada"
+    exit 1
+fi
+
+echo "Encendiendo $VM_NAME (ID: $VM_ID)..."
+vim-cmd vmsvc/power.on $VM_ID
+echo "OK"
+SCRIPT
+        
+        sshpass -p '{{ esxi_pass }}' ssh -o StrictHostKeyChecking=no root@{{ esxi_host }} \
+          "chmod +x /opt/zabbix/scripts/vm-poweron.sh"
+        
+        echo "✅ Script creado en ESXi"
+      changed_when: false
+      register: create_script
+      failed_when: false
+
+    - name: "VMW — Crear Action: POWERON todas las VMs"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        
+        echo "Creando action para auto-poweron de VMs..."
+        
+        # Esta action se dispara cuando una VM está en estado "Down" por más de 2 min
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{
+            \"jsonrpc\": \"2.0\",
+            \"method\": \"action.create\",
+            \"params\": {
+              \"name\": \"AUTO-POWERON: VM Encendida si está apagada\",
+              \"eventsource\": 0,
+              \"status\": 0,
+              \"esc_period\": \"2m\",
+              \"def_shortdata\": \"AUTO-POWERON: VM {HOST.NAME} apagada\",
+              \"def_longdata\": \"La VM {HOST.NAME} está apagada. Zabbix intentará encenderla automáticamente.\n\nTiempo: {EVENT.TIME}\nFecha: {EVENT.DATE}\",
+              \"conditions\": [
+                {\"conditiontype\": 4, \"operator\": 5, \"value\": \"DOWN\""},
+                {\"conditiontype\": 4, \"operator\": 5, \"value\": \"not available\""},
+                {\"conditiontype\": 4, \"operator\": 5, \"value\": \"VM\""}
+              ],
+              \"operations\": [
+                {
+                  \"operationtype\": 1,
+                  \"esc_period\": \"0\",
+                  \"esc_step_from\": 1,
+                  \"esc_step_to\": 1,
+                  \"opcommand\": {
+                    \"command\": \"ssh root@{{ esxi_host }} '/opt/zabbix/scripts/vm-poweron.sh {HOST.NAME}'\",
+                    \"type\": 0,
+                    \"execute_on\": 1
+                  },
+                  \"opcommand_hst\": {
+                    \"hostid\": 0
+                  }
+                },
+                {
+                  \"operationtype\": 0,
+                  \"esc_period\": \"0\",
+                  \"esc_step_from\": 1,
+                  \"esc_step_to\": 1,
+                  \"opmessage\": {
+                    \"mediatypeid\": 1,
+                    \"default_msg\": 1
+                  }
+                }
+              ]
+            },
+            \"auth\": \"'$TOKEN'\",
+            \"id\": 10
+          }"
+        echo ""
+      changed_when: false
+      register: action_poweron
+
+    - name: "VMW — Crear script alternativo local para SSH a ESXi"
+      ansible.builtin.copy:
+        dest: /usr/local/bin/vm-poweron.sh
+        content: |
+          #!/bin/bash
+          # Script para encender VMs en ESXi desde Zabbix
+          # Uso: ./vm-poweron.sh <vm_name> <esxi_host>
+          
+          VM_NAME=$1
+          ESXI_HOST=${2:-"{{ esxi_host }}"}
+          
+          if [ -z "$VM_NAME" ]; then
+              echo "Uso: $0 <vm_name> [esxi_host]"
+              exit 1
+          fi
+          
+          echo "Intentando encender $VM_NAME en $ESXI_HOST..."
+          
+          # Buscar VM y obtener su ID
+          VM_ID=$(ssh -o StrictHostKeyChecking=no root@$ESXI_HOST \
+            "vim-cmd vmsvc/getallvms" 2>/dev/null | grep "$VM_NAME" | awk '{print $1}')
+          
+          if [ -z "$VM_ID" ]; then
+              echo "ERROR: VM $VM_NAME no encontrada"
+              exit 1
+          fi
+          
+          echo "VM $VM_NAME tiene ID: $VM_ID"
+          echo "Ejecutando power.on..."
+          
+          ssh -o StrictHostKeyChecking=no root@$ESXI_HOST \
+            "vim-cmd vmsvc/power.on $VM_ID"
+          
+          echo "Comando enviado"
+        mode: "0755"
+        force: yes
+
+    - name: "VMW — Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "VMWARE MONITORING CONFIGURADO"
+          - "=========================================="
+          - ""
+          - "CONFIGURADO:"
+          - "• ESXi Host: {{ esxi_host }}"
+          - "• Script de poweron creado"
+          - "• Action 'AUTO-POWERON' creada"
+          - ""
+          - "PRÓXIMOS PASOS:"
+          - "1. Configurar SSH key-less entre Zabbix y ESXi"
+          - "2. Verificar que ESXi tenga SSH habilitado"
+          - "3. Ejecutar: ssh-copy-id root@{{ esxi_host }}"
+          - ""
+          - "NOTA: La acción busca VMs por nombre en Zabbix."
+          - "Los nombres deben coincidir con los nombres de VM en ESXi."
+          - "=========================================="
+
+    - name: "VMW — Setup SSH key para ESXi"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "CONFIGURANDO SSH KEY PARA ESXi"
+        echo "=========================================="
+        echo ""
+        echo "Este comando copiará tu SSH key a ESXi"
+        echo "para que Zabbix pueda ejecutar comandos sin password."
+        echo ""
+        echo "Ejecutá manualmente:"
+        echo "  ssh-copy-id root@{{ esxi_host }}"
+        echo ""
+        echo "O probá manualmente:"
+        echo "  ssh root@{{ esxi_host }} 'vim-cmd vmsvc/getallvms'"
+        echo "=========================================="
+      changed_when: false

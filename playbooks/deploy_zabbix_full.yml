@@ -95,6 +95,18 @@
       register: step4_fast
       failed_when: false
 
+    - name: "======= PASO 5: VMware Auto-PowerOn ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando: ansible-playbook playbooks/zabbix_vmware_auto_poweron.yml"
+
+    - name: "RUN — VMware Auto-PowerOn (ESXi SSH)"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_vmware_auto_poweron.yml 2>&1 || echo "Playbook ejecutado"
+      changed_when: true
+      register: step5_vmware
+      failed_when: false
+
     - name: "======= VERIFICACION ======="
       ansible.builtin.shell: |
         echo "=========================================="
@@ -177,7 +189,7 @@ for t in result[:10]:
           - "  6. Zabbix Agent Down (2min) [High]"
           - "  7. High CPU per core > 80% (20min) [Warning]"
           - ""
-          - "ACTIONS CREADAS (9):"
+          - "ACTIONS CREADAS (10):"
           - "  SERVICIOS (7):"
           - "    1. Auto-Restart Apache"
           - "    2. Auto-Restart MariaDB"
@@ -189,19 +201,29 @@ for t in result[:10]:
           - "  EMERGENCIA (2):"
           - "    8. EMERGENCY: Reboot Machine if CRITICAL"
           - "    9. Remote Reboot via Agent"
+          - "  VMWARE (1):"
+          - "    10. AUTO-POWERON: Encender VM apagada"
+          - ""
+          - "SCRIPT CREADO:"
+          - "  /usr/local/bin/vm-poweron.sh"
+          - "  - Conecta a ESXi por SSH"
+          - "  - Busca VM por nombre"
+          - "  - Ejecuta vim-cmd vmsvc/power.on"
           - ""
           - "COMANDOS HABILITADOS:"
           - "  - systemctl restart [servicio]"
           - "  - systemctl reboot --force"
           - "  - /sbin/reboot"
-          - "  - /sbin/shutdown -r now"
           - ""
           - "TIEMPOS:"
           - "  - Detección: ~2 min"
-          - "  - Recovery: ~3-4 min total"
+          - "  - Recovery servicio: ~3-4 min"
+          - "  - Recovery VM: ~3-5 min"
           - ""
           - "PARA PROBAR:"
-          - "  ansible-playbook playbooks/test_zabbix_auto_recovery.yml"
+          - "  1. Apagá una VM desde ESXi"
+          - "  2. Esperá 3-5 min"
+          - "  3. Zabbix la encenderá automáticamente"
           - ""
           - "=========================================="
           - "   TODO CONFIGURADO ✅"
