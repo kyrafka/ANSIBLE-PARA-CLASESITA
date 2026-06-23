@@ -1,0 +1,100 @@
+---
+# ============================================================================
+# deploy_zabbix_main.yml
+# Orchestrator principal - incluye las tareas de archivos separados
+# ============================================================================
+
+- name: "Deploy ZABBIX AUTO-RECOVERY"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+
+  tasks:
+    - name: "=========================================="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "   ZABBIX AUTO-RECOVERY - DEPLOY"
+          - "=========================================="
+          - ""
+          - "Ejecutando paso 1: Remote Commands..."
+          - "Ejecutando paso 2: Triggers..."
+          - "Ejecutando paso 3: Actions..."
+          - "Ejecutando paso 4: Fast Recovery..."
+          - "Ejecutando paso 5: VMware Auto-PowerOn..."
+          - "=========================================="
+
+    - name: "RUN — Remote Commands"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_agents_remotecmds.yml
+      changed_when: true
+      failed_when: false
+
+    - name: "RUN — Triggers"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_triggers.yml
+      changed_when: true
+      failed_when: false
+
+    - name: "RUN — Actions"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_actions.yml
+      changed_when: true
+      failed_when: false
+
+    - name: "RUN — Fast Recovery"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_fast_recovery.yml
+      changed_when: true
+      failed_when: false
+
+    - name: "RUN — VMware Auto-PowerOn"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_vmware_auto_poweron.yml -e "esxi_host={{ esxi_host }} esxi_port={{ esxi_port }} esxi_user={{ esxi_user }} esxi_pass={{ esxi_pass }}"
+      changed_when: true
+      failed_when: false
+
+    - name: "======= RESUMEN FINAL ======="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "   DEPLOY ZABBIX AUTO-RECOVERY COMPLETADO"
+          - "=========================================="
+          - ""
+          - "TRIGGERS CREADOS (7):"
+          - "  1. CPU Very High > 95% (2min)"
+          - "  2. CPU Critical > 98% (10min)"
+          - "  3. Memory Very High > 95% (2min)"
+          - "  4. Disk Low < 15%"
+          - "  5. Disk Critical < 10%"
+          - "  6. Zabbix Agent Down (2min)"
+          - "  7. High CPU per core > 80% (20min)"
+          - ""
+          - "ACTIONS CREADAS (10):"
+          - "  - Auto-Restart: Apache, MariaDB, Postfix, Dovecot"
+          - "  - Auto-Restart: Asterisk, Samba, Zabbix Server"
+          - "  - EMERGENCY: Reboot Machine if CRITICAL"
+          - "  - Remote Reboot via Agent"
+          - "  - AUTO-POWERON: VM si esta apagada"
+          - ""
+          - "VMWARE:"
+          - "  ESXi: {{ esxi_host }}:{{ esxi_port }}"
+          - ""
+          - "PARA PROBAR:"
+          - "  Apagar una VM desde ESXi"
+          - "  Esperar 3-5 min"
+          - "  Zabbix la encendera automaticamente"
+          - ""
+          - "=========================================="
