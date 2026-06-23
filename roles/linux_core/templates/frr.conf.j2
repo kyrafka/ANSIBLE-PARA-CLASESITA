@@ -1,6 +1,9 @@
 # ============================================================================
 # Configuración FRR (Free Range Routing) para {{ core_id | upper }}
 # ============================================================================
+# Los cores son switches L2 puros — OSPF solo para verificar conectividad
+# con el otro core por el interlink. Los bridges son passive.
+# ============================================================================
 
 frr version 9.0
 frr defaults traditional
@@ -15,12 +18,16 @@ interface {{ nic_int1 }}
  description Enlace_Directo_Core_Transporte
  ip ospf {{ ospf_area | default('0.0.0.0') }}
  ip ospf cost 10
+ ip ospf hello-interval 30
+ ip ospf dead-interval 120
 !
 {% for vlan in vlans %}
 interface br{{ vlan.id }}
  description {{ vlan.name }}
  ip ospf {{ ospf_area | default('0.0.0.0') }}
  ip ospf cost 10
+ ip ospf hello-interval 30
+ ip ospf dead-interval 120
 !
 {% endfor %}
 !
@@ -29,13 +36,16 @@ router ospf
  passive-interface default
  no passive-interface {{ nic_int1 }}
  {% for vlan in vlans -%}
- no passive-interface br{{ vlan.id }}
+ passive-interface br{{ vlan.id }}
  {% endfor %}
- ! Redes OSPF: Incluye el interlink /30 de transporte y las subnets de las VLANs
  network 10.0.0.0/30 area {{ ospf_area | default('0.0.0.0') }}
  {% for vlan in vlans -%}
  network {{ vlan.subnet }} area {{ ospf_area | default('0.0.0.0') }}
  {% endfor %}
+ timers throttle spf 1000 1000 10000
+ timers throttle lsa all 1000 5000 10000
+ timers lsa arrival 1000
+ timers pacing lsa-group 2000
 !
 line vty
 !

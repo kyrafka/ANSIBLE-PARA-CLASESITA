@@ -86,6 +86,13 @@
           
           # Reduce bridge learning overhead
           net.bridge.bridge-learning = 1
+          
+          # Storm control - limitar flooding de broadcast/multicast
+          net.core.netdev_max_backlog = 300
+          net.core.netdev_budget = 100
+          
+          # Limitar tabla MAC por bridge (reduce overhead)
+          net.bridge.bridge-ageing-time = 300
 
           # IPv6 disable
           net.ipv6.conf.all.disable_ipv6 = 1
@@ -292,6 +299,27 @@
           ip link delete v${vlan}-int 2>/dev/null && echo "Eliminada v${vlan}-int" || echo "v${vlan}-int no existe"
         done
         echo "Limpieza residual completada"
+      changed_when: true
+      failed_when: false
+
+    - name: "POST — Storm control en trunks (limitar broadcast/multicast)"
+      ansible.builtin.shell: |
+        # Storm control: limitar burst de broadcast/multicast en trunks
+        # Rate limit: 5 Mbps = 5000 kbps, burst 10 Mbps
+        for iface in ens36 ens37; do
+          if ip link show "$iface" >/dev/null 2>&1; then
+            # Limpiar qdisc anterior si existe
+            tc qdisc del dev $iface root 2>/dev/null || true
+            
+            # Agregar htb root qdisc con rate limit de emergencia
+            tc qdisc add dev $iface root handle 1: htb default 10
+            tc class add dev $iface parent 1:1 classid 1:10 htb rate 1000mbit burst 50mbit
+            tc filter add dev $iface parent 1:0 protocol all basic match "match(u32 0 0 at 0)" flowid 1:10
+            
+            echo "$iface: storm control configurado (1000mbit limit)"
+          fi
+        done
+        echo "Storm control aplicado en trunks"
       changed_when: true
       failed_when: false
 
