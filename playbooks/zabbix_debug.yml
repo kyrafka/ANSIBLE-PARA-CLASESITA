@@ -1,0 +1,94 @@
+---
+# ============================================================================
+# zabbix_debug.yml
+# Diagnostico rapido de Zabbix API
+# ============================================================================
+
+- name: "Zabbix API Debug"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+
+  tasks:
+    - name: "1. Login a Zabbix API"
+      ansible.builtin.shell: |
+        echo "=== LOGIN ==="
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"{{ zabbix_password }}"},"id":1}')
+        echo "$RESULT"
+        TOKEN=$(echo "$RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',''))" 2>/dev/null)
+        echo "TOKEN=$TOKEN"
+        echo "$TOKEN" > /tmp/zbx_token
+        echo "Token guardado"
+
+    - name: "2. Contar actions existentes"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zbx_token 2>/dev/null)
+        echo "=== ACTIONS ACTUALES ==="
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"actionid\",\"name\",\"status\"],\"filter\":{\"eventsource\":0}},\"auth\":\"$TOKEN\",\"id\":2}" \
+          | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+r=d.get('result',[])
+print('Total actions:', len(r))
+for a in r:
+    print('  -', a.get('name'),'|', a.get('status'))
+"
+
+    - name: "3. Crear UNA action de prueba"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=== CREANDO ACTION DE PRUEBA ==="
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{
+            \"jsonrpc\": \"2.0\",
+            \"method\": \"action.create\",
+            \"params\": {
+              \"name\": \"TEST: Restart Apache\",
+              \"eventsource\": 0,
+              \"status\": 0,
+              \"esc_period\": \"2m\",
+              \"def_shortdata\": \"Apache DOWN\",
+              \"def_longdata\": \"Test action\",
+              \"conditions\": [],
+              \"operations\": [
+                {
+                  \"operationtype\": 1,
+                  \"esc_period\": \"0\",
+                  \"esc_step_from\": 1,
+                  \"esc_step_to\": 1,
+                  \"opcommand\": {
+                    \"command\": \"systemctl restart apache2\",
+                    \"type\": 0,
+                    \"execute_on\": 1
+                  },
+                  \"opcommand_hst\": {\"hostid\": 0}
+                }
+              ]
+            },
+            \"auth\": \"$TOKEN\",
+            \"id\": 3
+          }")
+        echo "$RESULT"
+
+    - name: "4. Verificar si se creo"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=== ACTIONS DESPUES DE CREAR ==="
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"actionid\",\"name\"],\"filter\":{\"eventsource\":0}},\"auth\":\"$TOKEN\",\"id\":4}" \
+          | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+r=d.get('result',[])
+for a in r:
+    print('  -', a.get('name'))
+"

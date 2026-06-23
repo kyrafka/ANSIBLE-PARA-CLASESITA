@@ -1,0 +1,79 @@
+---
+# ============================================================================
+# deploy_vmware_script.yml
+# Crea el script de poweron y hace test de conexion a ESXi
+# ============================================================================
+
+- name: "Deploy VMware Script"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+
+  tasks:
+    - name: "CREAR script vm-poweron.sh"
+      ansible.builtin.copy:
+        dest: /usr/local/bin/vm-poweron.sh
+        content: |
+          #!/bin/bash
+          # Script para encender VMs en ESXi via SSH
+          VM_NAME="$1"
+          ESXI_HOST="{{ esxi_host }}"
+          ESXI_PORT="{{ esxi_port }}"
+          ESXI_USER="{{ esxi_user }}"
+          ESXI_PASS="{{ esxi_pass }}"
+
+          if [ -z "$VM_NAME" ]; then
+              echo "ERROR: Falta nombre de VM"
+              echo "Uso: $0 <nombre_vm>"
+              exit 1
+          fi
+
+          echo "AUTO-POWERON: Encendiendo $VM_NAME en $ESXI_HOST:$ESXI_PORT"
+
+          # Obtener ID de la VM
+          VM_ID=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null | grep "$VM_NAME" | awk '{print $1}')
+
+          if [ -z "$VM_ID" ]; then
+              echo "ERROR: VM '$VM_NAME' no encontrada en ESXi"
+              echo "VMs disponibles:"
+              sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null
+              exit 1
+          fi
+
+          echo "VM '$VM_NAME' tiene ID: $VM_ID"
+          echo "Ejecutando power.on..."
+
+          # Encender la VM
+          sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/power.on $VM_ID"
+
+          echo "OK - VM должна включиться"
+        mode: "0755"
+        force: yes
+
+    - name: "TEST: Listar VMs en ESXi"
+      ansible.builtin.shell: |
+        echo "=== CONECTANDO A ESXi {{ esxi_host }}:{{ esxi_port }} ==="
+        sshpass -p '{{ esxi_pass }}' ssh -p {{ esxi_port }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          root@{{ esxi_host }} "vim-cmd vmsvc/getallvms" 2>&1
+      register: esxi_result
+      failed_when: false
+
+    - name: "RESULTADO"
+      ansible.builtin.debug:
+        msg:
+          - "Script creado: /usr/local/bin/vm-poweron.sh"
+          - ""
+          - "Para probar manualmente:"
+          - "  /usr/local/bin/vm-poweron.sh vm-web01"
+          - ""
+          - "Resultado de conexion ESXi:"
+          - "{{ esxi_result.stdout_lines }}"

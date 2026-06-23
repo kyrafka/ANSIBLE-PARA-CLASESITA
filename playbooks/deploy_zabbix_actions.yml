@@ -1,0 +1,158 @@
+---
+# ============================================================================
+# deploy_zabbix_actions.yml
+# Crea actions de Zabbix usando Python para mayor confiabilidad
+# ============================================================================
+
+- name: "Deploy Zabbix Actions"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+
+  tasks:
+    - name: "CREAR ACTIONS VIA PYTHON"
+      ansible.builtin.shell: |
+        python3 << 'PYEOF'
+import json
+import urllib.request
+import urllib.error
+
+# Configuracion
+ZBX_URL = "http://localhost/zabbix/api_jsonrpc.php"
+ZBX_USER = "Admin"
+ZBX_PASS = "Zabbix123"
+
+# Funcion para hacer llamadas API
+def api_call(method, params, auth=None):
+    data = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    }
+    if auth:
+        data["auth"] = auth
+    req = urllib.request.Request(
+        ZBX_URL,
+        data=json.dumps(data).encode('utf-8'),
+        headers={"Content-Type": "application/json-rpc"}
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        return {"error": str(e)}
+
+# Login
+print("=== LOGIN ===")
+result = api_call("user.login", {"username": ZBX_USER, "password": ZBX_PASS})
+print(result)
+auth = result.get("result", "")
+
+if not auth:
+    print("ERROR: No se pudo hacer login")
+    exit(1)
+
+print(f"Login OK, token: {auth[:20]}...")
+
+# Verificar actions actuales
+print("\n=== ACTIONS ACTUALES ===")
+result = api_call("action.get", {"filter": {"eventsource": 0}}, auth)
+actions = result.get("result", [])
+print(f"Actions existentes: {len(actions)}")
+for a in actions:
+    print(f"  - {a.get('name')} (id: {a.get('actionid')})")
+
+# Actions a crear
+actions_to_create = [
+    {
+        "name": "Auto-Restart Apache",
+        "command": "systemctl restart apache2"
+    },
+    {
+        "name": "Auto-Restart MariaDB",
+        "command": "systemctl restart mariadb"
+    },
+    {
+        "name": "Auto-Restart Postfix",
+        "command": "systemctl restart postfix"
+    },
+    {
+        "name": "Auto-Restart Dovecot",
+        "command": "systemctl restart dovecot"
+    },
+    {
+        "name": "Auto-Restart Asterisk",
+        "command": "systemctl restart asterisk"
+    },
+    {
+        "name": "Auto-Restart Samba",
+        "command": "systemctl restart smbd"
+    },
+    {
+        "name": "AUTO-POWERON: VM apagada",
+        "command": "/usr/local/bin/vm-poweron.sh {HOST.NAME}"
+    }
+]
+
+print("\n=== CREANDO ACTIONS ===")
+for action in actions_to_create:
+    # Verificar si ya existe
+    exists = any(a.get("name") == action["name"] for a in actions)
+    if exists:
+        print(f"  [YA EXISTE] {action['name']}")
+        continue
+    
+    params = {
+        "name": action["name"],
+        "eventsource": 0,
+        "status": 0,
+        "esc_period": "2m",
+        "def_shortdata": f"{action['name']} - Auto-recovery",
+        "def_longdata": f"{action['name']}\nHost: {{HOST.NAME}}\nTime: {{EVENT.TIME}}",
+        "conditions": [],
+        "operations": [
+            {
+                "operationtype": 1,
+                "esc_period": "0",
+                "esc_step_from": 1,
+                "esc_step_to": 1,
+                "opcommand": {
+                    "command": action["command"],
+                    "type": 0,
+                    "execute_on": 1
+                },
+                "opcommand_hst": {"hostid": 0}
+            }
+        ]
+    }
+    
+    result = api_call("action.create", params, auth)
+    
+    if "result" in result:
+        print(f"  [CREADA] {action['name']} -> {result['result']}")
+    else:
+        print(f"  [ERROR] {action['name']}: {result.get('error', result)}")
+
+# Verificar final
+print("\n=== ACTIONS FINALES ===")
+result = api_call("action.get", {"filter": {"eventsource": 0}}, auth)
+actions = result.get("result", [])
+print(f"Total actions: {len(actions)}")
+for a in actions:
+    print(f"  - {a.get('name')}")
+
+print("\n=== DONE ===")
+PYEOF
+      register: create_result
+
+    - name: "MOSTRAR RESULTADO"
+      ansible.builtin.debug:
+        msg: "{{ create_result.stdout_lines }}"
