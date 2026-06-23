@@ -141,7 +141,7 @@ data = json.load(sys.stdin)
 result = data.get('result', [])
 for a in result:
     status = 'DISABLED' if a.get('status') == '1' else 'ENABLED'
-    print(f'  [{status}] {a[\"name\"]}')
+    print('  [' + status + '] ' + a['name'])
 "
         
         echo ""
@@ -164,7 +164,7 @@ result = data.get('result', [])
 priorities = ['N/A', 'Info', 'Warning', 'Average', 'High', 'Disaster']
 for t in result[:10]:
     p = priorities[t.get('priority', 0)]
-    print(f\"  [{p}] {t['description'][:60]}\")
+    print('  [' + p + '] ' + t['description'][:60])
 "
         
         echo ""
