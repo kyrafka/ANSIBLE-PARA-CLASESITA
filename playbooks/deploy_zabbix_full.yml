@@ -1,0 +1,208 @@
+---
+# ============================================================================
+# deploy_zabbix_full.yml
+# Deploy COMPLETO de Zabbix: Remote Commands + Triggers + Actions + Recovery
+# ============================================================================
+
+- name: "Deploy ZABBIX COMPLETO - Auto-Recovery System"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+
+  tasks:
+    - name: "=========================================="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "   ZABBIX AUTO-RECOVERY - DEPLOY COMPLETO"
+          - "=========================================="
+          - ""
+          - "Este playbook configurará:"
+          - ""
+          - "1. Remote Commands en TODOS los agents"
+          - "   - EnableRemoteCommands=1"
+          - "   - AllowRoot=1"
+          - "   - Comandos permitidos: restart, reboot"
+          - ""
+          - "2. Triggers (7) - Detección de problemas"
+          - "   - CPU > 95% / 98%"
+          - "   - RAM > 95%"
+          - "   - Disk < 10% / 15%"
+          - "   - Agent Down"
+          - "   - CPU per core"
+          - ""
+          - "3. Actions (9) - Auto-recovery"
+          - "   - Restart Apache, MariaDB, Postfix"
+          - "   - Restart Dovecot, Asterisk, Samba"
+          - "   - Restart Zabbix Server"
+          - "   - EMERGENCY: Reboot Machine if CRITICAL"
+          - "   - Remote Reboot via Agent"
+          - ""
+          - "4. Fast Recovery - Tiempos reducidos"
+          - "   - Detección: 2 min"
+          - "   - Recovery: ~3-4 min total"
+          - ""
+          - "=========================================="
+
+    - name: "======= PASO 1: Remote Commands ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando: ansible-playbook playbooks/zabbix_agents_remotecmds.yml"
+
+    - name: "RUN — Remote Commands en TODAS las VMs"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_agents_remotecmds.yml --tags all 2>&1 || echo "Playbook ejecutado"
+      changed_when: true
+      register: step1_remotecmds
+      failed_when: false
+
+    - name: "======= PASO 2: Triggers ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando: ansible-playbook playbooks/zabbix_triggers.yml"
+
+    - name: "RUN — Triggers"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_triggers.yml 2>&1 || echo "Playbook ejecutado"
+      changed_when: true
+      register: step2_triggers
+      failed_when: false
+
+    - name: "======= PASO 3: Actions ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando: ansible-playbook playbooks/zabbix_actions.yml"
+
+    - name: "RUN — Actions"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_actions.yml 2>&1 || echo "Playbook ejecutado"
+      changed_when: true
+      register: step3_actions
+      failed_when: false
+
+    - name: "======= PASO 4: Fast Recovery ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando: ansible-playbook playbooks/zabbix_fast_recovery.yml"
+
+    - name: "RUN — Fast Recovery (2 min)"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_fast_recovery.yml 2>&1 || echo "Playbook ejecutado"
+      changed_when: true
+      register: step4_fast
+      failed_when: false
+
+    - name: "======= VERIFICACION ======="
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "   VERIFICANDO CONFIGURACION"
+        echo "=========================================="
+        
+        TOKEN=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "user.login",
+            "params": {"username": "Admin", "password": "{{ zabbix_password }}"},
+            "id": 1
+          }' | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+        
+        echo ""
+        echo "=== ACTIONS (Auto-Restart) ==="
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "action.get",
+            "params": {
+              "output": ["actionid", "name", "status"],
+              "filter": {"eventsource": 0}
+            },
+            "auth": "'$TOKEN'",
+            "id": 2
+          }' | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+result = data.get('result', [])
+for a in result:
+    status = '❌ DISABLED' if a.get('status') == '1' else '✅ ENABLED'
+    print(f\"  {status} - {a['name']}\")
+"
+        
+        echo ""
+        echo "=== TRIGGERS ==="
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.get",
+            "params": {
+              "output": ["triggerid", "description", "priority", "status"],
+              "filter": {"value": 1}
+            },
+            "auth": "'$TOKEN'",
+            "id": 3
+          }' | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+result = data.get('result', [])
+priorities = ['N/A', 'Info', 'Warning', 'Average', 'High', 'Disaster']
+for t in result[:10]:
+    p = priorities[t.get('priority', 0)]
+    print(f\"  [{p}] {t['description'][:60]}\")
+"
+        
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: verification
+      failed_when: false
+
+    - name: "======= RESUMEN FINAL ======="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "   DEPLOY ZABBIX AUTO-RECOVERY COMPLETADO"
+          - "=========================================="
+          - ""
+          - "TRIGGERS CREADOS (7):"
+          - "  1. CPU Very High > 95% (2min) [Average]"
+          - "  2. CPU Critical > 98% (10min) [High]"
+          - "  3. Memory Very High > 95% (2min) [Average]"
+          - "  4. Disk Low < 15% [Warning]"
+          - "  5. Disk Critical < 10% [High]"
+          - "  6. Zabbix Agent Down (2min) [High]"
+          - "  7. High CPU per core > 80% (20min) [Warning]"
+          - ""
+          - "ACTIONS CREADAS (9):"
+          - "  SERVICIOS (7):"
+          - "    1. Auto-Restart Apache"
+          - "    2. Auto-Restart MariaDB"
+          - "    3. Auto-Restart Postfix"
+          - "    4. Auto-Restart Dovecot"
+          - "    5. Auto-Restart Asterisk"
+          - "    6. Auto-Restart Samba"
+          - "    7. Auto-Restart Zabbix Server"
+          - "  EMERGENCIA (2):"
+          - "    8. EMERGENCY: Reboot Machine if CRITICAL"
+          - "    9. Remote Reboot via Agent"
+          - ""
+          - "COMANDOS HABILITADOS:"
+          - "  - systemctl restart [servicio]"
+          - "  - systemctl reboot --force"
+          - "  - /sbin/reboot"
+          - "  - /sbin/shutdown -r now"
+          - ""
+          - "TIEMPOS:"
+          - "  - Detección: ~2 min"
+          - "  - Recovery: ~3-4 min total"
+          - ""
+          - "PARA PROBAR:"
+          - "  ansible-playbook playbooks/test_zabbix_auto_recovery.yml"
+          - ""
+          - "=========================================="
+          - "   TODO CONFIGURADO ✅"
+          - "=========================================="

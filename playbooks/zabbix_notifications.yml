@@ -1,21 +1,20 @@
 ---
 # ============================================================================
 # zabbix_notifications.yml
-# Configura Media Type SMTP hacia SMTP2GO y Notificaciones Zabbix
+# Configura Notificaciones Zabbix via EMAIL LOCAL (Postfix en vm-services01)
+# No usa SMTP externo, envía directo a localhost
 # ============================================================================
 
-- name: "Configurar Notificaciones Zabbix via SMTP2GO"
+- name: "Configurar Notificaciones Zabbix via EMAIL LOCAL"
   hosts: localhost
   connection: local
   become: true
 
   vars:
     zabbix_password: "Zabbix123"
-    smtp_server: "mail.smtp2go.com"
-    smtp_port: "2525"
-    smtp_user: "alertas.ZyA.Sede-Lima"
-    smtp_pass: "123456"
-    smtp_from: "Zabbix Alerts <alertas.ZyA.Sede-Lima@smtp2go.com>"
+    # Email local via Postfix en vm-services01
+    smtp_server: "192.168.13.11"
+    smtp_port: "25"
     alert_email: "josedario.zuniga@gmail.com"
 
   tasks:
@@ -52,7 +51,7 @@
       changed_when: false
       register: login_result
 
-    - name: "NOTIF — Crear Media Type SMTP2GO"
+    - name: "NOTIF — Crear Media Type Email LOCAL"
       ansible.builtin.shell: |
         TOKEN=$(cat /tmp/zabbix_token 2>/dev/null || echo "")
         if [ -z "$TOKEN" ]; then
@@ -60,6 +59,7 @@
           exit 1
         fi
 
+        # Crear Media Type "Email" (type 0) que usa sendmail local
         RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d "{
@@ -67,11 +67,11 @@
             \"method\": \"mediatype.create\",
             \"params\": {
               \"type\": 0,
-              \"name\": \"SMTP2GO\",
+              \"name\": \"Email LOCAL\",
               \"smtp_server\": \"{{ smtp_server }}\",
               \"smtp_port\": {{ smtp_port }},
-              \"smtp helo\": \"zabbix.lima.aj\",
-              \"smtp_email\": \"{{ smtp_from }}\",
+              \"smtp_helo\": \"zabbix.lima.aj\",
+              \"smtp_email\": \"zabbix@localhost\",
               \"content_type\": 1,
               \"messages_dir\": \"\"
             },
@@ -79,7 +79,7 @@
             \"id\": 2
           }")
         echo "$RESULT"
-        echo "$RESULT" | grep -o '"mediatypeids":\[[0-9]*\]' || echo "Creado o ya existe"
+        echo "$RESULT" | grep -o '"mediatypeids":\[[0-9]*\]' || echo "Media type creado o ya existe"
       changed_when: false
       register: mediatype_create
 
@@ -92,7 +92,7 @@
             \"jsonrpc\": \"2.0\",
             \"method\": \"mediatype.get\",
             \"params\": {
-              \"filter\": {\"name\": [\"SMTP2GO\"]}
+              \"filter\": {\"name\": [\"Email LOCAL\"]}
             },
             \"auth\": \"$TOKEN\",
             \"id\": 3
@@ -243,10 +243,9 @@
           - "=========================================="
           - "NOTIFICACIONES CONFIGURADAS"
           - "=========================================="
-          - "SMTP Server: {{ smtp_server }}:{{ smtp_port }}"
-          - "Usuario SMTP: {{ smtp_user }}"
+          - "SMTP Server: localhost:25 (Postfix local)"
           - "Email destino: {{ alert_email }}"
-          - "Tipo: SMTP2GO"
+          - "Tipo: Email LOCAL"
           - ""
           - "Espera recibir:"
           - "- Alertas cuando CPU>95% x 15min"

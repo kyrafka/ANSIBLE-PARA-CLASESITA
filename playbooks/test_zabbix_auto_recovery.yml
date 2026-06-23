@@ -1,0 +1,104 @@
+---
+# ============================================================================
+# test_zabbix_auto_recovery.yml
+# Prueba el auto-restart y reboot de Zabbix
+# ATENCIÓN: Algunas pruebas reinician máquinas!
+# ============================================================================
+
+- name: "Test Zabbix Auto-Recovery"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    test_service: "apache2"
+    test_vm_ip: ""
+
+  tasks:
+    - name: "TEST — Seleccionar VM para probar"
+      ansible.builtin.pause:
+        prompt: |
+          ========================================
+          TEST DE AUTO-RECOVERY DE ZABBIX
+          ========================================
+          
+          Opciones de test:
+          
+          1. Probar AUTO-RESTART servicio (SEGuro)
+             - Detiene un servicio
+             - Zabbix lo reinicia automáticamente
+             - Sin riesgo de reboot de máquina
+             
+          2. Probar REBOOT de máquina (PELIGROSO)
+             - Detiene servicios críticos
+             - Zabbix puede reiniciar la máquina
+             - Solo hacer en VMs de TEST
+          
+          Ingresa el número de opción (1 o 2):
+        echo: yes
+      register: test_option
+
+    - name: "TEST — Seleccionar VM destino"
+      ansible.builtin.debug:
+        msg: |
+          VMs disponibles para test:
+          
+          1. vm-web01 (192.168.11.11) - Apache
+          2. vm-services01 (192.168.13.11) - Postfix/MariaDB
+          3. vm-storage01 (192.168.14.11) - Samba
+          4. vm-voip01 (192.168.15.11) - Asterisk
+          5. vm-monitor01 (192.168.17.11) - Zabbix
+          
+          ¿Cuál VM quieres probar?
+
+    - name: "TEST — Detener servicio apache2 en vm-web01"
+      when: "test_option.user_input == '1'"
+      block:
+        - name: "TEST — Conectar via SSH y detener apache2"
+          ansible.builtin.shell: |
+            echo "=========================================="
+            echo "DETENIENDO APACHE2 EN vm-web01"
+            echo "=========================================="
+            echo "Simulando caída de servicio..."
+            echo ""
+            echo "Este servicio será reiniciado por Zabbix"
+            echo "en aproximadamente 2-4 minutos."
+            echo ""
+            echo "Verificá en Zabbix Web UI:"
+            echo "1. Monitor → Problems"
+            echo "2. deberías ver 'Apache DOWN'"
+            echo ""
+            echo "Después de ~3 min debería auto-reiniciarse."
+            echo "=========================================="
+          changed_when: true
+          register: stop_apache
+
+        - name: "TEST — Ejecutar stop de apache2 via SSH"
+          ansible.builtin.shell: |
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@192.168.11.11 \
+              "sudo systemctl stop apache2 && echo 'APACHE DETENIDO EXITOSAMENTE'" \
+              2>&1 || echo "Error al detener apache (SSH puede no funcionar)"
+          changed_when: true
+          register: ssh_stop_result
+
+    - name: "TEST — Mostrar resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "TEST INICIADO"
+          - "=========================================="
+          - "Servicio detenido: apache2"
+          - "VM: vm-web01 (192.168.11.11)"
+          - ""
+          - "Ahora esperá ~3-4 minutos"
+          - ""
+          - "Verificá en:"
+          - "1. Zabbix: Monitor → Problems"
+          - "2. SSH: systemctl status apache2"
+          - ""
+          - "El servicio debería auto-reiniciarse"
+          - "por la acción 'Auto-Restart Apache if down'"
+          - "=========================================="
+          - ""
+          - "Detalles SSH:"
+          - "{{ ssh_stop_result.stdout_lines }}"

@@ -385,6 +385,102 @@ with open('/tmp/zabbix_hosts.json', 'w') as f:
       changed_when: false
       register: action_zabbix_server
 
+    - name: "ACT — Crear Action: EMERGENCY REBOOT (casos críticos)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        # Esta action reinicia la MAQUINA completa si:
+        # - CPU crítico por 5 min (>98%)
+        # - Agente Zabbix down por 10 min
+        # - Memoria crítica por 5 min (>98%)
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "action.create",
+            "params": {
+              "name": "EMERGENCY: Reboot Machine if CRITICAL",
+              "eventsource": 0,
+              "status": 0,
+              "esc_period": "1m",
+              "def_shortdata": "EMERGENCY REBOOT on {HOST.NAME}",
+              "def_longdata": "CRITICAL condition on {HOST.NAME}. System will reboot automatically.\n\nReason: {TRIGGER.NAME}\nValue: {ITEM.LASTVALUE1}\nTime: {EVENT.TIME}\nDate: {EVENT.DATE}",
+              "conditions": [
+                {"conditiontype": 4, "operator": 5, "value": "CRITICAL"}
+              ],
+              "operations": [
+                {
+                  "operationtype": 6,
+                  "esc_period": "0",
+                  "esc_step_from": 1,
+                  "esc_step_to": 1
+                },
+                {
+                  "operationtype": 1,
+                  "esc_period": "0",
+                  "esc_step_from": 1,
+                  "esc_step_to": 1,
+                  "opcommand": {
+                    "command": "systemctl reboot --force",
+                    "type": 0,
+                    "execute_on": 1
+                  },
+                  "opcommand_hst": {
+                    "hostid": 0
+                  }
+                }
+              ]
+            },
+            "auth": "'$TOKEN'",
+            "id": 17
+          }'
+        echo ""
+      changed_when: false
+      register: action_reboot
+
+    - name: "ACT — Crear Action: Remote Reboot via Zabbix Agent"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        # Alternative: usar el agent para ejecutar reboot
+        # Esta es para cuando necesitas más control
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "action.create",
+            "params": {
+              "name": "Remote Reboot via Agent",
+              "eventsource": 0,
+              "status": 0,
+              "esc_period": "2m",
+              "def_shortdata": "Remote Reboot triggered on {HOST.NAME}",
+              "def_longdata": "Remote reboot initiated by Zabbix.\n\nHost: {HOST.NAME}\nTime: {EVENT.TIME}\nDate: {EVENT.DATE}",
+              "conditions": [],
+              "operations": [
+                {
+                  "operationtype": 1,
+                  "esc_period": "0",
+                  "esc_step_from": 1,
+                  "esc_step_to": 1,
+                  "opcommand": {
+                    "command": "/sbin/reboot",
+                    "type": 0,
+                    "execute_on": 1
+                  },
+                  "opcommand_hst": {
+                    "hostid": 0
+                  }
+                }
+              ]
+            },
+            "auth": "'$TOKEN'",
+            "id": 18
+          }'
+        echo ""
+      changed_when: false
+      register: action_remote_reboot
+
     - name: "ACT — Listar Actions creadas"
       ansible.builtin.shell: |
         TOKEN=$(cat /tmp/zabbix_token)
@@ -417,6 +513,7 @@ for a in result:
           - "=========================================="
           - "ACTIONS DE AUTO-RESTART CREADAS"
           - "=========================================="
+          - "SERVICIOS:"
           - "1. Auto-Restart Apache if down"
           - "2. Auto-Restart MariaDB if down"
           - "3. Auto-Restart Postfix if down"
@@ -424,6 +521,10 @@ for a in result:
           - "5. Auto-Restart Asterisk if down"
           - "6. Auto-Restart Samba if down"
           - "7. Auto-Restart Zabbix Server if down"
+          - ""
+          - "EMERGENCIA (REBOOT MAQUINA):"
+          - "8. EMERGENCY: Reboot Machine if CRITICAL"
+          - "9. Remote Reboot via Agent"
           - ""
           - "NOTA: El playbook zabbix_agents_remotecmds.yml"
           - "debe ejecutarse PRIMERO en cada VM para que"

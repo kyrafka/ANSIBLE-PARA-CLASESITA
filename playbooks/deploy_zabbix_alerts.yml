@@ -11,11 +11,8 @@
 
   vars:
     zabbix_password: "Zabbix123"
-    smtp_server: "mail.smtp2go.com"
-    smtp_port: "2525"
-    smtp_user: "alertas.ZyA.Sede-Lima"
-    smtp_pass: "123456"
-    smtp_from: "Zabbix Alerts <alertas.ZyA.Sede-Lima@smtp2go.com>"
+    smtp_server: "localhost"
+    smtp_port: "25"
     alert_email: "josedario.zuniga@gmail.com"
 
   tasks:
@@ -129,8 +126,9 @@
           - "DEPLOY COMPLETADO"
           - "=========================================="
           - ""
-          - "MEDIO: SMTP2GO (mail.smtp2go.com:2525)"
-          - "EMAIL: {{ alert_email }}"
+          - "MEDIO: Email LOCAL (Postfix)"
+          - "SMTP: localhost:25"
+          - "EMAIL DESTINO: {{ alert_email }}"
           - ""
           - "TRIGGERS CREADOS:"
           - "- CPU Very High > 95% x 15min"
@@ -146,10 +144,8 @@
           - "- Dovecot, Asterisk, Samba"
           - "- Zabbix Server"
           - ""
-          - "ESTIMADO: ~20 emails/dia maximo"
-          - ""
           - "NOTA: Verificar en Zabbix Web UI:"
           - "1. Configuration → Actions → Actions for problems"
-          - "2. Administration → Media types → SMTP2GO"
+          - "2. Administration → Media types → Email LOCAL"
           - "3. User Admin → Admin user → Media"
           - "=========================================="

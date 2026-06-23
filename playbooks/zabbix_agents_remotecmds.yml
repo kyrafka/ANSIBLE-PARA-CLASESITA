@@ -61,17 +61,28 @@
         dest: /etc/zabbix/zabbix_agentd.conf.d/remote_commands.conf
         content: |
           # Comandos permitidos para remote execution
-          # Formato: AllowKey=system.run[comando]
+          # SERVICIOS
           AllowKey=system.run[/usr/bin/systemctl restart apache2]
           AllowKey=system.run[/usr/bin/systemctl restart mariadb]
           AllowKey=system.run[/usr/bin/systemctl restart postfix]
           AllowKey=system.run[/usr/bin/systemctl restart dovecot]
           AllowKey=system.run[/usr/bin/systemctl restart asterisk]
           AllowKey=system.run[/usr/bin/systemctl restart smbd]
+          AllowKey=system.run[/usr/bin/systemctl restart nfs-server]
           AllowKey=system.run[/usr/bin/systemctl restart zabbix-server]
           AllowKey=system.run[/usr/bin/systemctl restart keepalived]
           AllowKey=system.run[/usr/bin/systemctl restart networking]
+          AllowKey=system.run[/usr/bin/systemctl restart frr]
+          
+          # EMERGENCIA - REBOOT
           AllowKey=system.run[/sbin/reboot]
+          AllowKey=system.run[/sbin/shutdown -r now]
+          AllowKey=system.run[/usr/bin/systemctl reboot --force]
+          AllowKey=system.run[/bin/systemctl reboot --force]
+          
+          # POWER OFF
+          AllowKey=system.run[/sbin/poweroff]
+          AllowKey=system.run[/usr/bin/systemctl poweroff]
         mode: "0644"
         force: yes
 
