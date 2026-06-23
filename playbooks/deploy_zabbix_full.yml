@@ -135,13 +135,13 @@
             },
             "auth": "'$TOKEN'",
             "id": 2
-          }' | python3 -c "
+}' | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 result = data.get('result', [])
 for a in result:
-    status = '❌ DISABLED' if a.get('status') == '1' else '✅ ENABLED'
-    print(f\"  {status} - {a['name']}\")
+    status = 'DISABLED' if a.get('status') == '1' else 'ENABLED'
+    print(f'  [{status}] {a[\"name\"]}')
 "
         
         echo ""
@@ -226,5 +226,5 @@ for t in result[:10]:
           - "  3. Zabbix la encenderá automáticamente"
           - ""
           - "=========================================="
-          - "   TODO CONFIGURADO ✅"
+          - "   TODO CONFIGURADO [OK]"
           - "=========================================="
