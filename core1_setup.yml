@@ -268,6 +268,15 @@
         done
         echo "Bridges bajados y flush done"
 
+    - name: "PRE — Destruir vXX-int existentes antes de netplan (limpieza forzada)"
+      ansible.builtin.shell: |
+        for vlan in 10 20 21 30 40 50 60 70 999; do
+          ip link delete v${vlan}-int 2>/dev/null && echo "Eliminada v${vlan}-int" || echo "v${vlan}-int no existe"
+        done
+        echo "Limpieza de vXX-int completada"
+      changed_when: true
+      failed_when: false
+
     - name: "POST — Regenerar y aplicar netplan limpio"
       ansible.builtin.shell: |
         netplan generate
@@ -275,6 +284,15 @@
         sleep 3
         echo "Netplan LIMPIO aplicado correctamente"
       changed_when: true
+
+    - name: "POST — Eliminar vXX-int residual del interlink (por si netplan las recreo)"
+      ansible.builtin.shell: |
+        for vlan in 10 20 21 30 40 50 60 70 999; do
+          ip link delete v${vlan}-int 2>/dev/null && echo "Eliminada v${vlan}-int" || echo "v${vlan}-int no existe"
+        done
+        echo "Limpieza residual completada"
+      changed_when: true
+      failed_when: false
 
     - name: "POST — Quitar vXX-int de bridges (STP solo en trunks hacia pfSenses)"
       ansible.builtin.shell: |
