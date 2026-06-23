@@ -1,0 +1,155 @@
+---
+# ============================================================================
+# deploy_zabbix_alerts.yml
+# Orchestrator: Ejecuta TODOS los playbooks de alertas en orden
+# ============================================================================
+
+- name: "Deploy Zabbix Alerts & Auto-Restart (Full Stack)"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+    smtp_server: "mail.smtp2go.com"
+    smtp_port: "2525"
+    smtp_user: "alertas.ZyA.Sede-Lima"
+    smtp_pass: "123456"
+    smtp_from: "Zabbix Alerts <alertas.ZyA.Sede-Lima@smtp2go.com>"
+    alert_email: "josedario.zuniga@gmail.com"
+
+  tasks:
+    - name: "======= ORQUESTADOR ZABBIX ALERTS ======="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "DEPLOY ZABBIX ALERTS & AUTO-RESTART"
+          - "=========================================="
+          - ""
+          - "Orden de ejecución:"
+          - "1. zabbix_agents_remotecmds.yml"
+          - "   → Habilita remote commands en agents"
+          - "2. zabbix_notifications.yml"
+          - "   → Configura SMTP2GO + medio email"
+          - "3. zabbix_triggers.yml"
+          - "   → Crea triggers conservadores"
+          - "4. zabbix_actions.yml"
+          - "   → Crea acciones de auto-restart"
+          - ""
+          - "Espera recibir ~20 emails/día máximo"
+          - "=========================================="
+
+    - name: "======= PASO 1: Habilitar Remote Commands ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando: ansible-playbook zabbix_agents_remotecmds.yml"
+
+    - name: "RUN — Remote Commands en vm-monitor01"
+      ansible.builtin.shell: |
+        echo "=== Remote Commands para vm-monitor01 ==="
+        sshpass -p 'ubuntu' ssh -o StrictHostKeyChecking=no ubuntu@192.168.17.11 \
+          'sudo bash -c "echo EnableRemoteCommands=1 >> /etc/zabbix/zabbix_agentd.conf && systemctl restart zabbix-agent"' \
+          2>&1 || echo "vm-monitor01: SSH o config ya existe"
+      changed_when: false
+      failed_when: false
+
+    - name: "RUN — Remote Commands en vm-services01"
+      ansible.builtin.shell: |
+        echo "=== Remote Commands para vm-services01 ==="
+        sshpass -p 'ubuntu' ssh -o StrictHostKeyChecking=no ubuntu@192.168.13.11 \
+          'sudo bash -c "echo EnableRemoteCommands=1 >> /etc/zabbix/zabbix_agentd.conf && systemctl restart zabbix-agent"' \
+          2>&1 || echo "vm-services01: SSH o config ya existe"
+      changed_when: false
+      failed_when: false
+
+    - name: "RUN — Remote Commands en vm-storage01"
+      ansible.builtin.shell: |
+        echo "=== Remote Commands para vm-storage01 ==="
+        sshpass -p 'ubuntu' ssh -o StrictHostKeyChecking=no ubuntu@192.168.14.11 \
+          'sudo bash -c "echo EnableRemoteCommands=1 >> /etc/zabbix/zabbix_agentd.conf && systemctl restart zabbix-agent"' \
+          2>&1 || echo "vm-storage01: SSH o config ya existe"
+      changed_when: false
+      failed_when: false
+
+    - name: "RUN — Remote Commands en vm-web01"
+      ansible.builtin.shell: |
+        echo "=== Remote Commands para vm-web01 ==="
+        sshpass -p 'ubuntu' ssh -o StrictHostKeyChecking=no ubuntu@192.168.11.11 \
+          'sudo bash -c "echo EnableRemoteCommands=1 >> /etc/zabbix/zabbix_agentd.conf && systemctl restart zabbix-agent"' \
+          2>&1 || echo "vm-web01: SSH o config ya existe"
+      changed_when: false
+      failed_when: false
+
+    - name: "RUN — Remote Commands en vm-voip01"
+      ansible.builtin.shell: |
+        echo "=== Remote Commands para vm-voip01 ==="
+        sshpass -p 'ubuntu' ssh -o StrictHostKeyChecking=no ubuntu@192.168.15.11 \
+          'sudo bash -c "echo EnableRemoteCommands=1 >> /etc/zabbix/zabbix_agentd.conf && systemctl restart zabbix-agent"' \
+          2>&1 || echo "vm-voip01: SSH o config ya existe"
+      changed_when: false
+      failed_when: false
+
+    - name: "RUN — Remote Commands en vm-dc01"
+      ansible.builtin.shell: |
+        echo "=== Remote Commands para vm-dc01 ==="
+        sshpass -p 'ubuntu' ssh -o StrictHostKeyChecking=no ubuntu@192.168.10.11 \
+          'sudo bash -c "echo EnableRemoteCommands=1 >> /etc/zabbix/zabbix_agentd.conf && systemctl restart zabbix-agent"' \
+          2>&1 || echo "vm-dc01: SSH o config ya existe"
+      changed_when: false
+      failed_when: false
+
+    - name: "======= PASO 2-4: Configurar Zabbix Server (API) ======="
+      ansible.builtin.debug:
+        msg: "Ejecutando configuración via API Zabbix..."
+
+    - name: "RUN — Configurar Notificaciones SMTP2GO"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_notifications.yml
+      register: run_notifications
+      failed_when: false
+
+    - name: "RUN — Crear Triggers"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_triggers.yml
+      register: run_triggers
+      failed_when: false
+
+    - name: "RUN — Crear Actions"
+      ansible.builtin.shell: |
+        cd /home/ubuntu/ANSIBLE-PARA-CLASESITA
+        ansible-playbook playbooks/zabbix_actions.yml
+      register: run_actions
+      failed_when: false
+
+    - name: "======= RESUMEN FINAL ======="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "DEPLOY COMPLETADO"
+          - "=========================================="
+          - ""
+          - "MEDIO: SMTP2GO (mail.smtp2go.com:2525)"
+          - "EMAIL: {{ alert_email }}"
+          - ""
+          - "TRIGGERS CREADOS:"
+          - "- CPU Very High > 95% x 15min"
+          - "- CPU Critical > 98% x 10min"
+          - "- Memory Very High > 95% x 15min"
+          - "- Disk Low < 15% free"
+          - "- Disk Critical < 10% free"
+          - "- Zabbix Agent Down 15min"
+          - "- High CPU per core > 80% x 20min"
+          - ""
+          - "ACTIONS DE AUTO-RESTART:"
+          - "- Apache, MariaDB, Postfix"
+          - "- Dovecot, Asterisk, Samba"
+          - "- Zabbix Server"
+          - ""
+          - "ESTIMADO: ~20 emails/dia maximo"
+          - ""
+          - "NOTA: Verificar en Zabbix Web UI:"
+          - "1. Configuration → Actions → Actions for problems"
+          - "2. Administration → Media types → SMTP2GO"
+          - "3. User Admin → Admin user → Media"
+          - "=========================================="

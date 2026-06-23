@@ -1,0 +1,248 @@
+---
+# ============================================================================
+# zabbix_triggers.yml
+# Crea triggers personalizados con umbrales CONSERVADORES
+# Para NO exceeder 100 emails/dia
+# ============================================================================
+
+- name: "Crear Triggers Zabbix con Umbrales Conservadores"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    zabbix_password: "Zabbix123"
+
+  tasks:
+    - name: "TRIG — Obtener token Zabbix"
+      ansible.builtin.shell: |
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "user.login",
+            "params": {"username": "Admin", "password": "{{ zabbix_password }}"},
+            "id": 1
+          }')
+        TOKEN=$(echo "$RESULT" | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+        echo "$TOKEN" > /tmp/zabbix_token
+        echo "Token obtenido: ${TOKEN:0:20}..."
+      changed_when: false
+      register: login
+
+    - name: "TRIG — Obtener Template Linux ID"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "template.get",
+            "params": {"filter": {"host": ["Linux by Zabbix agent"]}},
+            "auth": "'$TOKEN'",
+            "id": 2
+          }' | tee /tmp/template_info.json
+        TEMPLATE_ID=$(cat /tmp/template_info.json | grep -o '"templateid":"[^"]*"' | head -1 | cut -d'"' -f4)
+        echo "TEMPLATE_ID=$TEMPLATE_ID"
+        echo "$TEMPLATE_ID" > /tmp/template_id
+      changed_when: false
+      register: get_template
+
+    - name: "TRIG — Crear trigger: CPU Very High (>95% por 15 min)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        TEMPLATE_ID=$(cat /tmp/template_id)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "CPU Very High on {HOST.NAME} > 95% for 15 min",
+              "expression": "avg(/Linux by Zabbix agent/system.cpu.util,15m)>95",
+              "priority": 4,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 10
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_cpu_high
+
+    - name: "TRIG — Crear trigger: CPU Critical (>98% por 10 min)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "CPU Critical on {HOST.NAME} > 98% for 10 min",
+              "expression": "avg(/Linux by Zabbix agent/system.cpu.util,10m)>98",
+              "priority": 5,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 11
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_cpu_critical
+
+    - name: "TRIG — Crear trigger: Memory Very High (>95% por 15 min)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "Memory Very High on {HOST.NAME} > 95% for 15 min",
+              "expression": "last(/Linux by Zabbix agent/vm.memory.size[pused])>95",
+              "priority": 4,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 12
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_mem_high
+
+    - name: "TRIG — Crear trigger: Disk Space Low (< 15% free)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "Disk Space Low on {HOST.NAME} - Less than 15% free",
+              "expression": "last(/Linux by Zabbix agent/vfs.fs.size[/,pfree])<15",
+              "priority": 3,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 13
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_disk_low
+
+    - name: "TRIG — Crear trigger: Disk Space Critical (< 10% free)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "Disk Space Critical on {HOST.NAME} - Less than 10% free",
+              "expression": "last(/Linux by Zabbix agent/vfs.fs.size[/,pfree])<10",
+              "priority": 4,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 14
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_disk_critical
+
+    - name: "TRIG — Crear trigger: Zabbix Agent Down (15 min)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "Zabbix Agent is not responding on {HOST.NAME} for 15 min",
+              "expression": "nodata(/Linux by Zabbix agent/agent.ping,15m)=1",
+              "priority": 4,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 15
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_agent_down
+
+    - name: "TRIG — Crear trigger: High CPU Load (per core > 80% 20min)"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+
+        RESULT=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.create",
+            "params": {
+              "description": "High CPU per core on {HOST.NAME} > 80% for 20 min",
+              "expression": "max(/Linux by Zabbix agent/system.cpu.util,20m)>80",
+              "priority": 3,
+              "manual_close": 1
+            },
+            "auth": "'$TOKEN'",
+            "id": 16
+          }')
+        echo "$RESULT"
+      changed_when: false
+      register: trigger_cpu_per_core
+
+    - name: "TRIG — Listar todos los triggers creados"
+      ansible.builtin.shell: |
+        TOKEN=$(cat /tmp/zabbix_token)
+        echo "=== Triggers en Template Linux ==="
+        curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{
+            "jsonrpc": "2.0",
+            "method": "trigger.get",
+            "params": {
+              "output": ["triggerid", "description", "priority", "status"],
+              "filter": {"templateid": ["'$(cat /tmp/template_id)'"]}
+            },
+            "auth": "'$TOKEN'",
+            "id": 20
+          }' | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+result = data.get('result', [])
+for t in result:
+    p = ['Not classified', 'Information', 'Warning', 'Average', 'High', 'Disaster'][t.get('priority', 0)]
+    print(f\"  [{p}] {t['description']}\")
+"
+      changed_when: false
+      register: list_triggers
+
+    - name: "TRIG — Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "TRIGGERS CREADOS"
+          - "=========================================="
+          - "1. CPU Very High > 95% x 15min (Average)"
+          - "2. CPU Critical > 98% x 10min (High)"
+          - "3. Memory Very High > 95% x 15min (Average)"
+          - "4. Disk Low < 15% free (Warning)"
+          - "5. Disk Critical < 10% free (High)"
+          - "6. Zabbix Agent Down 15min (High)"
+          - "7. High CPU per core > 80% x 20min (Warning)"
+          - ""
+          - "Umbrales CONSERVADORES para no exceeder 100 emails/dia"
+          - ""
+          - "{{ list_triggers.stdout_lines }}"
