@@ -107,12 +107,12 @@
       register: step5_vmware
       failed_when: false
 
-    - name: "======= VERIFICACION ======="
+- name: "======= VERIFICACION ======="
       ansible.builtin.shell: |
         echo "=========================================="
         echo "   VERIFICANDO CONFIGURACION"
         echo "=========================================="
-        
+
         TOKEN=$(curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d '{
@@ -121,7 +121,7 @@
             "params": {"username": "Admin", "password": "{{ zabbix_password }}"},
             "id": 1
           }' | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
-        
+
         echo ""
         echo "=== ACTIONS (Auto-Restart) ==="
         curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
@@ -135,15 +135,18 @@
             },
             "auth": "'$TOKEN'",
             "id": 2
-}' | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-result = data.get('result', [])
-for a in result:
-    status = 'DISABLED' if a.get('status') == '1' else 'ENABLED'
-    print('  [' + status + '] ' + a['name'])
-"
-        
+          }' > /tmp/zabbix_actions.json
+
+        python3 << 'PYEOF'
+import json
+with open('/tmp/zabbix_actions.json') as f:
+    data = json.load(f)
+    result = data.get('result', [])
+    for a in result:
+        status = 'DISABLED' if a.get('status') == '1' else 'ENABLED'
+        print('  [' + status + '] ' + a['name'])
+PYEOF
+
         echo ""
         echo "=== TRIGGERS ==="
         curl -s -X POST http://localhost/zabbix/api_jsonrpc.php \
@@ -157,16 +160,19 @@ for a in result:
             },
             "auth": "'$TOKEN'",
             "id": 3
-          }' | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-result = data.get('result', [])
-priorities = ['N/A', 'Info', 'Warning', 'Average', 'High', 'Disaster']
-for t in result[:10]:
-    p = priorities[t.get('priority', 0)]
-    print('  [' + p + '] ' + t['description'][:60])
-"
-        
+          }' > /tmp/zabbix_triggers.json
+
+        python3 << 'PYEOF2'
+import json
+with open('/tmp/zabbix_triggers.json') as f:
+    data = json.load(f)
+    result = data.get('result', [])
+    priorities = ['N/A', 'Info', 'Warning', 'Average', 'High', 'Disaster']
+    for t in result[:10]:
+        p = priorities[t.get('priority', 0)]
+        print('  [' + p + '] ' + t['description'][:60])
+PYEOF2
+
         echo ""
         echo "=========================================="
       changed_when: false
