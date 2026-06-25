@@ -1,17 +1,17 @@
 ---
 # ============================================================================
-# isp_bgp.yml — Configura FRR + BGP en ISP_CREATE1 o ISP_CREATE2
+# isp_bgp.yml — Configura FRR + BGP en ISP_CREATE_WAN1 o ISP_CREATE_WAN2
 # ============================================================================
 # Uso:
-#   # Para ISP_CREATE1 (192.168.2.1/24, AS65001):
+#   # Para ISP WAN1 (192.168.2.1/24, AS65001, isp_create_wan1.yml ya aplicado):
 #   sudo ansible-playbook playbooks/isp_bgp.yml
 #
-#   # Para ISP_CREATE2 (192.168.1.1/24, AS65002):
+#   # Para ISP WAN2 (192.168.1.1/24, AS65002, isp_create_wan2.yml ya aplicado):
 #   sudo ansible-playbook playbooks/isp_bgp.yml -e "isp_id=2"
 #
 # Pre-requisitos:
-#   - ISP_CREATE1 o ISP_CREATE2 ya tiene netplan aplicado
-#   - pfSense conectado a eth0/ens35 con IP estática (.2)
+#   - isp_create_wan1.yml o isp_create_wan2.yml ya ejecutado con netplan aplicado
+#   - pfSense conectado a ens35 con IP estática (.2)
 # ============================================================================
 
 - name: "Configurar ISP con FRR y eBGP hacia pfSense"
@@ -24,8 +24,8 @@
     # -------------------------------------------------------------------------
     # EDITAR estas variables según el ISP que estás configurando
     # -------------------------------------------------------------------------
-    # isp_id: 1  -> ISP_CREATE1 (192.168.2.0/24, AS65001, eth0)
-    # isp_id: 2  -> ISP_CREATE2 (192.168.1.0/24, AS65002, ens35)
+    # isp_id: 1  -> WAN1 (192.168.2.0/24, AS65001, isp_create_wan1)
+    # isp_id: 2  -> WAN2 (192.168.1.0/24, AS65002, isp_create_wan2)
     # -------------------------------------------------------------------------
     isp_id: 1
 
@@ -33,18 +33,20 @@
     isp_config:
       "1":
         as: "65001"
-        wan_ip: "172.17.25.49/24"      # WAN upstream (ens34)
+        wan_ip: "172.17.25.49/24"
         wan_gw: "172.17.25.121"
-        lan_interface: "ens35"           # LAN hacia pfSense (NATEADO, ens35)
-        lan_ip: "192.168.2.1/24"       # Red interna hacia pfSense
-        pf_ip: "192.168.2.2"            # pfSense en esta red
+        lan_interface: "ens35"
+        lan_ip: "192.168.2.1/24"
+        pf_ip: "192.168.2.2"
+        wan_name: "wan2"
       "2":
         as: "65002"
-        wan_ip: "172.17.25.88/24"      # WAN upstream (ens34)
+        wan_ip: "172.17.25.88/24"
         wan_gw: "172.17.25.121"
-        lan_interface: "ens35"           # LAN hacia pfSense (NATEADO, ens35)
-        lan_ip: "192.168.1.1/24"       # Red interna hacia pfSense
-        pf_ip: "192.168.1.2"            # pfSense en esta red
+        lan_interface: "ens35"
+        lan_ip: "192.168.1.1/24"
+        pf_ip: "192.168.1.2"
+        wan_name: "wan1"
 
     # Configuración pfSense (igual para ambos)
     pf_as: "65000"
@@ -61,6 +63,7 @@
         isp_pf_ip: "{{ current_isp.pf_ip }}"
         isp_wan_ip: "{{ current_isp.wan_ip }}"
         isp_wan_gw: "{{ current_isp.wan_gw }}"
+        isp_wan_name: "{{ current_isp.wan_name }}"
 
     - name: "BGP — Instalar FRR"
       ansible.builtin.apt:
