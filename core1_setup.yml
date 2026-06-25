@@ -164,34 +164,32 @@
         content: |
           # ============================================================================
           # Netplan Limpio — {{ core_id | upper }}
-          # Bond0: LANs hacia pfSenses (active-backup)
+          # Bond0: LANs hacia pfSenses (active-backup) — gestión/gateway
+          # Bond1: Trunks hacia pfSenses (active-backup) — tráfico straight-through
           # Ens38: Interlink directo entre Cores
-          # Bridges: L2 puros sin IPs
+          # SIN bridges, SIN VLANs, SIN STP (VMs van directo a vSwitch ESXi)
           # ============================================================================
           network:
             version: 2
             renderer: networkd
             ethernets:
-              {{ nic_trunk1 }}:
+              ens34:
                 dhcp4: no
-              {{ nic_trunk2 }}:
+              ens35:
                 dhcp4: no
-              {{ nic_int1 }}:
+              ens36:
+                dhcp4: no
+              ens37:
+                dhcp4: no
+              ens38:
                 dhcp4: no
                 addresses:
                   - {{ core_unicast_src_ip }}/30
-              {{ bonded_nics[0] }}:
-                dhcp4: no
-              {{ bonded_nics[1] }}:
-                dhcp4: no
               ens39:
-                dhcp4: no
-                optional: true
-              ens43:
                 dhcp4: true
             bonds:
               bond0:
-                interfaces: [{{ bonded_nics | join(', ') }}]
+                interfaces: [ens34, ens35]
                 addresses: [{{ lan_ip }}]
                 routes:
                   - to: default
@@ -205,84 +203,25 @@
                 parameters:
                   mode: active-backup
                   mii-monitor-interval: 100
-                  primary: {{ bonded_nics[0] }}
-            vlans:
-              v10-trunk1: {id: 10, link: {{ nic_trunk1 }}}
-              v10-trunk2: {id: 10, link: {{ nic_trunk2 }}}
-              v20-trunk1: {id: 20, link: {{ nic_trunk1 }}}
-              v20-trunk2: {id: 20, link: {{ nic_trunk2 }}}
-              v21-trunk1: {id: 21, link: {{ nic_trunk1 }}}
-              v21-trunk2: {id: 21, link: {{ nic_trunk2 }}}
-              v30-trunk1: {id: 30, link: {{ nic_trunk1 }}}
-              v30-trunk2: {id: 30, link: {{ nic_trunk2 }}}
-              v40-trunk1: {id: 40, link: {{ nic_trunk1 }}}
-              v40-trunk2: {id: 40, link: {{ nic_trunk2 }}}
-              v50-trunk1: {id: 50, link: {{ nic_trunk1 }}}
-              v50-trunk2: {id: 50, link: {{ nic_trunk2 }}}
-              v60-trunk1: {id: 60, link: {{ nic_trunk1 }}}
-              v60-trunk2: {id: 60, link: {{ nic_trunk2 }}}
-              v70-trunk1: {id: 70, link: {{ nic_trunk1 }}}
-              v70-trunk2: {id: 70, link: {{ nic_trunk2 }}}
-              v999-trunk1: {id: 999, link: {{ nic_trunk1 }}}
-              v999-trunk2: {id: 999, link: {{ nic_trunk2 }}}
-            bridges:
-              br10:
-                interfaces: [v10-trunk1, v10-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br20:
-                interfaces: [v20-trunk1, v20-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br21:
-                interfaces: [v21-trunk1, v21-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br30:
-                interfaces: [v30-trunk1, v30-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br40:
-                interfaces: [v40-trunk1, v40-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br50:
-                interfaces: [v50-trunk1, v50-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br60:
-                interfaces: [v60-trunk1, v60-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br70:
-                interfaces: [v70-trunk1, v70-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
-              br999:
-                interfaces: [v999-trunk1, v999-trunk2]
-                parameters: {stp: true, forward-delay: 20, max-age: 25}
+                  primary: ens34
+              bond1:
+                interfaces: [ens36, ens37]
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens36
 
     - name: "POST — Crear script de verificacion del interlink"
       ansible.builtin.copy:
         dest: /usr/local/bin/check_interlink.sh
         content: |
           #!/bin/bash
-          # Verifica que ens38 (interlink) este up
           STATE=$(cat /sys/class/net/ens38/operstate 2>/dev/null)
           [ "$STATE" = "up" ] && exit 0
           exit 1
         owner: root
         group: root
         mode: "0755"
-
-    - name: "POST — Bajar bridges y flush IPs"
-      ansible.builtin.shell: |
-        for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do
-          ip link set "$br" down 2>/dev/null || true
-          ip addr flush dev "$br" 2>/dev/null || true
-        done
-        echo "Bridges bajados y flush done"
-
-    - name: "PRE — Destruir vXX-int existentes antes de netplan (limpieza forzada)"
-      ansible.builtin.shell: |
-        for vlan in 10 20 21 30 40 50 60 70 999; do
-          ip link delete v${vlan}-int 2>/dev/null && echo "Eliminada v${vlan}-int" || echo "v${vlan}-int no existe"
-        done
-        echo "Limpieza de vXX-int completada"
-      changed_when: true
-      failed_when: false
 
     - name: "POST — Regenerar y aplicar netplan limpio"
       ansible.builtin.shell: |
@@ -292,54 +231,9 @@
         echo "Netplan LIMPIO aplicado correctamente"
       changed_when: true
 
-    - name: "POST — Eliminar vXX-int residual del interlink (por si netplan las recreo)"
-      ansible.builtin.shell: |
-        for vlan in 10 20 21 30 40 50 60 70 999; do
-          ip link delete v${vlan}-int 2>/dev/null && echo "Eliminada v${vlan}-int" || echo "v${vlan}-int no existe"
-        done
-        echo "Limpieza residual completada"
-      changed_when: true
-      failed_when: false
-
-    - name: "POST — Storm control en trunks (limitar broadcast/multicast)"
-      ansible.builtin.shell: |
-        # Storm control: limitar burst de broadcast/multicast en trunks
-        # Rate limit: 5 Mbps = 5000 kbps, burst 10 Mbps
-        for iface in ens36 ens37; do
-          if ip link show "$iface" >/dev/null 2>&1; then
-            # Limpiar qdisc anterior si existe
-            tc qdisc del dev $iface root 2>/dev/null || true
-            
-            # Agregar htb root qdisc con rate limit de emergencia
-            tc qdisc add dev $iface root handle 1: htb default 10
-            tc class add dev $iface parent 1:1 classid 1:10 htb rate 1000mbit burst 50mbit
-            tc filter add dev $iface parent 1:0 protocol all basic match "match(u32 0 0 at 0)" flowid 1:10
-            
-            echo "$iface: storm control configurado (1000mbit limit)"
-          fi
-        done
-        echo "Storm control aplicado en trunks"
-      changed_when: true
-      failed_when: false
-
-    - name: "POST — Quitar vXX-int de bridges (STP solo en trunks hacia pfSenses)"
-      ansible.builtin.shell: |
-        for vlan in 10 20 21 30 40 50 60 70 999; do
-          brctl delif br${vlan} v${vlan}-int 2>/dev/null && echo "br${vlan}: v${vlan}-int removido" || echo "br${vlan}: v${vlan}-int no existe"
-        done
-        echo "Interlinks removidos de bridges — STP solo en trunks"
-      changed_when: true
-
-    - name: "POST — Asegurar que bridges quedaron sin IP"
-      ansible.builtin.shell: |
-        for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do
-          ip addr flush dev "$br" 2>/dev/null || true
-        done
-        echo "Verificacion completa"
-
     - name: "POST — Deshabilitar IPv6 en interfaces de red"
       ansible.builtin.shell: |
-        for iface in ens34 ens35 ens36 ens37 ens38 bond0; do
+        for iface in ens34 ens35 ens36 ens37 ens38 bond0 bond1; do
           if ip link show "$iface" >/dev/null 2>&1; then
             sysctl -w net.ipv6.conf.$iface.disable_ipv6=1 2>/dev/null || true
           fi
@@ -361,17 +255,17 @@
     - name: "POST — Verificar estado de interfaces"
       ansible.builtin.shell: |
         echo "=== BOND0 (LANs hacia pfSenses) ===" && ip addr show bond0 2>/dev/null || true
+        echo "=== BOND1 (Trunks hacia pfSenses) ===" && ip addr show bond1 2>/dev/null || true
         echo "=== ENS38 (Interlink) ===" && ip addr show ens38 2>/dev/null || true
-        echo "=== BRIDGES ===" && for br in br10 br20 br21 br30 br40 br50 br60 br70 br999; do echo "--- $br ---"; ip addr show "$br" 2>/dev/null || true; done
         echo "=== KEEPALIVED ===" && systemctl is-active keepalived && echo "Running" || echo "Not running"
       changed_when: false
 
     - name: "POST — Mostrar estado final"
       ansible.builtin.debug:
         msg:
-          - "Core 1 OPTIMIZADO y configurado"
-          - "Bond0 = LANs (active-backup hacia pfSenses)"
+          - "Core 1 OPTIMIZADO"
+          - "Bond0 = LANs (ens34+ens35, active-backup hacia pfSenses)"
+          - "Bond1 = Trunks (ens36+ens37, active-backup, straight-through)"
           - "Ens38 = Interlink (hacia Core 2)"
-          - "Bridges sin IPs — L2 switch puro"
-          - "Optimizaciones aplicadas: sysctls, IPv6 disabled, logs reducidos"
-          - "Keepalived: MASTER, advert_int=5, nopreempt disabled"
+          - "SIN bridges, SIN VLANs, SIN STP (VMs van por vSwitch ESXi)"
+          - "Keepalived: MASTER"

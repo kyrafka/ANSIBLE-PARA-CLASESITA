@@ -1,7 +1,6 @@
 # ============================================================================
 # Configuracion de Netplan para Linux Core ({{ core_id | upper }})
-# ============================================================================
-# Full HA: 2x Trunks + 2x LANs (bonding) + Interlink
+# Simplified: Bond0 (LANs) + Bond1 (Trunks) + Interlink
 # Generado automaticamente por Ansible — NO EDITAR A MANO
 # ============================================================================
 
@@ -9,29 +8,25 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    {{ nic_trunk1 }}:
+    ens34:
       dhcp4: no
-    {{ nic_trunk2 }}:
+    ens35:
       dhcp4: no
-    {{ nic_int }}:
+    ens36:
+      dhcp4: no
+    ens37:
+      dhcp4: no
+    ens38:
       dhcp4: no
       addresses:
         - {{ core_unicast_src_ip }}/30
-{% if bonded_nics is defined and bonded_nics | length >= 2 %}
-{% for nic in bonded_nics %}
-    {{ nic }}:
-      dhcp4: no
-      optional: true
-{% endfor %}
-{% endif %}
-{% if bonded_nics is defined and bonded_nics | length >= 2 %}
-
+    ens39:
+      dhcp4: true
   bonds:
     bond0:
       interfaces:
-{% for nic in bonded_nics %}
-        - {{ nic }}
-{% endfor %}
+        - ens34
+        - ens35
       addresses:
         - {{ lan_ip }}
       routes:
@@ -46,30 +41,12 @@ network:
       parameters:
         mode: active-backup
         mii-monitor-interval: 100
-        primary: {{ bonded_nics[0] }}
-{% endif %}
-
-  vlans:
-{% for vlan in vlans %}
-    v{{ vlan.id }}-trunk1:
-      id: {{ vlan.id }}
-      link: {{ nic_trunk1 }}
-    v{{ vlan.id }}-trunk2:
-      id: {{ vlan.id }}
-      link: {{ nic_trunk2 }}
-{% endfor %}
-
-  bridges:
-{% for vlan in vlans %}
-    br{{ vlan.id }}:
+        primary: ens34
+    bond1:
       interfaces:
-        - v{{ vlan.id }}-trunk1
-        - v{{ vlan.id }}-trunk2
-{% if assign_bridge_ips | default(false) | bool %}
-      addresses:
-        - "{{ vlan.core1_ip if core_id == 'core1' else vlan.core2_ip }}"
-{% endif %}
+        - ens36
+        - ens37
       parameters:
-        stp: true
-        forward-delay: 15
-{% endfor %}
+        mode: active-backup
+        mii-monitor-interval: 100
+        primary: ens36
