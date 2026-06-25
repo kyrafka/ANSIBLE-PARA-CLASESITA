@@ -32,12 +32,10 @@
                 dhcp4: false
                 addresses:
                   - 172.17.25.49/24
-                routes:
-                  - to: default
-                    via: 172.17.25.121
+                gateway4: 172.17.25.121
                 nameservers:
                   addresses: [8.8.8.8, 1.1.1.1]
-              eth0:
+              ens35:
                 dhcp4: false
                 addresses:
                   - 192.168.2.1/24
@@ -68,18 +66,18 @@
         out_interface: ens34
         jump: MASQUERADE
 
-    - name: FORWARD de eth0 a ens34
+    - name: FORWARD de ens35 a ens34
       ansible.builtin.iptables:
         chain: FORWARD
-        in_interface: eth0
+        in_interface: ens35
         out_interface: ens34
         jump: ACCEPT
 
-    - name: FORWARD retorno de ens34 a eth0
+    - name: FORWARD retorno de ens34 a ens35
       ansible.builtin.iptables:
         chain: FORWARD
         in_interface: ens34
-        out_interface: eth0
+        out_interface: ens35
         ctstate: ESTABLISHED,RELATED
         jump: ACCEPT
 

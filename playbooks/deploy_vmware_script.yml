@@ -16,6 +16,11 @@
     esxi_pass: "qwe123$"
 
   tasks:
+    - name: "INSTALAR sshpass"
+      ansible.builtin.apt:
+        name: sshpass
+        state: present
+
     - name: "CREAR script vm-poweron.sh"
       ansible.builtin.copy:
         dest: /usr/local/bin/vm-poweron.sh
@@ -31,31 +36,41 @@
           if [ -z "$VM_NAME" ]; then
               echo "ERROR: Falta nombre de VM"
               echo "Uso: $0 <nombre_vm>"
-              exit 1
-          fi
-
-          echo "AUTO-POWERON: Encendiendo $VM_NAME en $ESXI_HOST:$ESXI_PORT"
-
-          # Obtener ID de la VM
-          VM_ID=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null | grep "$VM_NAME" | awk '{print $1}')
-
-          if [ -z "$VM_ID" ]; then
-              echo "ERROR: VM '$VM_NAME' no encontrada en ESXi"
-              echo "VMs disponibles:"
+              echo ""
+              echo "VMs disponibles en ESXi:"
               sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null
               exit 1
           fi
 
-          echo "VM '$VM_NAME' tiene ID: $VM_ID"
+          echo "AUTO-POWERON: Encendiendo '$VM_NAME' en $ESXI_HOST:$ESXI_PORT"
+
+          # Obtener ID de la VM buscando por nombre parcial
+          VM_INFO=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null)
+
+          # Buscar la VM que contenga el nombre ingresado
+          VM_LINE=$(echo "$VM_INFO" | grep -i "$VM_NAME" | head -1)
+
+          if [ -z "$VM_LINE" ]; then
+              echo "ERROR: VM '$VM_NAME' no encontrada en ESXi"
+              echo ""
+              echo "VMs disponibles:"
+              echo "$VM_INFO"
+              exit 1
+          fi
+
+          VM_ID=$(echo "$VM_LINE" | awk '{print $1}')
+          VM_FULL_NAME=$(echo "$VM_LINE" | sed 's/[0-9]*[[:space:]]*//')
+
+          echo "Encontrada: '$VM_FULL_NAME' (ID: $VM_ID)"
           echo "Ejecutando power.on..."
 
           # Encender la VM
           sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/power.on $VM_ID"
 
-          echo "OK - VM должна включиться"
+          echo "OK - VM должна включиться через ~30 segundos"
         mode: "0755"
         force: yes
 
