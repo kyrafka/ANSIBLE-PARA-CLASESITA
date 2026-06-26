@@ -108,6 +108,15 @@ print(f"  Email asignado a Admin: {ALERT_EMAIL}")
 # 5. Crear/actualizar actions
 print("\n=== ACTIONS ===")
 
+# Obtener scriptid del script de PowerOn que creamos antes
+script_list = api_call("script.get", {"filter": {"name": ["AXIOM: PowerOn VM en ESXi"]}}, token)
+if not script_list:
+    print("  ERROR: Script PowerOn no encontrado")
+    sys.exit(1)
+poweron_scriptid = script_list[0]["scriptid"]
+print(f"  Script PowerOn ID: {poweron_scriptid}")
+
+
 def upsert_action(name, params):
     existing = api_call("action.get", {"filter": {"name": [name]}, "output": ["actionid"]}, token)
     if existing:
@@ -118,8 +127,7 @@ def upsert_action(name, params):
     print(f"  Creada: {name} (id:{result['actionids'][0]})")
 
 
-# Action: VM apagada → PowerOn ESXi
-# Filtra por severity=4 (High) que es lo que tiene el trigger "Agent no responde"
+# Action: VM apagada → PowerOn ESXi (severity >= High = 4)
 upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
@@ -139,9 +147,7 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
         "esc_step_from": 1,
         "esc_step_to": 1,
         "opcommand": {
-            "type": 0,
-            "command": "/usr/local/bin/vm-poweron.sh {HOST.NAME}",
-            "execute_on": 0
+            "scriptid": poweron_scriptid
         },
         "opcommand_hst": [{"hostid": "0"}]
     }]
