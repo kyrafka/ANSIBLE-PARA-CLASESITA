@@ -13,6 +13,11 @@
     zabbix_version: "7.0-2+ubuntu24.04"
 
   tasks:
+    - name: "AGN — Instalar sshpass (para vm-poweron.sh)"
+      ansible.builtin.apt:
+        name: sshpass
+        state: present
+
     - name: "AGN — LIMPIEZA: Remover instalaciones anteriores de Zabbix"
       ansible.builtin.shell: |
         echo "=== LIMPIEZA DE ZABBIX ANTERIOR ==="
@@ -82,10 +87,35 @@
       ansible.builtin.user:
         name: zabbix
         system: yes
-        shell: /usr/sbin/nologin
+        shell: /bin/bash
         create_home: no
         state: present
       failed_when: false
+
+    - name: "AGN — Agregar zabbix a sudoers sin password"
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/zabbix
+        content: |
+          zabbix ALL=(ALL) NOPASSWD: /usr/local/bin/vm-poweron.sh
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart zabbix-agent
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart apache2
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart mariadb
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart postfix
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dovecot
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart asterisk
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart smbd
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nfs-server
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart keepalived
+          zabbix ALL=(ALL) NOPASSWD: /sbin/reboot
+          zabbix ALL=(ALL) NOPASSWD: /sbin/poweroff
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot
+        mode: "0440"
+        force: yes
+
+    - name: "AGN — Hacer script vm-poweron.sh ejecutable"
+      ansible.builtin.shell: |
+        chmod 755 /usr/local/bin/vm-poweron.sh 2>/dev/null || true
+        chown zabbix:zabbix /usr/local/bin/vm-poweron.sh 2>/dev/null || true
 
     - name: "AGN — RECARGAR systemd y habilitar servicio"
       ansible.builtin.shell: |
@@ -161,6 +191,45 @@
           AllowKey=system.run[/usr/bin/systemctl poweroff]
         mode: "0644"
         force: yes
+
+    - name: "AGN — Crear script vm-poweron.sh"
+      ansible.builtin.copy:
+        dest: /usr/local/bin/vm-poweron.sh
+        content: |
+          #!/bin/bash
+          VM_NAME="$1"
+          ESXI_HOST="168.121.48.254"
+          ESXI_PORT="10112"
+          ESXI_USER="root"
+          ESXI_PASS="qwe123$"
+
+          if [ -z "$VM_NAME" ]; then
+              echo "ERROR: Falta nombre de VM"
+              exit 1
+          fi
+
+          echo "AUTO-POWERON: Encendiendo '$VM_NAME' en $ESXI_HOST:$ESXI_PORT"
+
+          VM_INFO=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null)
+
+          VM_LINE=$(echo "$VM_INFO" | grep -i "$VM_NAME" | head -1)
+
+          if [ -z "$VM_LINE" ]; then
+              echo "ERROR: VM '$VM_NAME' no encontrada"
+              exit 1
+          fi
+
+          VM_ID=$(echo "$VM_LINE" | awk '{print $1}')
+          echo "Encontrada VM ID: $VM_ID"
+
+          sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/power.on $VM_ID"
+
+          echo "OK - VM debería encenderse en ~30 segundos"
+        mode: "0755"
+        owner: zabbix
+        group: zabbix
 
     - name: "AGN — REINICIAR servicio con nueva config"
       ansible.builtin.shell: |
