@@ -48,6 +48,7 @@ def upsert_script(name, command, description):
             "command": command,
             "execute_on": 0,
             "type": 0,
+            "scope": 1,
             "description": description
         }, token)
         print(f"  Creado: {name} (id:{result['scriptids'][0]})")
