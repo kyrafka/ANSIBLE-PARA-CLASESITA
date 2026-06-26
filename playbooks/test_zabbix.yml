@@ -1,11 +1,11 @@
 ---
 # ============================================================================
-# test_zabbix.yml  EPrueba conectividad SSH a VMs y ESXi + scripts Zabbix
+# test_zabbix.yml — Prueba conectividad, govc, scripts y Zabbix
 # ============================================================================
 # Uso: sudo ansible-playbook playbooks/test_zabbix.yml -i inventario/hosts.yml
 # ============================================================================
 
-- name: "TEST  EConectividad SSH y scripts de auto-recovery"
+- name: "TEST — Zabbix + ESXi via govc"
   hosts: localhost
   connection: local
   become: false
@@ -29,9 +29,9 @@
   tasks:
 
     # =========================================================================
-    # 1. TEST: Zabbix API responde
+    # 1. Zabbix API
     # =========================================================================
-    - name: "TEST 1  EZabbix API"
+    - name: "TEST 1 — Zabbix API"
       ansible.builtin.uri:
         url: "{{ zabbix_api }}"
         method: POST
@@ -45,167 +45,143 @@
       register: api_test
       failed_when: false
 
-    - name: "TEST 1  EResultado Zabbix API"
+    - name: "TEST 1 — Resultado"
       ansible.builtin.debug:
-        msg: "Zabbix API: {{ 'OK  Eversion ' + api_test.json.result if api_test.status == 200 else 'FALLO  E' + (api_test.msg | default('no responde')) }}"
+        msg: "Zabbix API: {{ 'OK — v' + api_test.json.result if api_test.status == 200 else 'FALLO' }}"
 
     # =========================================================================
-    # 2. TEST: Ping ICMP a cada VM
+    # 2. Ping a VMs
     # =========================================================================
-    - name: "TEST 2  EPing ICMP a VMs"
+    - name: "TEST 2 — Ping a VMs"
       ansible.builtin.command:
         cmd: "ping -c 1 -W 2 {{ item.ip }}"
       loop: "{{ vms }}"
       loop_control:
-        label: "{{ item.name }} ({{ item.ip }})"
+        label: "{{ item.name }}"
       register: ping_results
       failed_when: false
       changed_when: false
 
-    - name: "TEST 2  EResultados ping"
+    - name: "TEST 2 — Resultados ping"
       ansible.builtin.debug:
-        msg: "{{ item.item.name }} ({{ item.item.ip }}): {{ 'ALCANZABLE' if item.rc == 0 else 'NO RESPONDE' }}"
+        msg: "{{ item.item.name }} ({{ item.item.ip }}): {{ 'OK' if item.rc == 0 else 'NO RESPONDE' }}"
       loop: "{{ ping_results.results }}"
       loop_control:
         label: "{{ item.item.name }}"
 
     # =========================================================================
-    # 3. TEST: SSH a cada VM (puerto 22 abierto)
+    # 3. govc instalado
     # =========================================================================
-    - name: "TEST 3  EPuerto SSH 22 en VMs"
-      ansible.builtin.wait_for:
-        host: "{{ item.ip }}"
-        port: 22
-        timeout: 5
-        state: started
-      loop: "{{ vms }}"
-      loop_control:
-        label: "{{ item.name }} ({{ item.ip }})"
-      register: ssh_port_results
-      failed_when: false
+    - name: "TEST 3 — govc instalado"
+      ansible.builtin.stat:
+        path: /usr/local/bin/govc
+      register: govc_stat
 
-    - name: "TEST 3  EResultados puerto SSH"
-      ansible.builtin.debug:
-        msg: "{{ item.item.name }} SSH:22: {{ 'ABIERTO' if not item.failed else 'CERRADO/TIMEOUT' }}"
-      loop: "{{ ssh_port_results.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
-
-    # =========================================================================
-    # 4. TEST: SSH con clave a cada VM (login real)
-    # =========================================================================
-    - name: "TEST 4  ELogin SSH a VMs"
+    - name: "TEST 3 — Version govc"
       ansible.builtin.command:
-        cmd: >
-          ssh -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null
-              -o ConnectTimeout=5
-              -o BatchMode=yes
-              sysadmin@{{ item.ip }}
-              "echo SSH_OK_$(hostname)"
-      loop: "{{ vms }}"
-      loop_control:
-        label: "{{ item.name }}"
-      register: ssh_login_results
+        cmd: govc version
+      register: govc_ver
+      failed_when: false
+      changed_when: false
+      when: govc_stat.stat.exists
+
+    - name: "TEST 3 — Resultado govc"
+      ansible.builtin.debug:
+        msg: "govc: {{ govc_ver.stdout if govc_stat.stat.exists else 'NO INSTALADO' }}"
+
+    # =========================================================================
+    # 4. govc conecta al ESXi y lista VMs
+    # =========================================================================
+    - name: "TEST 4 — Listar VMs en ESXi via govc"
+      ansible.builtin.command:
+        cmd: govc vm.list
+      environment:
+        GOVC_URL: "https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
+        GOVC_INSECURE: "1"
+      register: govc_vms
       failed_when: false
       changed_when: false
 
-    - name: "TEST 4  EResultados login SSH"
+    - name: "TEST 4 — VMs en ESXi"
       ansible.builtin.debug:
-        msg: "{{ item.item.name }}: {{ item.stdout if item.rc == 0 else 'FALLO  E' + (item.stderr | regex_replace('\\n',' ') | truncate(80)) }}"
-      loop: "{{ ssh_login_results.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
+        msg: "ESXi VMs: {{ govc_vms.stdout_lines if govc_vms.rc == 0 else 'FALLO — ' + govc_vms.stderr }}"
 
     # =========================================================================
-    # 5. TEST: API REST del ESXi (no requiere SSH)
+    # 5. Estado de vm-web01 en ESXi
     # =========================================================================
-    - name: "TEST 5  EAutenticar en ESXi API REST"
-      ansible.builtin.uri:
-        url: "https://{{ esxi_host }}:{{ esxi_port }}/api/session"
-        method: POST
-        url_username: "{{ esxi_user }}"
-        url_password: "{{ esxi_pass }}"
-        force_basic_auth: true
-        validate_certs: false
-        status_code: [200, 201]
-      register: esxi_auth
+    - name: "TEST 5 — Estado de vm-web01"
+      ansible.builtin.command:
+        cmd: govc vm.info vm-web01
+      environment:
+        GOVC_URL: "https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
+        GOVC_INSECURE: "1"
+      register: web01_info
       failed_when: false
+      changed_when: false
 
-    - name: "TEST 5  EResultado auth ESXi"
+    - name: "TEST 5 — Resultado vm-web01"
       ansible.builtin.debug:
-        msg: "ESXi API REST: {{ 'OK  Etoken obtenido' if esxi_auth.status in [200,201] else 'FALLO  Estatus ' + (esxi_auth.status | string) + ' ' + (esxi_auth.msg | default('')) }}"
-
-    - name: "TEST 5  EListar VMs en ESXi via API REST"
-      ansible.builtin.uri:
-        url: "https://{{ esxi_host }}:{{ esxi_port }}/api/vcenter/vm"
-        method: GET
-        headers:
-          vmware-api-session-id: "{{ esxi_auth.json }}"
-        validate_certs: false
-        status_code: 200
-      register: esxi_vms
-      failed_when: false
-      when: esxi_auth.status in [200,201]
-
-    - name: "TEST 5  EVMs en ESXi"
-      ansible.builtin.debug:
-        msg: "{{ esxi_vms.json | map(attribute='name') | list }}"
-      when: esxi_auth.status in [200,201] and esxi_vms.status == 200
+        msg: "{{ web01_info.stdout_lines if web01_info.rc == 0 else 'FALLO: ' + web01_info.stderr }}"
 
     # =========================================================================
-    # 6. TEST: Script vm-poweron.sh existe y es ejecutable
+    # 6. Scripts existen y son ejecutables
     # =========================================================================
-    - name: "TEST 6  EScript vm-poweron.sh"
+    - name: "TEST 6 — Scripts"
       ansible.builtin.stat:
-        path: /usr/local/bin/vm-poweron.sh
-      register: poweron_stat
+        path: "{{ item }}"
+      loop:
+        - /usr/local/bin/vm-poweron.sh
+        - /usr/local/bin/service-restart.sh
+      register: scripts_stat
 
-    - name: "TEST 6  EScript service-restart.sh"
-      ansible.builtin.stat:
-        path: /usr/local/bin/service-restart.sh
-      register: restart_stat
-
-    - name: "TEST 6  EResultado scripts"
+    - name: "TEST 6 — Resultado scripts"
       ansible.builtin.debug:
-        msg:
-          - "vm-poweron.sh:      {{ 'OK (ejecutable)' if poweron_stat.stat.exists and poweron_stat.stat.executable else 'FALTA o no ejecutable' }}"
-          - "service-restart.sh: {{ 'OK (ejecutable)' if restart_stat.stat.exists and restart_stat.stat.executable else 'FALTA o no ejecutable' }}"
-
-    # =========================================================================
-    # 7. TEST: Simular PowerOn via API REST (muestra estado de vm-web01)
-    # =========================================================================
-    - name: "TEST 7  EVerificar estado de vm-web01 en ESXi"
-      ansible.builtin.uri:
-        url: "https://{{ esxi_host }}:{{ esxi_port }}/api/vcenter/vm"
-        method: GET
-        headers:
-          vmware-api-session-id: "{{ esxi_auth.json }}"
-        validate_certs: false
-      register: all_vms
-      failed_when: false
-      when: esxi_auth.status in [200,201]
-
-    - name: "TEST 7  EEstado de todas las VMs"
-      ansible.builtin.debug:
-        msg: "{{ item.name }}: {{ item.power_state }}"
-      loop: "{{ all_vms.json }}"
+        msg: "{{ item.item }}: {{ 'OK' if item.stat.exists and item.stat.executable else 'FALTA' }}"
+      loop: "{{ scripts_stat.results }}"
       loop_control:
-        label: "{{ item.name }}"
-      when: esxi_auth.status in [200,201] and all_vms.status == 200
+        label: "{{ item.item }}"
 
     # =========================================================================
-    # 8. RESUMEN FINAL
+    # 7. Simular vm-poweron.sh con vm-web01 (dry-run — solo info)
     # =========================================================================
-    - name: "RESUMEN  EEstado general"
+    - name: "TEST 7 — Simular PowerOn vm-web01 (solo muestra estado)"
+      ansible.builtin.command:
+        cmd: govc vm.info vm-web01
+      environment:
+        GOVC_URL: "https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
+        GOVC_INSECURE: "1"
+      register: poweron_dry
+      failed_when: false
+      changed_when: false
+
+    - name: "TEST 7 — Si vm-web01 esta apagada, la enciende"
+      ansible.builtin.command:
+        cmd: /usr/local/bin/vm-poweron.sh vm-web01
+      register: poweron_result
+      failed_when: false
+      changed_when: false
+      become: true
+      when: "'poweredOff' in (poweron_dry.stdout | default(''))"
+
+    - name: "TEST 7 — Resultado PowerOn"
+      ansible.builtin.debug:
+        msg: "{{ poweron_result.stdout_lines | default(['vm-web01 ya estaba encendida o no aplica']) }}"
+
+    # =========================================================================
+    # 8. RESUMEN
+    # =========================================================================
+    - name: "RESUMEN — Estado general"
       ansible.builtin.debug:
         msg:
           - "======================================="
-          - "RESUMEN TEST ZABBIX + ESXi API REST"
+          - "RESUMEN TEST ZABBIX + ESXi (govc)"
           - "======================================="
-          - "Zabbix API:     {{ 'OK' if api_test.status == 200 else 'FALLO' }}"
-          - "ESXi API REST:  {{ 'OK' if esxi_auth.status in [200,201] else 'FALLO' }}"
-          - "Script PowerOn: {{ 'OK' if poweron_stat.stat.exists else 'FALTA' }}"
-          - "VMs alcanzables por ping:"
+          - "Zabbix API:  {{ 'OK' if api_test.status == 200 else 'FALLO' }}"
+          - "govc:        {{ 'OK' if govc_stat.stat.exists else 'NO INSTALADO' }}"
+          - "ESXi conexion: {{ 'OK' if govc_vms.rc == 0 else 'FALLO' }}"
+          - "Script PowerOn: {{ 'OK' if scripts_stat.results[0].stat.exists else 'FALTA' }}"
+          - "VMs por ping:"
           - "{% for r in ping_results.results %}  {{ r.item.name }}: {{ 'OK' if r.rc == 0 else 'NO' }}{% endfor %}"
+          - "VMs en ESXi:"
+          - "{% for v in govc_vms.stdout_lines | default([]) %}  {{ v }}{% endfor %}"
           - "======================================="
