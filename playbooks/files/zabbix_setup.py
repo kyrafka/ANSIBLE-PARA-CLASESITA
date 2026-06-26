@@ -149,7 +149,7 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
     "status": 0,
-    "esc_period": "2m",
+    "esc_period": "30s",
     "filter": {
         "evaltype": 0,
         "conditions": [{"conditiontype": 4, "operator": 5, "value": "2"}]
@@ -207,6 +207,28 @@ HOST_SERVICES = {
 # Obtener hosts registrados
 all_hosts = api_call("host.get", {"output": ["hostid", "name"]}, token)
 hosts_map = {h["name"]: h["hostid"] for h in all_hosts}
+
+# Trigger de agente caido con deteccion rapida (30s) en cada host
+print("\n=== TRIGGERS AGENT DOWN (30s) ===")
+for h in all_hosts:
+    hname = h["name"]
+    hid = h["hostid"]
+    tname = f"{hname}: Agent no responde — PowerOn ESXi"
+    existing = api_call("trigger.get", {"filter": {"description": tname}, "hostids": [hid]}, token)
+    if existing:
+        print(f"  Existe: {tname}")
+        continue
+    try:
+        api_call("trigger.create", {
+            "description": tname,
+            "expression": f"nodata(/{hname}/agent.ping,30s)=1",
+            "priority": 4,
+            "manual_close": 1,
+            "tags": [{"tag": "scope", "value": "availability"}, {"tag": "auto_recovery", "value": "poweron"}]
+        }, token)
+        print(f"  Creado: {tname}")
+    except Exception as e:
+        print(f"  ERROR {hname}: {e}")
 
 for hostname, services in HOST_SERVICES.items():
     hostid = hosts_map.get(hostname)
