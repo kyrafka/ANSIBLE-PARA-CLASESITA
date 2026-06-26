@@ -549,14 +549,7 @@
         echo ""
         echo "=== VERIFICAR ACTIONS CREADAS ==="
         api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"name\",\"status\"],\"filter\":{\"eventsource\":0}},\"auth\":\"$TOKEN\",\"id\":54}" \
-          | python3 -c "
-import sys,json
-actions = json.load(sys.stdin).get('result',[])
-print(f'Total actions de iniciador: {len(actions)}')
-for a in actions:
-    estado = 'ACTIVA' if a['status']=='0' else 'DESACTIVADA'
-    print(f'  [{estado}] {a[\"name\"]}')
-" 2>/dev/null
+          | python3 -c "import sys,json; acts=json.load(sys.stdin).get('result',[]); print(f'Total: {len(acts)}'); [print(('  [ACTIVA] ' if a[\"status\"]==\"0\" else '  [DESACT] ')+a['name']) for a in acts]" 2>/dev/null
 
       args:
         executable: /bin/bash
