@@ -425,6 +425,148 @@
       changed_when: false
       register: zabbix_config
 
+    # =========================================================================
+    # 5. CREAR ACTIONS ZABBIX 7 (API corregida)
+    # =========================================================================
+    - name: "ACTIONS — Crear actions de iniciador en Zabbix 7"
+      ansible.builtin.shell: |
+        set -e
+        API="{{ zabbix_api }}"
+
+        TOKEN=$(curl -s -X POST "$API" \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.login\",\"params\":{\"username\":\"{{ zabbix_user }}\",\"password\":\"{{ zabbix_pass }}\"},\"id\":1}" \
+          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))" 2>/dev/null)
+
+        if [ -z "$TOKEN" ]; then echo "ERROR AUTH"; exit 1; fi
+        echo "TOKEN OK"
+
+        api_call() {
+          echo "$1" | curl -s -X POST "$API" \
+            -H "Content-Type: application/json-rpc" \
+            -d @-
+        }
+
+        # Eliminar actions anteriores si existen (idempotente)
+        for ANAME in "AXIOM: Auto PowerOn VM en ESXi" "AXIOM: Auto Restart Service" "AXIOM: Notificacion Email Problemas"; do
+          AID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"filter\":{\"name\":[\"$ANAME\"]}},\"auth\":\"$TOKEN\",\"id\":1}" \
+            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['actionid'] if r else '')" 2>/dev/null)
+          if [ -n "$AID" ]; then
+            api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.delete\",\"params\":[\"$AID\"],\"auth\":\"$TOKEN\",\"id\":1}" > /dev/null 2>&1
+            echo "Eliminada action previa: $ANAME"
+          fi
+        done
+
+        # -------------------------------------------------------
+        # ACTION 1: VM apagada → PowerOn ESXi (espera 2 min)
+        # conditiontype 16 = trigger name contains
+        # -------------------------------------------------------
+        R=$(api_call "{
+          \"jsonrpc\": \"2.0\",
+          \"method\": \"action.create\",
+          \"params\": {
+            \"name\": \"AXIOM: Auto PowerOn VM en ESXi\",
+            \"eventsource\": 0,
+            \"status\": 0,
+            \"esc_period\": \"2m\",
+            \"filter\": {
+              \"evaltype\": 0,
+              \"conditions\": [{
+                \"conditiontype\": 16,
+                \"operator\": 2,
+                \"value\": \"Agent no responde\"
+              }]
+            },
+            \"operations\": [{
+              \"operationtype\": 1,
+              \"esc_period\": \"0\",
+              \"esc_step_from\": 1,
+              \"esc_step_to\": 1,
+              \"opcommand\": {
+                \"type\": 0,
+                \"command\": \"/usr/local/bin/vm-poweron.sh {HOST.NAME}\",
+                \"execute_on\": 0
+              },
+              \"opcommand_hst\": [{\"hostid\": \"0\"}]
+            }]
+          },
+          \"auth\": \"$TOKEN\",
+          \"id\": 50
+        }")
+        echo "Action PowerOn VM: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK — id: '+str(r.get('result',{}).get('actionids',['?'])[0])) if 'result' in r else print('ERROR: '+str(r.get('error',{}).get('data','')))" 2>/dev/null)"
+
+        # -------------------------------------------------------
+        # ACTION 2: Cualquier problema con severidad >= Warning → Email
+        # conditiontype 4 = trigger severity >= Warning (2)
+        # -------------------------------------------------------
+        USERID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"user.get\",\"params\":{\"filter\":{\"username\":[\"Admin\"]}},\"auth\":\"$TOKEN\",\"id\":51}" \
+          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',[{}])[0].get('userid','1'))" 2>/dev/null)
+
+        MT_ID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"mediatype.get\",\"params\":{\"filter\":{\"name\":[\"Email\"]}},\"auth\":\"$TOKEN\",\"id\":52}" \
+          | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['mediatypeid'] if r else '1')" 2>/dev/null)
+
+        R=$(api_call "{
+          \"jsonrpc\": \"2.0\",
+          \"method\": \"action.create\",
+          \"params\": {
+            \"name\": \"AXIOM: Notificacion Email Problemas\",
+            \"eventsource\": 0,
+            \"status\": 0,
+            \"esc_period\": \"1h\",
+            \"filter\": {
+              \"evaltype\": 0,
+              \"conditions\": [{
+                \"conditiontype\": 4,
+                \"operator\": 5,
+                \"value\": \"2\"
+              }]
+            },
+            \"operations\": [{
+              \"operationtype\": 0,
+              \"esc_period\": \"0\",
+              \"esc_step_from\": 1,
+              \"esc_step_to\": 1,
+              \"opmessage\": {
+                \"default_msg\": 1,
+                \"mediatypeid\": \"$MT_ID\"
+              },
+              \"opmessage_usr\": [{\"userid\": \"$USERID\"}]
+            }],
+            \"recovery_operations\": [{
+              \"operationtype\": 0,
+              \"opmessage\": {
+                \"default_msg\": 1,
+                \"mediatypeid\": \"$MT_ID\"
+              },
+              \"opmessage_usr\": [{\"userid\": \"$USERID\"}]
+            }]
+          },
+          \"auth\": \"$TOKEN\",
+          \"id\": 53
+        }")
+        echo "Action Email: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK — id: '+str(r.get('result',{}).get('actionids',['?'])[0])) if 'result' in r else print('ERROR: '+str(r.get('error',{}).get('data','')))" 2>/dev/null)"
+
+        echo ""
+        echo "=== VERIFICAR ACTIONS CREADAS ==="
+        api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"name\",\"status\"],\"filter\":{\"eventsource\":0}},\"auth\":\"$TOKEN\",\"id\":54}" \
+          | python3 -c "
+import sys,json
+actions = json.load(sys.stdin).get('result',[])
+print(f'Total actions de iniciador: {len(actions)}')
+for a in actions:
+    estado = 'ACTIVA' if a['status']=='0' else 'DESACTIVADA'
+    print(f'  [{estado}] {a[\"name\"]}')
+" 2>/dev/null
+
+      args:
+        executable: /bin/bash
+      changed_when: false
+      register: actions_result
+
     - name: "RESULT — Mostrar resultado"
       ansible.builtin.debug:
         var: zabbix_config.stdout_lines
+
+    - name: "ACTIONS — Mostrar resultado"
+      ansible.builtin.debug:
+        var: actions_result.stdout_lines
