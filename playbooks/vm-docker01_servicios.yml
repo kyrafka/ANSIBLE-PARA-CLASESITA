@@ -226,9 +226,25 @@
         state: present
         update_cache: yes
 
-    - name: "DOLIBARR — Iniciar PHP-FPM"
+    - name: "DOLIBARR — Detectar versión PHP-FPM"
+      ansible.builtin.shell: |
+        PHP_FPM=""
+        for version in 8.3 8.2 8.1 8.0; do
+          if systemctl list-unit-files | grep -q "php${version}-fpm"; then
+            PHP_FPM="php${version}-fpm"
+            break
+          fi
+        done
+        if [ -z "$PHP_FPM" ]; then
+          PHP_FPM="php-fpm"
+        fi
+        echo "$PHP_FPM"
+      changed_when: false
+      register: php_fpm_service
+
+    - name: "DOLIBARR — Iniciar PHP-FPM ({{ php_fpm_service.stdout }})"
       ansible.builtin.systemd:
-        name: php8.1-fpm
+        name: "{{ php_fpm_service.stdout }}"
         state: started
         enabled: yes
 
