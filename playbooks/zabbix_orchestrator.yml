@@ -63,7 +63,7 @@
 
           echo "[$(date)] Verificando VM: $VM_NAME"
 
-          POWER=$(govc vm.info "$VM_NAME" 2>/dev/null | grep "Power state" | awk '{print $3}')
+          POWER=$(govc vm.info "/ha-datacenter/vm/$VM_NAME" 2>/dev/null | grep "Power state" | awk '{print $3}')
           echo "Estado actual: ${POWER:-desconocido}"
 
           if [ "$POWER" = "poweredOn" ]; then
@@ -72,7 +72,7 @@
           fi
 
           echo "Encendiendo VM..."
-          govc vm.power -on "$VM_NAME"
+          govc vm.power -on "/ha-datacenter/vm/$VM_NAME"
           if [ $? -eq 0 ]; then
             echo "[$(date)] OK — $VM_NAME encendida"
           else
