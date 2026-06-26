@@ -118,30 +118,40 @@
         label: "{{ item.item.name }}"
 
     # =========================================================================
-    # 5. TEST: Conectividad SSH al ESXi
+    # 5. TEST: API REST del ESXi (no requiere SSH)
     # =========================================================================
-    - name: "TEST 5 — SSH al ESXi"
-      ansible.builtin.command:
-        cmd: >
-          sshpass -p {{ esxi_pass }}
-          ssh -p {{ esxi_port }}
-              -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null
-              -o ConnectTimeout=10
-              {{ esxi_user }}@{{ esxi_host }}
-              "echo ESXI_OK && vim-cmd vmsvc/getallvms | head -5"
-      register: esxi_test
+    - name: "TEST 5 — Autenticar en ESXi API REST"
+      ansible.builtin.uri:
+        url: "https://{{ esxi_host }}:{{ esxi_port }}/api/session"
+        method: POST
+        url_username: "{{ esxi_user }}"
+        url_password: "{{ esxi_pass }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 201
+      register: esxi_auth
       failed_when: false
-      changed_when: false
 
-    - name: "TEST 5 — Resultado ESXi SSH"
+    - name: "TEST 5 — Resultado auth ESXi"
       ansible.builtin.debug:
-        msg: "ESXi {{ esxi_host }}:{{ esxi_port }}: {{ 'CONECTADO' if esxi_test.rc == 0 else 'FALLO — ' + (esxi_test.stderr | regex_replace('\\n',' ') | truncate(100)) }}"
+        msg: "ESXi API REST: {{ 'OK — token obtenido' if esxi_auth.status == 201 else 'FALLO — status ' + (esxi_auth.status | string) + ' ' + (esxi_auth.msg | default('')) }}"
+
+    - name: "TEST 5 — Listar VMs en ESXi via API REST"
+      ansible.builtin.uri:
+        url: "https://{{ esxi_host }}:{{ esxi_port }}/api/vcenter/vm"
+        method: GET
+        headers:
+          vmware-api-session-id: "{{ esxi_auth.json }}"
+        validate_certs: false
+        status_code: 200
+      register: esxi_vms
+      failed_when: false
+      when: esxi_auth.status == 201
 
     - name: "TEST 5 — VMs en ESXi"
       ansible.builtin.debug:
-        msg: "{{ esxi_test.stdout_lines }}"
-      when: esxi_test.rc == 0
+        msg: "{{ esxi_vms.json | map(attribute='name') | list }}"
+      when: esxi_auth.status == 201 and esxi_vms.status == 200
 
     # =========================================================================
     # 6. TEST: Script vm-poweron.sh existe y es ejecutable
@@ -163,26 +173,26 @@
           - "service-restart.sh: {{ 'OK (ejecutable)' if restart_stat.stat.exists and restart_stat.stat.executable else 'FALTA o no ejecutable' }}"
 
     # =========================================================================
-    # 7. TEST: Simular vm-poweron.sh (dry-run — solo lista VMs, no enciende)
+    # 7. TEST: Simular PowerOn via API REST (muestra estado de vm-web01)
     # =========================================================================
-    - name: "TEST 7 — Simular PowerOn (lista VMs en ESXi sin encender)"
-      ansible.builtin.command:
-        cmd: >
-          sshpass -p {{ esxi_pass }}
-          ssh -p {{ esxi_port }}
-              -o StrictHostKeyChecking=no
-              -o UserKnownHostsFile=/dev/null
-              -o ConnectTimeout=10
-              {{ esxi_user }}@{{ esxi_host }}
-              "vim-cmd vmsvc/getallvms"
-      register: vm_list
+    - name: "TEST 7 — Verificar estado de vm-web01 en ESXi"
+      ansible.builtin.uri:
+        url: "https://{{ esxi_host }}:{{ esxi_port }}/api/vcenter/vm"
+        method: GET
+        headers:
+          vmware-api-session-id: "{{ esxi_auth.json }}"
+        validate_certs: false
+      register: all_vms
       failed_when: false
-      changed_when: false
+      when: esxi_auth.status == 201
 
-    - name: "TEST 7 — VMs registradas en ESXi"
+    - name: "TEST 7 — Estado de todas las VMs"
       ansible.builtin.debug:
-        msg: "{{ vm_list.stdout_lines }}"
-      when: vm_list.rc == 0
+        msg: "{{ item.name }}: {{ item.power_state }}"
+      loop: "{{ all_vms.json }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: esxi_auth.status == 201 and all_vms.status == 200
 
     # =========================================================================
     # 8. RESUMEN FINAL
@@ -191,10 +201,10 @@
       ansible.builtin.debug:
         msg:
           - "======================================="
-          - "RESUMEN TEST ZABBIX + SSH"
+          - "RESUMEN TEST ZABBIX + ESXi API REST"
           - "======================================="
-          - "Zabbix API:    {{ 'OK' if api_test.status == 200 else 'FALLO' }}"
-          - "ESXi SSH:      {{ 'OK' if esxi_test.rc == 0 else 'FALLO' }}"
+          - "Zabbix API:     {{ 'OK' if api_test.status == 200 else 'FALLO' }}"
+          - "ESXi API REST:  {{ 'OK' if esxi_auth.status == 201 else 'FALLO' }}"
           - "Script PowerOn: {{ 'OK' if poweron_stat.stat.exists else 'FALTA' }}"
           - "VMs alcanzables por ping:"
           - "{% for r in ping_results.results %}  {{ r.item.name }}: {{ 'OK' if r.rc == 0 else 'NO' }}{% endfor %}"

@@ -1,0 +1,161 @@
+---
+# ============================================================================
+# discover_esxi.yml — Descubre la IP interna del ESXi y prueba conectividad
+# ============================================================================
+# Uso: sudo ansible-playbook playbooks/discover_esxi.yml -i inventario/hosts.yml
+# ============================================================================
+
+- name: "DISCOVER — Encontrar IP interna del ESXi"
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: true
+
+  vars:
+    esxi_external: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+    # Subredes candidatas donde podria estar el ESXi
+    candidate_subnets:
+      - "192.168.0"
+      - "192.168.1"
+      - "192.168.10"
+      - "192.168.17"
+      - "192.168.100"
+      - "10.0.0"
+      - "10.10.0"
+      - "172.16.0"
+
+  tasks:
+
+    # =========================================================================
+    # 1. Ver interfaces y rutas del servidor actual
+    # =========================================================================
+    - name: "INFO — Interfaces de red del servidor Zabbix"
+      ansible.builtin.command: ip addr show
+      register: ip_addr
+      changed_when: false
+
+    - name: "INFO — Tabla de rutas"
+      ansible.builtin.command: ip route
+      register: ip_route
+      changed_when: false
+
+    - name: "INFO — Interfaces activas"
+      ansible.builtin.debug:
+        msg: "{{ ip_addr.stdout_lines }}"
+
+    - name: "INFO — Rutas"
+      ansible.builtin.debug:
+        msg: "{{ ip_route.stdout_lines }}"
+
+    # =========================================================================
+    # 2. Intentar alcanzar el ESXi en su IP externa primero
+    # =========================================================================
+    - name: "TEST — Ping a IP externa del ESXi"
+      ansible.builtin.command: ping -c 2 -W 2 {{ esxi_external }}
+      register: ping_external
+      failed_when: false
+      changed_when: false
+
+    - name: "TEST — API REST en IP externa"
+      ansible.builtin.uri:
+        url: "https://{{ esxi_external }}:{{ esxi_port }}/api/session"
+        method: POST
+        url_username: "{{ esxi_user }}"
+        url_password: "{{ esxi_pass }}"
+        force_basic_auth: true
+        validate_certs: false
+        timeout: 5
+      register: api_external
+      failed_when: false
+
+    - name: "RESULT — IP externa"
+      ansible.builtin.debug:
+        msg:
+          - "Ping {{ esxi_external }}: {{ 'ALCANZABLE' if ping_external.rc == 0 else 'NO RESPONDE' }}"
+          - "API REST {{ esxi_external }}:{{ esxi_port }}: {{ 'OK status=' + (api_external.status|string) if api_external.status is defined else 'NO RESPONDE' }}"
+
+    # =========================================================================
+    # 3. Escanear la red local buscando algo en puerto 10112 o 443
+    # =========================================================================
+    - name: "SCAN — Buscar gateway de cada interfaz"
+      ansible.builtin.command: ip route show
+      register: routes_raw
+      changed_when: false
+
+    - name: "SCAN — Extraer gateways"
+      ansible.builtin.set_fact:
+        gateways: >-
+          {{ routes_raw.stdout_lines
+             | select('search', 'via')
+             | map('regex_findall', '\d+\.\d+\.\d+\.\d+')
+             | flatten | unique | list }}
+
+    - name: "SCAN — Gateways encontrados"
+      ansible.builtin.debug:
+        msg: "Gateways: {{ gateways }}"
+
+    - name: "SCAN — Probar API REST en cada gateway"
+      ansible.builtin.uri:
+        url: "https://{{ item }}:{{ esxi_port }}/api/session"
+        method: POST
+        url_username: "{{ esxi_user }}"
+        url_password: "{{ esxi_pass }}"
+        force_basic_auth: true
+        validate_certs: false
+        timeout: 5
+      loop: "{{ gateways }}"
+      register: gw_api_results
+      failed_when: false
+
+    - name: "SCAN — Resultados por gateway"
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: {{ 'ESXI ENCONTRADO! status=' + (item.status|string) if item.status is defined and item.status in [200,201] else 'no es ESXi (' + (item.status|string if item.status is defined else 'timeout') + ')' }}"
+      loop: "{{ gw_api_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # =========================================================================
+    # 4. Intentar con subredes .1 (router/hypervisor suele ser .1 o .2)
+    # =========================================================================
+    - name: "SCAN — Probar IPs .1 y .2 de subredes candidatas"
+      ansible.builtin.uri:
+        url: "https://{{ item.0 }}.{{ item.1 }}:{{ esxi_port }}/api/session"
+        method: POST
+        url_username: "{{ esxi_user }}"
+        url_password: "{{ esxi_pass }}"
+        force_basic_auth: true
+        validate_certs: false
+        timeout: 3
+      loop: "{{ candidate_subnets | product([1, 2, 254]) | list }}"
+      loop_control:
+        label: "{{ item.0 }}.{{ item.1 }}"
+      register: subnet_scan
+      failed_when: false
+
+    - name: "SCAN — IPs con API REST de ESXi activa"
+      ansible.builtin.debug:
+        msg: "ESXI ENCONTRADO EN: {{ item.item.0 }}.{{ item.item.1 }}:{{ esxi_port }}"
+      loop: "{{ subnet_scan.results }}"
+      loop_control:
+        label: "{{ item.item.0 }}.{{ item.item.1 }}"
+      when: item.status is defined and item.status in [200, 201]
+
+    # =========================================================================
+    # 5. Resumen
+    # =========================================================================
+    - name: "RESUMEN — Todo lo encontrado"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "RESULTADO DEL DESCUBRIMIENTO"
+          - "============================================"
+          - "IP externa {{ esxi_external }}:{{ esxi_port }} API: {{ 'OK' if api_external.status is defined and api_external.status in [200,201] else 'FALLO' }}"
+          - "Gateways locales: {{ gateways | join(', ') }}"
+          - "IPs internas con ESXi API activa:"
+          - "{{ subnet_scan.results | selectattr('status', 'defined') | selectattr('status', 'in', [200,201]) | map(attribute='item') | map('join', '.') | list | join(', ') or 'ninguna encontrada' }}"
+          - "============================================"
+          - "SIGUIENTE PASO: usa la IP encontrada en zabbix_orchestrator.yml"
+          - "============================================"
