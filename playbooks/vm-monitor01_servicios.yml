@@ -109,16 +109,29 @@
         mysql -uzabbix -p'{{ zabbix_password }}' -e "SELECT COUNT(*) AS user_count FROM users" zabbix
         echo "Schema OK"
 
-    - name: "MON — Crear directorio zabbix"
+    - name: "MON — Crear directorio /run/zabbix"
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: /run/zabbix
         state: directory
         owner: zabbix
         group: zabbix
         mode: "0755"
-      loop:
-        - /run/zabbix
-        - /var/log/zabbix
+
+    - name: "MON — Crear directorio /var/log/zabbix"
+      ansible.builtin.file:
+        path: /var/log/zabbix
+        state: directory
+        owner: zabbix
+        group: zabbix
+        mode: "0755"
+
+    - name: "MON — Crear directorio /etc/zabbix"
+      ansible.builtin.file:
+        path: /etc/zabbix
+        state: directory
+        owner: zabbix
+        group: zabbix
+        mode: "0755"
 
     - name: "MON — Configurar Zabbix Server"
       ansible.builtin.copy:
@@ -130,7 +143,10 @@
           DBUser=zabbix
           DBPassword={{ zabbix_password }}
           Timeout=30
+          PidFile=/run/zabbix/zabbix_server.pid
         mode: "0644"
+        owner: zabbix
+        group: zabbix
 
     - name: "MON — Detectar version PHP"
       ansible.builtin.shell: |
@@ -255,10 +271,15 @@
         ls -la /usr/share/zabbix/conf
         echo "Permisosfixeados"
 
-    - name: "MON — Iniciar Zabbix Server"
+    - name: "MON — Iniciar y habilitar Zabbix Server"
       ansible.builtin.shell: |
+        systemctl daemon-reload
+        systemctl enable zabbix-server
+        systemctl stop zabbix-server 2>/dev/null || true
+        sleep 2
+        systemctl start zabbix-server
         sleep 5
-        systemctl status zabbix-server --no-pager | head -10
+        systemctl status zabbix-server --no-pager | head -15
 
     - name: "MON — Esperar y verificar Zabbix"
       ansible.builtin.shell: |
