@@ -119,6 +119,7 @@ def upsert_action(name, params):
 
 
 # Action: VM apagada → PowerOn ESXi
+# Filtra por severity=4 (High) que es lo que tiene el trigger "Agent no responde"
 upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
@@ -127,9 +128,9 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "filter": {
         "evaltype": 0,
         "conditions": [{
-            "conditiontype": 16,
-            "operator": 10,
-            "value": "Agent no responde"
+            "conditiontype": 4,
+            "operator": 5,
+            "value": "4"
         }]
     },
     "operations": [{
