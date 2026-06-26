@@ -153,6 +153,17 @@
         group: ubuntu
         mode: "0644"
 
+    - name: "DOCKER — Instalar Nginx"
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+
+    - name: "DOLIBARR — Crear directorio sites-available"
+      ansible.builtin.file:
+        path: /etc/nginx/sites-available
+        state: directory
+        mode: "0755"
+
     - name: "DOLIBARR — Crear directorio documents"
       ansible.builtin.file:
         path: /var/dolibarr/documents
@@ -160,8 +171,6 @@
         owner: www-data
         group: ubuntu
         mode: "0755"
-
-    - name: "DOLIBARR — Crear vhost Nginx"
       ansible.builtin.copy:
         dest: /etc/nginx/sites-available/dolibarr
         content: |
