@@ -109,6 +109,14 @@
         mysql -uzabbix -p'{{ zabbix_password }}' -e "SELECT COUNT(*) AS user_count FROM users" zabbix
         echo "Schema OK"
 
+    - name: "MON — Crear directorio /etc/zabbix"
+      ansible.builtin.file:
+        path: /etc/zabbix
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
     - name: "MON — Crear directorio /run/zabbix"
       ansible.builtin.file:
         path: /run/zabbix
@@ -125,14 +133,6 @@
         group: zabbix
         mode: "0755"
 
-    - name: "MON — Crear directorio /etc/zabbix"
-      ansible.builtin.file:
-        path: /etc/zabbix
-        state: directory
-        owner: zabbix
-        group: zabbix
-        mode: "0755"
-
     - name: "MON — Configurar Zabbix Server"
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_server.conf
@@ -144,9 +144,11 @@
           DBPassword={{ zabbix_password }}
           Timeout=30
           PidFile=/run/zabbix/zabbix_server.pid
+          SocketDir=/run/zabbix
         mode: "0644"
         owner: zabbix
         group: zabbix
+        force: yes
 
     - name: "MON — Detectar version PHP"
       ansible.builtin.shell: |
@@ -273,6 +275,34 @@
 
     - name: "MON — Iniciar y habilitar Zabbix Server"
       ansible.builtin.shell: |
+        echo "=== VERIFICANDO CONFIG ==="
+        ls -la /etc/zabbix/zabbix_server.conf 2>/dev/null \
+          && echo "CONFIG EXISTE" \
+          || echo "CONFIG NO EXISTE - CREANDO"
+
+        # Si no existe, crear directorio y archivo
+        if [ ! -f /etc/zabbix/zabbix_server.conf ]; then
+          mkdir -p /etc/zabbix /run/zabbix /var/log/zabbix
+          chown -R zabbix:zabbix /run/zabbix /var/log/zabbix 2>/dev/null || true
+
+          cat > /etc/zabbix/zabbix_server.conf << 'EOF'
+LogFile=/var/log/zabbix/zabbix_server.log
+DBHost=localhost
+DBName=zabbix
+DBUser=zabbix
+DBPassword={{ zabbix_password }}
+Timeout=30
+PidFile=/run/zabbix/zabbix_server.pid
+SocketDir=/run/zabbix
+EOF
+          chown zabbix:zabbix /etc/zabbix/zabbix_server.conf
+          chmod 644 /etc/zabbix/zabbix_server.conf
+          echo "CONFIG CREADO MANUALMENTE"
+        fi
+
+        cat /etc/zabbix/zabbix_server.conf
+        echo ""
+
         systemctl daemon-reload
         systemctl enable zabbix-server
         systemctl stop zabbix-server 2>/dev/null || true
