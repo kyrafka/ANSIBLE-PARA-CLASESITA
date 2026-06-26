@@ -53,20 +53,34 @@
 
           echo "[$(date)] Buscando VM: $VM_NAME via API REST ESXi $ESXI_HOST:$ESXI_PORT"
 
-          # Obtener session token (API REST ESXi 6.7+)
+          # Intentar auth con /api/session (ESXi 7+) primero, luego /rest/ (ESXi 6.x)
           TOKEN=$(curl -sk -X POST "$BASE/api/session" \
             -H "Content-Type: application/json" \
             -u "$ESXI_USER:$ESXI_PASS" | tr -d '"')
 
-          if [ -z "$TOKEN" ]; then
-            echo "ERROR: No se pudo autenticar en ESXi API"
+          API_VER="v7"
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] || echo "$TOKEN" | grep -q "errorType"; then
+            # Fallback a ESXi 6.x /rest/
+            TOKEN=$(curl -sk -X POST "$BASE/rest/com/vmware/cis/session" \
+              -u "$ESXI_USER:$ESXI_PASS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('value',''))" 2>/dev/null)
+            API_VER="v6"
+          fi
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "ERROR: No se pudo autenticar en ESXi API (intentado v7 y v6)"
             exit 1
           fi
-          echo "Auth OK"
+          echo "Auth OK (ESXi API $API_VER)"
 
-          # Listar todas las VMs
-          VMS=$(curl -sk -X GET "$BASE/api/vcenter/vm" \
-            -H "vmware-api-session-id: $TOKEN")
+          # Listar VMs según versión API
+          if [ "$API_VER" = "v7" ]; then
+            VMS=$(curl -sk -X GET "$BASE/api/vcenter/vm" \
+              -H "vmware-api-session-id: $TOKEN")
+          else
+            VMS=$(curl -sk -X GET "$BASE/rest/vcenter/vm" \
+              -H "vmware-api-session-id: $TOKEN" \
+              | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin).get('value',[])))" 2>/dev/null)
+          fi
 
           # Buscar VM por nombre (case insensitive)
           VM_ID=$(echo "$VMS" | python3 -c "import sys,json; vms=json.load(sys.stdin); name='$VM_NAME'.lower(); [print(v['vm']) for v in vms if v.get('name','').lower()==name or v.get('name','').lower().startswith(name)]" 2>/dev/null | head -1)
@@ -93,10 +107,15 @@
 
           # Encender VM
           echo "Encendiendo VM..."
-          RESULT=$(curl -sk -X POST "$BASE/api/vcenter/vm/$VM_ID/power?action=start" \
-            -H "vmware-api-session-id: $TOKEN")
-
-          curl -sk -X DELETE "$BASE/api/session" -H "vmware-api-session-id: $TOKEN" > /dev/null
+          if [ "$API_VER" = "v7" ]; then
+            curl -sk -X POST "$BASE/api/vcenter/vm/$VM_ID/power?action=start" \
+              -H "vmware-api-session-id: $TOKEN" > /dev/null
+            curl -sk -X DELETE "$BASE/api/session" -H "vmware-api-session-id: $TOKEN" > /dev/null
+          else
+            curl -sk -X POST "$BASE/rest/vcenter/vm/$VM_ID/power/start" \
+              -H "vmware-api-session-id: $TOKEN" > /dev/null
+            curl -sk -X DELETE "$BASE/rest/com/vmware/cis/session" -H "vmware-api-session-id: $TOKEN" > /dev/null
+          fi
 
           echo "[$(date)] OK — $VM_NAME ($VM_ID) encendida"
 
