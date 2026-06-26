@@ -30,7 +30,7 @@
         update_cache: false
 
     # =========================================================================
-    # 2. CREAR SCRIPT DE AUTO-POWERON EN ESXI
+    # 2. SCRIPT vm-poweron.sh — conecta al ESXi y enciende la VM por nombre
     # =========================================================================
     - name: "ESXI — Crear script vm-poweron.sh"
       ansible.builtin.copy:
@@ -38,8 +38,6 @@
         mode: "0755"
         content: |
           #!/bin/bash
-          # vm-poweron.sh — Enciende una VM en ESXi por nombre
-          # Uso: vm-poweron.sh <nombre_vm>
           VM_NAME="$1"
           ESXI_HOST="{{ esxi_host }}"
           ESXI_PORT="{{ esxi_port }}"
@@ -51,55 +49,35 @@
             exit 1
           fi
 
-          SSH_CMD="sshpass -p '$ESXI_PASS' ssh -p $ESXI_PORT \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=10 \
-            $ESXI_USER@$ESXI_HOST"
+          SSH="sshpass -p $ESXI_PASS ssh -p $ESXI_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 $ESXI_USER@$ESXI_HOST"
 
-          echo "[$(date)] Buscando VM: $VM_NAME en ESXi $ESXI_HOST:$ESXI_PORT"
-
-          # Obtener lista de VMs
-          VM_LIST=$(eval "$SSH_CMD 'vim-cmd vmsvc/getallvms'" 2>/dev/null)
+          echo "[$(date)] Buscando VM: $VM_NAME en $ESXI_HOST:$ESXI_PORT"
+          VM_LIST=$(eval "$SSH 'vim-cmd vmsvc/getallvms'" 2>/dev/null)
           if [ $? -ne 0 ]; then
             echo "ERROR: No se pudo conectar al ESXi"
             exit 1
           fi
 
-          # Buscar VM por nombre (case insensitive)
           VM_LINE=$(echo "$VM_LIST" | grep -i "$VM_NAME" | head -1)
           if [ -z "$VM_LINE" ]; then
-            echo "ERROR: VM '$VM_NAME' no encontrada en ESXi"
-            echo "VMs disponibles:"
-            echo "$VM_LIST"
+            echo "ERROR: VM '$VM_NAME' no encontrada"
             exit 1
           fi
 
           VM_ID=$(echo "$VM_LINE" | awk '{print $1}')
-          VM_REAL_NAME=$(echo "$VM_LINE" | awk '{print $2}')
-          echo "Encontrada: $VM_REAL_NAME (ID: $VM_ID)"
+          echo "VM ID: $VM_ID"
 
-          # Verificar estado actual
-          POWER_STATE=$(eval "$SSH_CMD 'vim-cmd vmsvc/power.getstate $VM_ID'" 2>/dev/null | tail -1)
-          echo "Estado actual: $POWER_STATE"
-
-          if echo "$POWER_STATE" | grep -qi "poweredOn"; then
-            echo "VM ya está encendida"
+          POWER=$(eval "$SSH 'vim-cmd vmsvc/power.getstate $VM_ID'" 2>/dev/null | tail -1)
+          if echo "$POWER" | grep -qi "poweredOn"; then
+            echo "VM ya encendida"
             exit 0
           fi
 
-          # Encender VM
-          echo "Encendiendo VM..."
-          eval "$SSH_CMD 'vim-cmd vmsvc/power.on $VM_ID'" 2>/dev/null
-          if [ $? -eq 0 ]; then
-            echo "[$(date)] OK — VM $VM_NAME encendida exitosamente"
-          else
-            echo "ERROR: Fallo al encender VM $VM_NAME"
-            exit 1
-          fi
+          eval "$SSH 'vim-cmd vmsvc/power.on $VM_ID'" 2>/dev/null
+          echo "[$(date)] OK — $VM_NAME encendida"
 
     # =========================================================================
-    # 3. CREAR SCRIPT DE RESTART DE SERVICIOS VIA SSH
+    # 3. SCRIPT service-restart.sh — SSH a la VM y reinicia el servicio
     # =========================================================================
     - name: "SSH — Crear script service-restart.sh"
       ansible.builtin.copy:
@@ -107,459 +85,49 @@
         mode: "0755"
         content: |
           #!/bin/bash
-          # service-restart.sh — Reinicia servicios en host remoto via SSH
-          # Uso: service-restart.sh <host_ip> <servicio>
           HOST_IP="$1"
           SERVICE="$2"
 
           if [ -z "$HOST_IP" ] || [ -z "$SERVICE" ]; then
-            echo "ERROR: Uso: service-restart.sh <ip> <servicio>"
+            echo "ERROR: uso: service-restart.sh <ip> <servicio>"
             exit 1
           fi
 
           echo "[$(date)] Reiniciando $SERVICE en $HOST_IP..."
-
-          # Intentar reinicio via SSH (asume clave SSH o acceso configurado)
-          ssh -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=10 \
-              -o BatchMode=yes \
-              root@$HOST_IP \
-              "systemctl restart $SERVICE && systemctl is-active $SERVICE" 2>/dev/null
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=10 -o BatchMode=yes \
+              root@$HOST_IP "systemctl restart $SERVICE && systemctl is-active $SERVICE"
 
           if [ $? -eq 0 ]; then
             echo "[$(date)] OK — $SERVICE reiniciado en $HOST_IP"
           else
-            echo "ERROR: No se pudo reiniciar $SERVICE en $HOST_IP"
+            echo "ERROR: fallo reiniciando $SERVICE en $HOST_IP"
             exit 1
           fi
 
     # =========================================================================
-    # 4. CONFIGURAR ZABBIX VIA API
+    # 4. COPIAR SCRIPT PYTHON DE CONFIGURACION ZABBIX
     # =========================================================================
-    - name: "ZABBIX — Configurar hosts, triggers, actions y scripts"
-      ansible.builtin.shell: |
-        set -e
-        API="{{ zabbix_api }}"
+    - name: "ZABBIX — Copiar script de configuracion"
+      ansible.builtin.copy:
+        src: files/zabbix_setup.py
+        dest: /tmp/zabbix_setup.py
+        mode: "0755"
 
-        echo "=== 1. AUTENTICACION ==="
-        RESULT=$(curl -s -X POST "$API" \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.login\",\"params\":{\"username\":\"{{ zabbix_user }}\",\"password\":\"{{ zabbix_pass }}\"},\"id\":1}")
-
-        TOKEN=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))" 2>/dev/null)
-
-        if [ -z "$TOKEN" ]; then
-          echo "ERROR AUTH: $RESULT"
-          exit 1
-        fi
-        echo "TOKEN OK: ${TOKEN:0:20}..."
-
-        api_call() {
-          echo "$1" | curl -s -X POST "$API" \
-            -H "Content-Type: application/json-rpc" \
-            -d @-
-        }
-
-        # Obtener template ID
-        TMPL_ID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"template.get\",\"params\":{\"filter\":{\"host\":[\"Linux by Zabbix agent\"]}},\"auth\":\"$TOKEN\",\"id\":2}" \
-          | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['templateid'] if r else '')" 2>/dev/null)
-        echo "Template ID: $TMPL_ID"
-
-        echo ""
-        echo "=== 2. REGISTRAR HOSTS ==="
-        declare -A HOST_IPS=(
-          ["vm-dc01"]="192.168.16.10"
-          ["vm-web01"]="192.168.11.11"
-          ["vm-services01"]="192.168.13.11"
-          ["vm-storage01"]="192.168.14.11"
-          ["vm-voip01"]="192.168.15.11"
-          ["vm-monitor01"]="192.168.17.11"
-          ["vm-docker01"]="192.168.13.12"
-          ["core1"]="192.168.10.20"
-          ["core2"]="192.168.10.30"
-        )
-
-        for NAME in "${!HOST_IPS[@]}"; do
-          IP="${HOST_IPS[$NAME]}"
-          echo "Procesando $NAME ($IP)..."
-
-          EXISTING=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"filter\":{\"host\":[\"$NAME\"]},\"output\":[\"hostid\"]},\"auth\":\"$TOKEN\",\"id\":3}" \
-            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['hostid'] if r else '')" 2>/dev/null)
-
-          if [ -n "$EXISTING" ]; then
-            echo "  Existe (id:$EXISTING) — actualizando template..."
-            api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.update\",\"params\":{\"hostid\":\"$EXISTING\",\"templates\":[{\"templateid\":\"$TMPL_ID\"}]},\"auth\":\"$TOKEN\",\"id\":3}" \
-              | python3 -c "import sys,json; r=json.load(sys.stdin); print('  Template OK' if 'result' in r else '  '+str(r.get('error','')))" 2>/dev/null
-          else
-            api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.create\",\"params\":{\"host\":\"$NAME\",\"groups\":[{\"groupid\":4}],\"interfaces\":[{\"type\":1,\"main\":1,\"useip\":1,\"ip\":\"$IP\",\"dns\":\"\",\"port\":\"10050\"}],\"templates\":[{\"templateid\":\"$TMPL_ID\"}]},\"auth\":\"$TOKEN\",\"id\":3}" \
-              | python3 -c "import sys,json; r=json.load(sys.stdin); print('  CREADO: '+str(r.get('result',r.get('error',{}))))" 2>/dev/null
-          fi
-        done
-
-        echo ""
-        echo "=== 3. REGISTRAR SCRIPTS EN ZABBIX ==="
-
-        # Script 1: PowerOn VM via ESXi
-        SCRIPT1=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"script.create\",
-          \"params\": {
-            \"name\": \"AXIOM: PowerOn VM en ESXi\",
-            \"command\": \"/usr/local/bin/vm-poweron.sh {HOST.NAME}\",
-            \"execute_on\": 0,
-            \"type\": 0,
-            \"description\": \"Enciende la VM en ESXi usando el nombre del host Zabbix\"
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 20
-        }")
-        echo "Script PowerOn: $(echo $SCRIPT1 | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK id='+str(r.get('result',{}).get('scriptids',['err'])[0])) if 'result' in r else print('ERROR: '+str(r.get('error','')))" 2>/dev/null)"
-
-        # Script 2: Restart service via SSH
-        SCRIPT2=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"script.create\",
-          \"params\": {
-            \"name\": \"AXIOM: Restart Service via SSH\",
-            \"command\": \"/usr/local/bin/service-restart.sh {HOST.CONN} {EVENT.TAGS.__service}\",
-            \"execute_on\": 0,
-            \"type\": 0,
-            \"description\": \"Reinicia el servicio caído en el host remoto via SSH\"
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 21
-        }")
-        echo "Script Restart: $(echo $SCRIPT2 | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK id='+str(r.get('result',{}).get('scriptids',['err'])[0])) if 'result' in r else print('ERROR: '+str(r.get('error','')))" 2>/dev/null)"
-
-        echo ""
-        echo "=== 4. CREAR TRIGGERS ==="
-        ALL_HOSTS=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\"]},\"auth\":\"$TOKEN\",\"id\":4}" \
-          | python3 -c "import sys,json; [print(h['hostid']+':'+h['name']) for h in json.load(sys.stdin).get('result',[])]" 2>/dev/null)
-
-        for line in $ALL_HOSTS; do
-          HOSTID=$(echo "$line" | cut -d: -f1)
-          NAME=$(echo "$line" | cut -d: -f2)
-          echo "Triggers para $NAME (id:$HOSTID)..."
-
-          # Trigger: Agent Down (2 minutos) — para VM apagada
-          api_call "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.create\",\"params\":[{
-            \"description\": \"$NAME: Agent no responde (VM posiblemente apagada)\",
-            \"expression\": \"nodata(/$NAME/agent.ping,2m)=1\",
-            \"priority\": 4,
-            \"manual_close\": 1,
-            \"tags\": [{\"tag\": \"auto_recovery\", \"value\": \"poweron\"},{\"tag\": \"scope\", \"value\": \"availability\"}]
-          }],\"auth\":\"$TOKEN\",\"id\":5}" > /dev/null 2>&1 || true
-
-          # Trigger: CPU alta
-          api_call "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.create\",\"params\":[{
-            \"description\": \"$NAME: CPU critico (>95% por 5min)\",
-            \"expression\": \"avg(/$NAME/system.cpu.util,5m)>95\",
-            \"priority\": 3,
-            \"tags\": [{\"tag\": \"scope\", \"value\": \"performance\"}]
-          }],\"auth\":\"$TOKEN\",\"id\":5}" > /dev/null 2>&1 || true
-
-          # Trigger: RAM baja
-          api_call "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.create\",\"params\":[{
-            \"description\": \"$NAME: Memoria disponible critica (<512MB)\",
-            \"expression\": \"avg(/$NAME/vm.memory.size[available],5m)<536870912\",
-            \"priority\": 3,
-            \"tags\": [{\"tag\": \"scope\", \"value\": \"performance\"}]
-          }],\"auth\":\"$TOKEN\",\"id\":5}" > /dev/null 2>&1 || true
-
-          # Trigger: Disco
-          api_call "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.create\",\"params\":[{
-            \"description\": \"$NAME: Espacio en disco critico (<10%)\",
-            \"expression\": \"last(/$NAME/vfs.fs.size[/,pfree])<10\",
-            \"priority\": 3,
-            \"tags\": [{\"tag\": \"scope\", \"value\": \"capacity\"}]
-          }],\"auth\":\"$TOKEN\",\"id\":5}" > /dev/null 2>&1 || true
-
-          echo "  4 triggers OK"
-        done
-
-        echo ""
-        echo "=== 5. CREAR ACTIONS ==="
-
-        # Action 1: VM apagada → PowerOn en ESXi (espera 2 min)
-        R=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"action.create\",
-          \"params\": {
-            \"name\": \"AXIOM: Auto PowerOn VM en ESXi\",
-            \"eventsource\": 0,
-            \"status\": 0,
-            \"esc_period\": \"2m\",
-            \"filter\": {
-              \"evaltype\": 0,
-              \"conditions\": [
-                {\"conditiontype\": 22, \"operator\": 2, \"value\": \"auto_recovery\"},
-                {\"conditiontype\": 22, \"operator\": 2, \"value\": \"poweron\"}
-              ]
-            },
-            \"operations\": [{
-              \"operationtype\": 1,
-              \"esc_period\": \"0\",
-              \"esc_step_from\": 1,
-              \"esc_step_to\": 1,
-              \"opcommand\": {
-                \"type\": 0,
-                \"command\": \"/usr/local/bin/vm-poweron.sh {HOST.NAME}\",
-                \"execute_on\": 0
-              },
-              \"opcommand_hst\": [{\"hostid\": 0}]
-            }],
-            \"recovery_operations\": [{
-              \"operationtype\": 11,
-              \"opmessage\": {
-                \"default_msg\": 1,
-                \"mediatypeid\": 0
-              }
-            }]
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 30
-        }")
-        echo "Action PowerOn: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK' if 'result' in r else str(r.get('error','')))" 2>/dev/null)"
-
-        # Action 2: Restart servicio caído
-        R=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"action.create\",
-          \"params\": {
-            \"name\": \"AXIOM: Auto Restart Service\",
-            \"eventsource\": 0,
-            \"status\": 0,
-            \"esc_period\": \"1m\",
-            \"filter\": {
-              \"evaltype\": 0,
-              \"conditions\": [
-                {\"conditiontype\": 22, \"operator\": 2, \"value\": \"auto_recovery\"},
-                {\"conditiontype\": 22, \"operator\": 2, \"value\": \"service\"}
-              ]
-            },
-            \"operations\": [{
-              \"operationtype\": 1,
-              \"esc_period\": \"0\",
-              \"esc_step_from\": 1,
-              \"esc_step_to\": 1,
-              \"opcommand\": {
-                \"type\": 0,
-                \"command\": \"/usr/local/bin/service-restart.sh {HOST.CONN} {EVENT.TAGS.__service}\",
-                \"execute_on\": 0
-              },
-              \"opcommand_hst\": [{\"hostid\": 0}]
-            }]
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 31
-        }")
-        echo "Action Restart Service: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK' if 'result' in r else str(r.get('error','')))" 2>/dev/null)"
-
-        # Action 3: Notificacion email en cualquier problema
-        R=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"action.create\",
-          \"params\": {
-            \"name\": \"AXIOM: Notificacion Email Problemas\",
-            \"eventsource\": 0,
-            \"status\": 0,
-            \"esc_period\": \"1h\",
-            \"filter\": {
-              \"evaltype\": 0,
-              \"conditions\": [
-                {\"conditiontype\": 5, \"operator\": 0, \"value\": \"2\"}
-              ]
-            },
-            \"operations\": [{
-              \"operationtype\": 0,
-              \"esc_period\": \"0\",
-              \"esc_step_from\": 1,
-              \"esc_step_to\": 1,
-              \"opmessage\": {
-                \"default_msg\": 1,
-                \"mediatypeid\": 0
-              },
-              \"opmessage_usr\": [{\"userid\": 1}]
-            }]
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 32
-        }")
-        echo "Action Email: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK' if 'result' in r else str(r.get('error','')))" 2>/dev/null)"
-
-        echo ""
-        echo "=== 6. CONFIGURAR NOTIFICACIONES EMAIL ==="
-        USERID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"user.get\",\"params\":{\"filter\":{\"username\":[\"Admin\"]}},\"auth\":\"$TOKEN\",\"id\":40}" \
-          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',[{}])[0].get('userid','1'))" 2>/dev/null)
-
-        MT_ID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"mediatype.get\",\"params\":{\"filter\":{\"name\":[\"Email\"]}},\"auth\":\"$TOKEN\",\"id\":41}" \
-          | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['mediatypeid'] if r else '')" 2>/dev/null)
-
-        if [ -z "$MT_ID" ]; then
-          MT_ID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"mediatype.create\",\"params\":{\"type\":0,\"name\":\"Email\",\"smtp_server\":\"localhost\",\"smtp_port\":25,\"smtp_helo\":\"zabbix.aj.local\",\"smtp_email\":\"zabbix@aj.local\"},\"auth\":\"$TOKEN\",\"id\":42}" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('mediatypeids',['1'])[0])" 2>/dev/null)
-          echo "Email media type creado: $MT_ID"
-        else
-          echo "Email media type ya existe: $MT_ID"
-        fi
-
-        api_call "{\"jsonrpc\":\"2.0\",\"method\":\"user.update\",\"params\":{\"userid\":\"$USERID\",\"user_medias\":[{\"mediatypeid\":$MT_ID,\"send_to\":\"josedario.zuniga@gmail.com\",\"severity\":63,\"active\":0,\"period\":\"1-7,00:00-24:00\"}]},\"auth\":\"$TOKEN\",\"id\":43}" > /dev/null 2>&1
-        echo "Email asignado a Admin: josedario.zuniga@gmail.com"
-
-        echo ""
-        echo "=========================================="
-        echo "ZABBIX 7 — CONFIGURACION COMPLETA"
-        echo "=========================================="
-        echo "Hosts: 9 VMs registradas con template"
-        echo "Triggers: 4 por host (agent down, CPU, RAM, disco)"
-        echo "Scripts: vm-poweron.sh / service-restart.sh"
-        echo "Actions:"
-        echo "  - VM apagada → ESXi PowerOn en 2 min"
-        echo "  - Servicio caido → SSH restart inmediato"
-        echo "  - Cualquier problema → Email notificacion"
-        echo "=========================================="
-
-      args:
-        executable: /bin/bash
-      changed_when: false
+    # =========================================================================
+    # 5. EJECUTAR CONFIGURACION: hosts, scripts, actions, email
+    # =========================================================================
+    - name: "ZABBIX — Ejecutar configuracion completa"
+      ansible.builtin.command:
+        cmd: >-
+          python3 /tmp/zabbix_setup.py
+          {{ zabbix_api }}
+          {{ zabbix_user }}
+          {{ zabbix_pass }}
+          josedario.zuniga@gmail.com
       register: zabbix_config
-
-    # =========================================================================
-    # 5. CREAR ACTIONS ZABBIX 7 (API corregida)
-    # =========================================================================
-    - name: "ACTIONS — Crear actions de iniciador en Zabbix 7"
-      ansible.builtin.shell: |
-        set -e
-        API="{{ zabbix_api }}"
-
-        TOKEN=$(curl -s -X POST "$API" \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"user.login\",\"params\":{\"username\":\"{{ zabbix_user }}\",\"password\":\"{{ zabbix_pass }}\"},\"id\":1}" \
-          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))" 2>/dev/null)
-
-        if [ -z "$TOKEN" ]; then echo "ERROR AUTH"; exit 1; fi
-        echo "TOKEN OK"
-
-        api_call() {
-          echo "$1" | curl -s -X POST "$API" \
-            -H "Content-Type: application/json-rpc" \
-            -d @-
-        }
-
-        # Eliminar actions anteriores si existen (idempotente)
-        for ANAME in "AXIOM: Auto PowerOn VM en ESXi" "AXIOM: Auto Restart Service" "AXIOM: Notificacion Email Problemas"; do
-          AID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"filter\":{\"name\":[\"$ANAME\"]}},\"auth\":\"$TOKEN\",\"id\":1}" \
-            | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['actionid'] if r else '')" 2>/dev/null)
-          if [ -n "$AID" ]; then
-            api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.delete\",\"params\":[\"$AID\"],\"auth\":\"$TOKEN\",\"id\":1}" > /dev/null 2>&1
-            echo "Eliminada action previa: $ANAME"
-          fi
-        done
-
-        # -------------------------------------------------------
-        # ACTION 1: VM apagada → PowerOn ESXi (espera 2 min)
-        # conditiontype 16 = trigger name contains
-        # -------------------------------------------------------
-        R=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"action.create\",
-          \"params\": {
-            \"name\": \"AXIOM: Auto PowerOn VM en ESXi\",
-            \"eventsource\": 0,
-            \"status\": 0,
-            \"esc_period\": \"2m\",
-            \"filter\": {
-              \"evaltype\": 0,
-              \"conditions\": [{
-                \"conditiontype\": 16,
-                \"operator\": 2,
-                \"value\": \"Agent no responde\"
-              }]
-            },
-            \"operations\": [{
-              \"operationtype\": 1,
-              \"esc_period\": \"0\",
-              \"esc_step_from\": 1,
-              \"esc_step_to\": 1,
-              \"opcommand\": {
-                \"type\": 0,
-                \"command\": \"/usr/local/bin/vm-poweron.sh {HOST.NAME}\",
-                \"execute_on\": 0
-              },
-              \"opcommand_hst\": [{\"hostid\": \"0\"}]
-            }]
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 50
-        }")
-        echo "Action PowerOn VM: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK — id: '+str(r.get('result',{}).get('actionids',['?'])[0])) if 'result' in r else print('ERROR: '+str(r.get('error',{}).get('data','')))" 2>/dev/null)"
-
-        # -------------------------------------------------------
-        # ACTION 2: Cualquier problema con severidad >= Warning → Email
-        # conditiontype 4 = trigger severity >= Warning (2)
-        # -------------------------------------------------------
-        USERID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"user.get\",\"params\":{\"filter\":{\"username\":[\"Admin\"]}},\"auth\":\"$TOKEN\",\"id\":51}" \
-          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',[{}])[0].get('userid','1'))" 2>/dev/null)
-
-        MT_ID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"mediatype.get\",\"params\":{\"filter\":{\"name\":[\"Email\"]}},\"auth\":\"$TOKEN\",\"id\":52}" \
-          | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['mediatypeid'] if r else '1')" 2>/dev/null)
-
-        R=$(api_call "{
-          \"jsonrpc\": \"2.0\",
-          \"method\": \"action.create\",
-          \"params\": {
-            \"name\": \"AXIOM: Notificacion Email Problemas\",
-            \"eventsource\": 0,
-            \"status\": 0,
-            \"esc_period\": \"1h\",
-            \"filter\": {
-              \"evaltype\": 0,
-              \"conditions\": [{
-                \"conditiontype\": 4,
-                \"operator\": 5,
-                \"value\": \"2\"
-              }]
-            },
-            \"operations\": [{
-              \"operationtype\": 0,
-              \"esc_period\": \"0\",
-              \"esc_step_from\": 1,
-              \"esc_step_to\": 1,
-              \"opmessage\": {
-                \"default_msg\": 1,
-                \"mediatypeid\": \"$MT_ID\"
-              },
-              \"opmessage_usr\": [{\"userid\": \"$USERID\"}]
-            }],
-            \"recovery_operations\": [{
-              \"operationtype\": 0,
-              \"opmessage\": {
-                \"default_msg\": 1,
-                \"mediatypeid\": \"$MT_ID\"
-              },
-              \"opmessage_usr\": [{\"userid\": \"$USERID\"}]
-            }]
-          },
-          \"auth\": \"$TOKEN\",
-          \"id\": 53
-        }")
-        echo "Action Email: $(echo $R | python3 -c "import sys,json; r=json.load(sys.stdin); print('OK — id: '+str(r.get('result',{}).get('actionids',['?'])[0])) if 'result' in r else print('ERROR: '+str(r.get('error',{}).get('data','')))" 2>/dev/null)"
-
-        echo ""
-        echo "=== VERIFICAR ACTIONS CREADAS ==="
-        api_call "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"name\",\"status\"],\"filter\":{\"eventsource\":0}},\"auth\":\"$TOKEN\",\"id\":54}" \
-          | python3 -c "import sys,json; acts=json.load(sys.stdin).get('result',[]); print(f'Total: {len(acts)}'); [print(('  [ACTIVA] ' if a[\"status\"]==\"0\" else '  [DESACT] ')+a['name']) for a in acts]" 2>/dev/null
-
-      args:
-        executable: /bin/bash
       changed_when: false
-      register: actions_result
 
     - name: "RESULT — Mostrar resultado"
       ansible.builtin.debug:
         var: zabbix_config.stdout_lines
-
-    - name: "ACTIONS — Mostrar resultado"
-      ansible.builtin.debug:
-        var: actions_result.stdout_lines
