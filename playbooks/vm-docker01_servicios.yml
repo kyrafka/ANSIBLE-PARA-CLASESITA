@@ -171,6 +171,8 @@
         owner: www-data
         group: ubuntu
         mode: "0755"
+
+    - name: "DOLIBARR — Crear vhost Nginx"
       ansible.builtin.copy:
         dest: /etc/nginx/sites-available/dolibarr
         content: |
