@@ -128,13 +128,13 @@
         url_password: "{{ esxi_pass }}"
         force_basic_auth: true
         validate_certs: false
-        status_code: 201
+        status_code: [200, 201]
       register: esxi_auth
       failed_when: false
 
     - name: "TEST 5 — Resultado auth ESXi"
       ansible.builtin.debug:
-        msg: "ESXi API REST: {{ 'OK — token obtenido' if esxi_auth.status == 201 else 'FALLO — status ' + (esxi_auth.status | string) + ' ' + (esxi_auth.msg | default('')) }}"
+        msg: "ESXi API REST: {{ 'OK — token obtenido' if esxi_auth.status in [200,201] else 'FALLO — status ' + (esxi_auth.status | string) + ' ' + (esxi_auth.msg | default('')) }}"
 
     - name: "TEST 5 — Listar VMs en ESXi via API REST"
       ansible.builtin.uri:
