@@ -162,8 +162,6 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
         "opcommand_hst": [{"hostid": "0"}]
     }]
 })
-
-# Action 2: Email en cualquier problema >= Warning
 upsert_action("AXIOM: Notificacion Email Problemas", {
     "name": "AXIOM: Notificacion Email Problemas",
     "eventsource": 0,
