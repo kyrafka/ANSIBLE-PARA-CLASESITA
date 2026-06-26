@@ -53,7 +53,7 @@
         content: |
           #!/bin/bash
           VM_NAME="$1"
-          export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
+          export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
           export GOVC_INSECURE=1
 
           if [ -z "$VM_NAME" ]; then
