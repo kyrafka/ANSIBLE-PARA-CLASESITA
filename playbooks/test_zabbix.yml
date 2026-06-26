@@ -12,7 +12,7 @@
   gather_facts: false
 
   vars:
-    esxi_host: "168.121.48.254"
+    esxi_host: "172.17.25.12"
     esxi_port: "10112"
     esxi_user: "root"
     esxi_pass: "qwe123$"
