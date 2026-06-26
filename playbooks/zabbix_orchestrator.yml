@@ -94,12 +94,7 @@
         echo ""
         echo "=== 3. CREAR TRIGGERS ==="
         # Obtener todos los hosts
-        ALL_HOSTS=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\"]},\"auth\":\"$TOKEN\",\"id\":4}" | python3 -c "
-import sys,json
-hosts = json.load(sys.stdin).get('result',[])
-for h in hosts:
-    print(h['hostid'] + ':' + h['name'])
-" 2>/dev/null)
+        ALL_HOSTS=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\"]},\"auth\":\"$TOKEN\",\"id\":4}" | python3 -c "import sys,json; [print(h['hostid']+':'+h['name']) for h in json.load(sys.stdin).get('result',[])]" 2>/dev/null)
 
         for line in $ALL_HOSTS; do
           HOSTID=$(echo "$line" | cut -d: -f1)
