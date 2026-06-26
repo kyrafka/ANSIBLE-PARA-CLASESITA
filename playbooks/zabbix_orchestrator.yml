@@ -267,6 +267,8 @@
         echo "User: Admin | Pass: zabbix"
         echo "=========================================="
 
+      args:
+        executable: /bin/bash
       changed_when: false
       register: zabbix_config
 
