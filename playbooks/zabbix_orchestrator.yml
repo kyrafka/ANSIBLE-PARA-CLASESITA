@@ -63,13 +63,24 @@
 
           echo "Registrando $NAME ($IP)..."
 
-          # Verificar si existe
-          EXISTS=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"filter\":{\"host\":[\"$NAME\"]}},\"auth\":\"$TOKEN\",\"id\":2}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',[]))" 2>/dev/null)
+          # Obtener template ID de "Linux by Zabbix agent"
+          TMPL_ID=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"template.get\",\"params\":{\"filter\":{\"host\":[\"Linux by Zabbix agent\"]}},\"auth\":\"$TOKEN\",\"id\":2}" | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['templateid'] if r else '')" 2>/dev/null)
 
-          if [ "$EXISTS" != "[]" ]; then
-            echo "  $NAME ya existe, saltando"
+          # Verificar si existe
+          EXISTING=$(api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"filter\":{\"host\":[\"$NAME\"]},\"output\":[\"hostid\"],\"selectParentTemplates\":[\"templateid\"]},\"auth\":\"$TOKEN\",\"id\":3}" | python3 -c "import sys,json; r=json.load(sys.stdin).get('result',[]); print(r[0]['hostid'] if r else '')" 2>/dev/null)
+
+          if [ -n "$EXISTING" ]; then
+            echo "  $NAME ya existe (hostid: $EXISTING), verificando template..."
+            # Si tiene template ID vacío, asignarla
+            if [ -n "$TMPL_ID" ]; then
+              api_call "{\"jsonrpc\":\"2.0\",\"method\":\"host.update\",\"params\":{\"hostid\":\"$EXISTING\",\"templates\":[{\"templateid\":\"$TMPL_ID\"}]},\"auth\":\"$TOKEN\",\"id\":3}" | python3 -c "import sys,json; r=json.load(sys.stdin); print('  Template asignada OK' if 'result' in r else '  '+str(r.get('error','')))" 2>/dev/null
+            fi
           else
-            # Crear host
+            # Crear host con template
+            TMPL_BLOCK=""
+            if [ -n "$TMPL_ID" ]; then
+              TMPL_BLOCK=",\"templates\": [{\"templateid\": \"$TMPL_ID\"}]"
+            fi
             api_call "{
               \"jsonrpc\": \"2.0\",
               \"method\": \"host.create\",
@@ -84,6 +95,7 @@
                   \"dns\": \"\",
                   \"port\": \"10050\"
                 }]
+                $TMPL_BLOCK
               },
               \"auth\": \"$TOKEN\",
               \"id\": 3
