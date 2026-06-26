@@ -69,15 +69,7 @@
             -H "vmware-api-session-id: $TOKEN")
 
           # Buscar VM por nombre (case insensitive)
-          VM_ID=$(echo "$VMS" | python3 -c "
-import sys,json
-vms=json.load(sys.stdin)
-name='$VM_NAME'.lower()
-for v in vms:
-    if v.get('name','').lower()==name or v.get('name','').lower().startswith(name):
-        print(v['vm'])
-        break
-" 2>/dev/null)
+          VM_ID=$(echo "$VMS" | python3 -c "import sys,json; vms=json.load(sys.stdin); name='$VM_NAME'.lower(); [print(v['vm']) for v in vms if v.get('name','').lower()==name or v.get('name','').lower().startswith(name)]" 2>/dev/null | head -1)
 
           if [ -z "$VM_ID" ]; then
             echo "ERROR: VM '$VM_NAME' no encontrada"
