@@ -194,13 +194,14 @@ upsert_action("AXIOM: Notificacion Email Problemas", {
 print("\n=== TRIGGERS DE SERVICIOS ===")
 
 # Mapa de servicios por host (según inventario)
+# Mapa de servicios por host (según playbooks de cada VM)
 HOST_SERVICES = {
-    "vm-web01":      ["nginx", "haproxy", "postgresql"],
-    "vm-services01": ["smbd", "named", "isc-dhcp-server"],
-    "vm-voip01":     ["asterisk", "freepbx"],
+    "vm-web01":      ["nginx", "mysqld"],
+    "vm-services01": ["postfix", "dovecot", "mysqld"],
+    "vm-voip01":     ["asterisk"],
     "vm-monitor01":  ["zabbix_server", "grafana"],
-    "vm-storage01":  ["nfs-server", "rclone"],
-    "vm-docker01":   ["dockerd"],
+    "vm-storage01":  ["smbd", "nfsd"],
+    "vm-docker01":   ["dockerd", "mysqld"],
     "vm-dc01":       ["smbd", "named"],
 }
 
@@ -208,8 +209,8 @@ HOST_SERVICES = {
 all_hosts = api_call("host.get", {"output": ["hostid", "name"]}, token)
 hosts_map = {h["name"]: h["hostid"] for h in all_hosts}
 
-# Trigger de agente caido con deteccion rapida (30s) en cada host
-print("\n=== TRIGGERS AGENT DOWN (30s) ===")
+# Trigger de agente caido con deteccion en 60s en cada host
+print("\n=== TRIGGERS AGENT DOWN (60s) ===")
 for h in all_hosts:
     hname = h["name"]
     hid = h["hostid"]
