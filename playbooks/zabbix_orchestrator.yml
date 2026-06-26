@@ -12,8 +12,7 @@
   gather_facts: true
 
   vars:
-    zabbix_url: "http://192.168.17.11/zabbix"
-    zabbix_api: "{{ zabbix_url }}/api_jsonrpc.php"
+    zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
     zabbix_user: "Admin"
     zabbix_pass: "zabbix"
     alert_email: "josedario.zuniga@gmail.com"
@@ -21,45 +20,6 @@
     esxi_port: "10112"
     esxi_user: "root"
     esxi_pass: "qwe123$"
-
-    # Hosts a registrar en Zabbix
-    zabbix_hosts:
-      - name: "vm-dc01"
-        ip: "192.168.16.10"
-        groups: ["Linux servers", "DC01"]
-        services: ["named", "samba-ad-dc", "isc-dhcp-server"]
-      - name: "vm-web01"
-        ip: "192.168.11.11"
-        groups: ["Linux servers", "Web"]
-        services: ["nginx", "haproxy"]
-      - name: "vm-services01"
-        ip: "192.168.13.11"
-        groups: ["Linux servers", "Services"]
-        services: ["postfix", "dovecot", "mariadb"]
-      - name: "vm-storage01"
-        ip: "192.168.14.11"
-        groups: ["Linux servers", "Storage"]
-        services: ["nfs-server", "smbd"]
-      - name: "vm-voip01"
-        ip: "192.168.15.11"
-        groups: ["Linux servers", "VoIP"]
-        services: ["asterisk"]
-      - name: "vm-monitor01"
-        ip: "192.168.17.11"
-        groups: ["Linux servers", "Monitor"]
-        services: ["zabbix-server", "apache2", "grafana-server"]
-      - name: "vm-docker01"
-        ip: "192.168.13.12"
-        groups: ["Linux servers", "Docker"]
-        services: ["docker", "mysql", "nginx"]
-      - name: "core1"
-        ip: "192.168.10.20"
-        groups: ["Linux servers", "Core"]
-        services: ["keepalived", "frr"]
-      - name: "core2"
-        ip: "192.168.10.30"
-        groups: ["Linux servers", "Core"]
-        services: ["keepalived", "frr"]
 
   tasks:
     # =========================================================================
@@ -70,15 +30,6 @@
         systemctl is-active zabbix-server && echo "ZABBIX_RUNNING" || echo "ZABBIX_NOT_RUNNING"
       changed_when: false
       register: zabbix_status
-
-    - name: "VERIFY — Conexión a API Zabbix"
-      ansible.builtin.shell: |
-        curl -s -X POST "{{ zabbix_api }}" \
-          -H "Content-Type: application/json-rpc" \
-          -d '{"jsonrpc":"2.0","method":"apiinfo.version","id":1,"auth":null,"params":{}}' \
-          | grep -o '"result":"[^"]*"' || echo "API_FAIL"
-      changed_when: false
-      register: api_check
 
     - name: "ERROR — Zabbix no está corriendo"
       ansible.builtin.fail:
@@ -92,26 +43,17 @@
       ansible.builtin.shell: |
         RESULT=$(curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
-          -d "{
-            \"jsonrpc\": \"2.0\",
-            \"method\": \"user.login\",
-            \"params\": {\"username\": \"{{ zabbix_user }}\", \"password\": \"{{ zabbix_pass }}\"},
-            \"id\": 1
-          }")
-        TOKEN=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))" 2>/dev/null || echo "")
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"{{ zabbix_user }}","password":"{{ zabbix_pass }}"},"id":1}')
+        TOKEN=$(echo "$RESULT" | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
         if [ -z "$TOKEN" ]; then
-          echo "AUTH_FAIL"
-        else
-          echo "$TOKEN" > /tmp/zabbix_token
-          echo "AUTH_OK"
+          echo "AUTH_FAIL: $RESULT"
+          exit 1
         fi
+        echo "$TOKEN" > /tmp/zabbix_token
+        echo "AUTH_OK"
       changed_when: false
       register: auth_result
-
-    - name: "ERROR — Falló autenticación"
-      ansible.builtin.fail:
-        msg: "No se pudo autenticar en Zabbix. Verificar credenciales."
-      when: "'AUTH_OK' not in auth_result.stdout"
+      failed_when: "'AUTH_OK' not in auth_result.stdout"
 
     # =========================================================================
     # 3. CREAR GRUPO "AXIOM Infrastructure"
@@ -121,386 +63,343 @@
         TOKEN=$(cat /tmp/zabbix_token)
         RESULT=$(curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
-          -d "{
-            \"jsonrpc\": \"2.0\",
-            \"method\": \"hostgroup.create\",
-            \"params\": {\"name\": \"AXIOM Infrastructure\"},
-            \"auth\": \"$TOKEN\",
-            \"id\": 10
-          }")
+          -d '{"jsonrpc":"2.0","method":"hostgroup.create","params":{"name":"AXIOM Infrastructure"},"auth":"'"$TOKEN"'","id":10}')
         echo "$RESULT"
-        GROUP_ID=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',{}).get('groupids',[''])[0])" 2>/dev/null || echo "")
-        echo "GROUP_ID=$GROUP_ID"
-        echo "$GROUP_ID" > /tmp/zabbix_group_id
+        echo "$RESULT" | grep -q '"error"' && echo "GROUP_EXISTS_OR_ERROR" || echo "GROUP_CREATED"
       changed_when: false
       register: group_create
 
     # =========================================================================
-    # 4. CREAR TEMPLATES NECESARIOS
+    # 4. REGISTRAR TODOS LOS HOSTS (script externo)
     # =========================================================================
-    - name: "TEMPLATES — Crear/verificar template Linux"
-      ansible.builtin.shell: |
-        TOKEN=$(cat /tmp/zabbix_token)
-        # Verificar si existe
-        EXISTS=$(curl -s -X POST "{{ zabbix_api }}" \
-          -H "Content-Type: application/json-rpc" \
-          -d "{
-            \"jsonrpc\": \"2.0\",
-            \"method\": \"template.get\",
-            \"params\": {\"filter\": {\"host\": [\"Template OS Linux\"]}},
-            \"auth\": \"$TOKEN\",
-            \"id\": 11
-          }" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',[{}])[0].get('templateid',''))" 2>/dev/null || echo "")
+    - name: "HOSTS — Registrar hosts (script Python)"
+      ansible.builtin.copy:
+        dest: /tmp/zabbix_register_hosts.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+          import sys
 
-        if [ -n "$EXISTS" ]; then
-          echo "TEMPLATE_EXISTS:$EXISTS"
-        else
-          # Crear template
-          RESULT=$(curl -s -X POST "{{ zabbix_api }}" \
-            -H "Content-Type: application/json-rpc" \
-            -d "{
-              \"jsonrpc\": \"2.0\",
-              \"method\": \"template.create\",
-              \"params\": {\"host\": \"AXIOM Linux Template\", \"groups\": {\"groupid\": 4}},
-              \"auth\": \"$TOKEN\",
-              \"id\": 12
-            }")
-          echo "$RESULT"
-        fi
+          ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+
+          with open("/tmp/zabbix_token") as f:
+              TOKEN = f.read().strip()
+
+          def api_call(method, params):
+              data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
+              req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
+              with urllib.request.urlopen(req) as resp:
+                  return json.loads(resp.read())
+
+          hosts = [
+              {"name": "vm-dc01", "ip": "192.168.16.10"},
+              {"name": "vm-web01", "ip": "192.168.11.11"},
+              {"name": "vm-services01", "ip": "192.168.13.11"},
+              {"name": "vm-storage01", "ip": "192.168.14.11"},
+              {"name": "vm-voip01", "ip": "192.168.15.11"},
+              {"name": "vm-monitor01", "ip": "192.168.17.11"},
+              {"name": "vm-docker01", "ip": "192.168.13.12"},
+              {"name": "core1", "ip": "192.168.10.20"},
+              {"name": "core2", "ip": "192.168.10.30"},
+          ]
+
+          for h in hosts:
+              existing = api_call("host.get", {"filter": {"host": [h["name"]]}})
+              if existing.get("result"):
+                  print(f"HOST_EXISTS: {h['name']}")
+                  continue
+
+              result = api_call("host.create", {
+                  "host": h["name"],
+                  "groups": [{"groupid": 4}],
+                  "interfaces": [{
+                      "type": 1,
+                      "main": 1,
+                      "useip": 1,
+                      "ip": h["ip"],
+                      "dns": "",
+                      "port": "10050"
+                  }]
+              })
+              if "error" in result:
+                  print(f"HOST_ERROR: {h['name']} - {result['error']}")
+              else:
+                  print(f"HOST_CREATED: {h['name']}")
+
+          print("HOSTS_DONE")
+        mode: "0755"
+
+    - name: "HOSTS — Ejecutar registro de hosts"
+      ansible.builtin.shell: |
+        python3 /tmp/zabbix_register_hosts.py
       changed_when: false
-      register: template_linux
+      register: hosts_result
 
     # =========================================================================
-    # 5. REGISTRAR TODOS LOS HOSTS EN ZABBIX
+    # 5. CREAR TRIGGERS (script externo)
     # =========================================================================
-    - name: "HOSTS — Registrar todos los hosts"
+    - name: "TRIGGERS — Crear triggers (script Python)"
+      ansible.builtin.copy:
+        dest: /tmp/zabbix_create_triggers.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+
+          ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+
+          with open("/tmp/zabbix_token") as f:
+              TOKEN = f.read().strip()
+
+          def api_call(method, params):
+              data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
+              req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
+              with urllib.request.urlopen(req) as resp:
+                  return json.loads(resp.read())
+
+          hosts_result = api_call("host.get", {"output": ["hostid", "name"]})
+          hosts = {h["name"]: h["hostid"] for h in hosts_result.get("result", [])}
+          print(f"Hosts encontrados: {len(hosts)}")
+
+          # Plantilla base para Linux (usar template existente)
+          template_result = api_call("template.get", {"filter": {"host": ["Linux by Zabbix agent"]}})
+          template_id = template_result.get("result", [{}])[0].get("templateid", "10001")
+
+          triggers = []
+
+          for hostname, hostid in hosts.items():
+              # CPU > 95%
+              triggers.append({
+                  "description": f"{hostname}: CPU usage is too high",
+                  "expression": f"avg(/Linux by Zabbix agent/system.cpu.util,5m)>95",
+                  "priority": 2,
+                  "hostid": hostid
+              })
+              # RAM < 1GB available
+              triggers.append({
+                  "description": f"{hostname}: High memory utilization",
+                  "expression": f"avg(/Linux by Zabbix agent/vm.memory.size[available],5m)<1073741824",
+                  "priority": 2,
+                  "hostid": hostid
+              })
+              # Disk < 15% free
+              triggers.append({
+                  "description": f"{hostname}: Disk space is low",
+                  "expression": f"last(/Linux by Zabbix agent/vfs.fs.size[/,pfree])<15",
+                  "priority": 3,
+                  "hostid": hostid
+              })
+              # Agent Down
+              triggers.append({
+                  "description": f"{hostname}: Zabbix agent is down",
+                  "expression": f"nodata(/Linux by Zabbix agent/agent.ping,3m)=0",
+                  "priority": 4,
+                  "hostid": hostid
+              })
+
+          if triggers:
+              result = api_call("trigger.create", triggers)
+              if "error" in result:
+                  print(f"Error creando triggers: {result['error']}")
+              else:
+                  print(f"Triggers creados: {len(triggers)}")
+
+          print("TRIGGERS_DONE")
+        mode: "0755"
+
+    - name: "TRIGGERS — Ejecutar creación de triggers"
       ansible.builtin.shell: |
-        TOKEN=$(cat /tmp/zabbix_token)
-        GROUP_ID=$(cat /tmp/zabbix_group_id 2>/dev/null || echo "4")
-
-        {% for host in zabbix_hosts %}
-        echo "=== Procesando {{ host.name }} ==="
-        # Verificar si host existe
-        HOST_ID=$(curl -s -X POST "{{ zabbix_api }}" \
-          -H "Content-Type: application/json-rpc" \
-          -d "{
-            \"jsonrpc\": \"2.0\",
-            \"method\": \"host.get\",
-            \"params\": {\"filter\": {\"host\": [\"{{ host.name }}\"]}},
-            \"auth\": \"$TOKEN\",
-            \"id\": 20
-          }" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r.get('result',[{}])[0].get('hostid',''))" 2>/dev/null || echo "")
-
-        if [ -n "$HOST_ID" ]; then
-          echo "{{ host.name }} YA EXISTE (hostid: $HOST_ID)"
-        else
-          # Crear host
-          RESULT=$(curl -s -X POST "{{ zabbix_api }}" \
-            -H "Content-Type: application/json-rpc" \
-            -d "{
-              \"jsonrpc\": \"2.0\",
-              \"method\": \"host.create\",
-              \"params\": {
-                \"host\": \"{{ host.name }}\",
-                \"groups\": [{\"groupid\": 4}, {\"groupid\": $GROUP_ID}],
-                \"interfaces\": [{
-                  \"type\": 1,
-                  \"main\": 1,
-                  \"useip\": 1,
-                  \"ip\": \"{{ host.ip }}\",
-                  \"dns\": \"\",
-                  \"port\": \"10050\"
-                }],
-                \"templates\": [{\"templateid\": \"10001\"}]
-              },
-              \"auth\": \"$TOKEN\",
-              \"id\": 21
-            }")
-          echo "{{ host.name }} CREADO"
-        fi
-        {% endfor %}
-
-        echo "HOSTS_REGISTRATION_DONE"
-      changed_when: false
-      register: hosts_registration
-
-    # =========================================================================
-    # 6. CREAR TRIGGERS PARA TODOS LOS HOSTS
-    # =========================================================================
-    - name: "TRIGGERS — Crear triggers de CPU, RAM, Disk, Agent"
-      ansible.builtin.shell: |
-        TOKEN=$(cat /tmp/zabbix_token)
-
-        cat > /tmp/create_triggers.py << 'PYEOF'
-import json
-import sys
-import urllib.request
-
-ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
-TOKEN = open("/tmp/zabbix_token").read().strip()
-
-def api_call(method, params):
-    data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
-    req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-def get_hostids():
-    result = api_call("host.get", {"output": ["hostid", "name"]})
-    return {h["name"]: h["hostid"] for h in result}
-
-def create_trigger(name, expression, priority=2):
-    try:
-        result = api_call("trigger.create", {
-            "description": name,
-            "expression": expression,
-            "priority": priority,
-            "manual_close": 1
-        })
-        return result.get("result", {})
-    except Exception as e:
-        return {"error": str(e)}
-
-hosts = get_hostids()
-print(f"Hosts encontrados: {list(hosts.keys())}")
-
-triggers_created = 0
-for hostname, hostid in hosts.items():
-    # CPU > 95% for 5min
-    create_trigger(
-        f"{hostname}: CPU usage is too high",
-        f"avg(/Linux by Zabbix agent/system.cpu.util,5m) > 95",
-        2
-    )
-
-    # RAM > 95% for 5min
-    create_trigger(
-        f"{hostname}: High memory utilization",
-        f"avg(/Linux by Zabbix agent/vm.memory.size[available],5m) < 1073741824",
-        2
-    )
-
-    # Disk < 15% free
-    create_trigger(
-        f"{hostname}: Disk space is low",
-        f"last(/Linux by Zabbix agent/vfs.fs.size[/,pfree]) < 15",
-        3
-    )
-
-    # Agent Down
-    create_trigger(
-        f"{hostname}: Zabbix agent is down",
-        f"nodata(/Linux by Zabbix agent/agent.ping,3m) = 0",
-        4
-    )
-
-    triggers_created += 4
-    print(f"Triggers creados para {hostname}: 4")
-
-print(f"Total triggers creados: {triggers_created}")
-PYEOF
-
-        python3 /tmp/create_triggers.py
+        python3 /tmp/zabbix_create_triggers.py
       changed_when: false
       register: triggers_result
 
     # =========================================================================
-    # 7. CREAR ACTIONS PARA AUTO-RECOVERY
+    # 6. CREAR ACTIONS (script externo)
     # =========================================================================
-    - name: "ACTIONS — Crear actions de recovery"
+    - name: "ACTIONS — Crear actions (script Python)"
+      ansible.builtin.copy:
+        dest: /tmp/zabbix_create_actions.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+
+          ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+
+          with open("/tmp/zabbix_token") as f:
+              TOKEN = f.read().strip()
+
+          def api_call(method, params):
+              data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
+              req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
+              with urllib.request.urlopen(req) as resp:
+                  return json.loads(resp.read())
+
+          # ACTION 1: Restart Zabbix Agent
+          result1 = api_call("action.create", {
+              "name": "AXIOM: Restart Zabbix Agent when Down",
+              "eventsource": 0,
+              "status": 0,
+              "esc_period": "5m",
+              "def_shortdata": "Problem: {EVENT.NAME}",
+              "def_longdata": "Host: {HOST.NAME}\nProblem: {EVENT.NAME}\nTime: {EVENT.TIME}\nDate: {EVENT.DATE}\n\nAuto-restart initiated.",
+              "conditions": [{"conditiontype": 4, "operator": 5, "value": "Zabbix agent is down"}],
+              "operations": [{
+                  "operationtype": 1,
+                  "esc_period": "0",
+                  "esc_step_from": 1,
+                  "esc_step_to": 1,
+                  "opcommand": {
+                      "command": "systemctl restart zabbix-agent",
+                      "execute_on": 1
+                  }
+              }]
+          })
+          print(f"Action 1: {result1.get('result', result1.get('error', {}))}")
+
+          # ACTION 2: Emergency Reboot
+          result2 = api_call("action.create", {
+              "name": "AXIOM: Emergency Reboot",
+              "eventsource": 0,
+              "status": 0,
+              "esc_period": "10m",
+              "def_shortdata": "CRITICAL: {EVENT.NAME}",
+              "def_longdata": "Host: {HOST.NAME}\nProblem: {EVENT.NAME}\nManual intervention required.\n\nAuto-reboot will occur if not acknowledged.",
+              "conditions": [
+                  {"conditiontype": 4, "operator": 5, "value": "Disk space is low"},
+                  {"conditiontype": 4, "operator": 5, "value": "CPU usage is too high"}
+              ],
+              "operations": [{
+                  "operationtype": 1,
+                  "esc_period": "0",
+                  "esc_step_from": 1,
+                  "esc_step_to": 1,
+                  "opcommand": {
+                      "command": "reboot",
+                      "execute_on": 1
+                  }
+              }]
+          })
+          print(f"Action 2: {result2.get('result', result2.get('error', {}))}")
+
+          # ACTION 3: VMware PowerOn
+          result3 = api_call("action.create", {
+              "name": "AXIOM: VMware PowerOn",
+              "eventsource": 0,
+              "status": 0,
+              "esc_period": "15m",
+              "def_shortdata": "VM Down: {HOST.NAME}",
+              "def_longdata": "Host: {HOST.NAME}\nProblem: Agent not responding for 15 minutes.\n\nAttempting to power on VM via VMware.",
+              "conditions": [{"conditiontype": 4, "operator": 5, "value": "Zabbix agent is down"}],
+              "operations": [{
+                  "operationtype": 1,
+                  "esc_period": "0",
+                  "esc_step_from": 1,
+                  "esc_step_to": 1,
+                  "opcommand": {
+                      "command": "/usr/local/bin/vm-poweron.sh {HOST.NAME}",
+                      "execute_on": 1
+                  }
+              }]
+          })
+          print(f"Action 3: {result3.get('result', result3.get('error', {}))}")
+
+          print("ACTIONS_DONE")
+        mode: "0755"
+
+    - name: "ACTIONS — Ejecutar creación de actions"
       ansible.builtin.shell: |
-        TOKEN=$(cat /tmp/zabbix_token)
-
-        cat > /tmp/create_actions.py << 'PYEOF'
-import json
-import urllib.request
-
-ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
-TOKEN = open("/tmp/zabbix_token").read().strip()
-
-def api_call(method, params):
-    data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
-    req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-# Obtener templates para action
-templates = api_call("template.get", {"output": ["templateid", "host"]})
-template_ids = [t["templateid"] for t in templates.get("result", []) if "Linux" in t.get("host", "")]
-template_id = template_ids[0] if template_ids else "10001"
-
-# ACTION 1: Restart services when down
-action1 = api_call("action.create", {
-    "name": "AXIOM: Restart Service when Down",
-    "eventsource": 0,
-    "status": 0,
-    "esc_period": "5m",
-    "def_shortdata": "Problem: {EVENT.NAME}",
-    "def_longdata": "Host: {HOST.NAME}\nProblem: {EVENT.NAME}\nTime: {EVENT.TIME}\nDate: {EVENT.DATE}\n\nAuto-restart initiated.",
-    "conditions": [
-        {"conditiontype": 4, "operator": 5, "value": "Zabbix agent is down"}
-    ],
-    "operations": [
-        {
-            "operationtype": 1,
-            "esc_period": "0",
-            "esc_step_from": 1,
-            "esc_step_to": 1,
-            "opCommand": {
-                "command": "systemctl restart zabbix-agent",
-                "execute_on": 1
-            }
-        }
-    ]
-})
-print(f"Action 1 (Restart Agent): {action1.get('result', action1.get('error', {}))}")
-
-# ACTION 2: Emergency reboot when services critical
-action2 = api_call("action.create", {
-    "name": "AXIOM: Emergency Reboot",
-    "eventsource": 0,
-    "status": 0,
-    "esc_period": "10m",
-    "def_shortdata": "CRITICAL: {EVENT.NAME}",
-    "def_longdata": "Host: {HOST.NAME}\nProblem: {EVENT.NAME}\nManual intervention required.\n\nAuto-reboot will occur if not acknowledged.",
-    "conditions": [
-        {"conditiontype": 4, "operator": 5, "value": "Disk space is low"},
-        {"conditiontype": 4, "operator": 5, "value": "CPU usage is too high"}
-    ],
-    "operations": [
-        {
-            "operationtype": 1,
-            "esc_period": "0",
-            "esc_step_from": 1,
-            "esc_step_to": 1,
-            "opCommand": {
-                "command": "reboot",
-                "execute_on": 1
-            }
-        }
-    ]
-})
-print(f"Action 2 (Reboot): {action2.get('result', action2.get('error', {}))}")
-
-# ACTION 3: VMware PowerOn (para VMs específicas)
-action3 = api_call("action.create", {
-    "name": "AXIOM: VMware PowerOn",
-    "eventsource": 0,
-    "status": 0,
-    "esc_period": "15m",
-    "def_shortdata": "VM Down: {HOST.NAME}",
-    "def_longdata": "Host: {HOST.NAME}\nProblem: Agent not responding for 15 minutes.\n\nAttempting to power on VM via VMware.",
-    "conditions": [
-        {"conditiontype": 4, "operator": 5, "value": "Zabbix agent is down"}
-    ],
-    "operations": [
-        {
-            "operationtype": 1,
-            "esc_period": "0",
-            "esc_step_from": 1,
-            "esc_step_to": 1,
-            "opCommand": {
-                "command": "/usr/local/bin/vm-poweron.sh {HOST.NAME}",
-                "execute_on": 1
-            }
-        }
-    ]
-})
-print(f"Action 3 (PowerOn): {action3.get('result', action3.get('error', {}))}")
-
-print("ACTIONS_CREATED")
-PYEOF
-
-        python3 /tmp/create_actions.py
+        python3 /tmp/zabbix_create_actions.py
       changed_when: false
       register: actions_result
 
     # =========================================================================
-    # 8. CONFIGURAR NOTIFICACIONES EMAIL
+    # 7. CONFIGURAR NOTIFICACIONES EMAIL
     # =========================================================================
-    - name: "NOTIFICATIONS — Configurar email notifications"
+    - name: "NOTIFICATIONS — Configurar email (script Python)"
+      ansible.builtin.copy:
+        dest: /tmp/zabbix_config_notifications.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+
+          ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+
+          with open("/tmp/zabbix_token") as f:
+              TOKEN = f.read().strip()
+
+          def api_call(method, params):
+              data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
+              req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
+              with urllib.request.urlopen(req) as resp:
+                  return json.loads(resp.read())
+
+          # Obtener user admin
+          users = api_call("user.get", {"filter": {"username": ["Admin"]}})
+          userid = users.get("result", [{}])[0].get("userid", "1")
+
+          # Crear o verificar media type
+          existing = api_call("mediatype.get", {"filter": {"name": ["Email"]}})
+          if existing.get("result"):
+              mediatypeid = existing["result"][0]["mediatypeid"]
+              print(f"Media type ya existe: {mediatypeid}")
+          else:
+              mt = api_call("mediatype.create", {
+                  "type": 0,
+                  "name": "Email",
+                  "smtp_server": "localhost",
+                  "smtp_port": 25,
+                  "smtp_helo": "zabbix.aj.local",
+                  "smtp_email": "zabbix@aj.local"
+              })
+              mediatypeid = mt.get("result", {}).get("mediatypeids", ["1"])[0]
+              print(f"Media type creado: {mediatypeid}")
+
+          # Asignar email al usuario
+          api_call("user.update", {
+              "userid": userid,
+              "user_medias": [{
+                  "mediatypeid": int(mediatypeid),
+                  "send_to": "josedario.zuniga@gmail.com",
+                  "severity": 63,
+                  "active": 0,
+                  "period": "1-7,00:00-24:00"
+              }]
+          })
+          print(f"Email asignado a Admin: josedario.zuniga@gmail.com")
+
+          # Habilitar recovery en action por defecto
+          actions = api_call("action.get", {"output": ["actionid", "name"]})
+          for a in actions.get("result", []):
+              if "Report problems" in a.get("name", ""):
+                  api_call("action.update", {
+                      "actionid": a["actionid"],
+                      "recovery_operations": [{
+                          "operationtype": 0,
+                          "opmessage": {"mediatypeid": int(mediatypeid)}
+                      }]
+                  })
+                  print(f"Recovery habilitado para: {a['name']}")
+
+          print("NOTIFICATIONS_DONE")
+        mode: "0755"
+
+    - name: "NOTIFICATIONS — Ejecutar configuración"
       ansible.builtin.shell: |
-        TOKEN=$(cat /tmp/zabbix_token)
-
-        cat > /tmp/config_notifications.py << 'PYEOF'
-import json
-import urllib.request
-
-ZABBIX_API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
-TOKEN = open("/tmp/zabbix_token").read().strip()
-
-def api_call(method, params):
-    data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "auth": TOKEN, "id": 1})
-    req = urllib.request.Request(ZABBIX_API, data.encode(), {"Content-Type": "application/json"})
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read())
-
-# Obtener user admin
-users = api_call("user.get", {"filter": {"username": ["Admin"]}})
-user = users.get("result", [{}])[0]
-userid = user.get("userid", "1")
-
-# Crear media type email si no existe
-existing = api_call("mediatype.get", {"filter": {"name": ["Email"]}})
-if existing.get("result"):
-    mediatypeid = existing["result"][0]["mediatypeid"]
-    print(f"Media type Email ya existe: {mediatypeid}")
-else:
-    mt_result = api_call("mediatype.create", {
-        "type": 0,
-        "name": "Email",
-        "smtp_server": "localhost",
-        "smtp_port": 25,
-        "smtp_helo": "zabbix.aj.local",
-        "smtp_email": "zabbix@aj.local"
-    })
-    mediatypeid = mt_result.get("result", {}).get("mediatypeids", ["1"])[0]
-    print(f"Media type Email creado: {mediatypeid}")
-
-# Asignar email al usuario admin
-api_call("user.update", {
-    "userid": userid,
-    "user_medias": [
-        {
-            "mediatypeid": int(mediatypeid),
-            "send_to": "josedario.zuniga@gmail.com",
-            "severity": 63,
-            "active": 0,
-            "period": "1-7,00:00-24:00"
-        }
-    ]
-})
-print(f"Email asignado a Admin: josedario.zuniga@gmail.com")
-
-# Habilitar recovery operations en action por defecto
-actions = api_call("action.get", {"output": ["actionid", "name"]})
-for action in actions.get("result", []):
-    if "Report problems" in action.get("name", ""):
-        api_call("action.update", {
-            "actionid": action["actionid"],
-            "recovery_operations": [{
-                "operationtype": 0,
-                "opmessage": {"mediatypeid": int(mediatypeid)}
-            }]
-        })
-        print(f"Recovery habilitado para: {action['name']}")
-
-print("NOTIFICATIONS_CONFIGURED")
-PYEOF
-
-        python3 /tmp/config_notifications.py
+        python3 /tmp/zabbix_config_notifications.py
       changed_when: false
       register: notifications_result
 
     # =========================================================================
-    # 9. CREAR SCRIPT DE VMWARE POWERON
+    # 8. CREAR SCRIPT DE VMWARE POWERON
     # =========================================================================
     - name: "VMWARE — Crear script vm-poweron.sh"
       ansible.builtin.copy:
         dest: /usr/local/bin/vm-poweron.sh
         content: |
           #!/bin/bash
-          # Script para encender VMs en ESXi
           VM_NAME="$1"
           ESXI_HOST="{{ esxi_host }}"
           ESXI_PORT="{{ esxi_port }}"
@@ -515,13 +414,6 @@ PYEOF
 
           echo "AUTO-POWERON: Encendiendo '$VM_NAME' en $ESXI_HOST:$ESXI_PORT"
 
-          # Verificar que sshpass existe
-          if ! command -v sshpass &> /dev/null; then
-              echo "Instalando sshpass..."
-              apt-get install -y sshpass
-          fi
-
-          # Obtener ID de la VM
           VM_INFO=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null)
 
@@ -529,21 +421,17 @@ PYEOF
 
           if [ -z "$VM_LINE" ]; then
               echo "ERROR: VM '$VM_NAME' no encontrada"
-              echo "VMs disponibles:"
-              echo "$VM_INFO"
               exit 1
           fi
 
           VM_ID=$(echo "$VM_LINE" | awk '{print $1}')
           echo "Encontrada VM ID: $VM_ID"
 
-          # Encender
           sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/power.on $VM_ID"
 
           echo "OK - VM debería encenderse en ~30 segundos"
         mode: "0755"
-        force: yes
 
     - name: "VMWARE — Instalar sshpass"
       ansible.builtin.apt:
@@ -551,54 +439,41 @@ PYEOF
         state: present
 
     # =========================================================================
-    # 10. RESULTADO FINAL
+    # 9. RESULTADO FINAL
     # =========================================================================
-    - name: "RESULT — Resumen"
-      ansible.builtin.shell: |
-        echo "=========================================="
-        echo "ZABBIX 7 — CONFIGURACIÓN COMPLETA"
-        echo "=========================================="
-        echo ""
-        echo "===Hosts registrados:==="
-        {% for host in zabbix_hosts %}
-        echo "  - {{ host.name }} ({{ host.ip }})"
-        {% endfor %}
-        echo ""
-        echo "===Triggers creados:==="
-        echo "  - CPU > 95% (5min avg)"
-        echo "  - RAM < 1GB available"
-        echo "  - Disk < 15% free"
-        echo "  - Agent Down (3min)"
-        echo ""
-        echo "===Actions:==="
-        echo "  - Restart Service (Zabbix Agent down)"
-        echo "  - Emergency Reboot (Disk/CPU critical)"
-        echo "  - VMware PowerOn (15min after alert)"
-        echo ""
-        echo "===Notificaciones:==="
-        echo "  - Email: josedario.zuniga@gmail.com"
-        echo "  - Period: 1-7, 00:00-24:00"
-        echo ""
-        echo "===Acceso:==="
-        echo "  - URL: http://192.168.17.11/zabbix"
-        echo "  - User: Admin"
-        echo "  - Pass: zabbix"
-        echo "=========================================="
-      changed_when: false
-      register: final_result
-
     - name: "RESULT — Mostrar resumen"
       ansible.builtin.debug:
         msg:
           - "=========================================="
-          - "ZABBIX 7 CONFIGURADO"
+          - "ZABBIX 7 CONFIGURADO EXITOSAMENTE"
           - "=========================================="
-          - "{{ final_result.stdout_lines }}"
           - ""
-          - "Hosts: 9 (vm-dc01, vm-web01, vm-services01, vm-storage01, vm-voip01, vm-monitor01, vm-docker01, core1, core2)"
-          - "Triggers: CPU, RAM, Disk, Agent Down por host"
-          - "Actions: Restart Agent, Reboot, VMware PowerOn"
-          - "Notifications: Email enabled para josedario.zuniga@gmail.com"
+          - "Hosts registrados: 9"
+          - "  - vm-dc01 (192.168.16.10)"
+          - "  - vm-web01 (192.168.11.11)"
+          - "  - vm-services01 (192.168.13.11)"
+          - "  - vm-storage01 (192.168.14.11)"
+          - "  - vm-voip01 (192.168.15.11)"
+          - "  - vm-monitor01 (192.168.17.11)"
+          - "  - vm-docker01 (192.168.13.12)"
+          - "  - core1 (192.168.10.20)"
+          - "  - core2 (192.168.10.30)"
           - ""
-          - "NOTA: Los agentes Zabbix deben estar instalados en cada host."
-          - "Ejecutar zabbix_agents.yml en cada VM para registrar."
+          - "Triggers creados:"
+          - "  - CPU > 95% (5min avg)"
+          - "  - RAM < 1GB available"
+          - "  - Disk < 15% free"
+          - "  - Agent Down (3min)"
+          - ""
+          - "Actions configuradas:"
+          - "  - Restart Zabbix Agent"
+          - "  - Emergency Reboot"
+          - "  - VMware PowerOn"
+          - ""
+          - "Notificaciones:"
+          - "  - Email: josedario.zuniga@gmail.com"
+          - ""
+          - "=========================================="
+          - "ACCESO: http://192.168.17.11/zabbix"
+          - "User: Admin | Pass: zabbix"
+          - "=========================================="
