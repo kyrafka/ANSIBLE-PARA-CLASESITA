@@ -128,7 +128,7 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
         "evaltype": 0,
         "conditions": [{
             "conditiontype": 16,
-            "operator": 2,
+            "operator": 10,
             "value": "Agent no responde"
         }]
     },
