@@ -172,7 +172,23 @@
         group: ubuntu
         mode: "0755"
 
-    - name: "DOLIBARR — Crear vhost Nginx"
+    - name: "DOLIBARR — Detectar socket PHP-FPM"
+      ansible.builtin.shell: |
+        SOCKET=""
+        for version in 8.3 8.2 8.1 8.0; do
+          if [ -S "/run/php/php${version}-fpm.sock" ]; then
+            SOCKET="/run/php/php${version}-fpm.sock"
+            break
+          fi
+        done
+        if [ -z "$SOCKET" ]; then
+          SOCKET="/run/php/php8.1-fpm.sock"
+        fi
+        echo "$SOCKET"
+      changed_when: false
+      register: php_fpm_socket
+
+    - name: "DOLIBARR — Crear vhost Nginx con socket correcto"
       ansible.builtin.copy:
         dest: /etc/nginx/sites-available/dolibarr
         content: |
@@ -191,7 +207,7 @@
 
               location ~ \\.php$ {
                   include snippets/fastcgi-php.conf;
-                  fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+                  fastcgi_pass unix:{{ php_fpm_socket.stdout }};
                   fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
                   include fastcgi_params;
               }
