@@ -146,7 +146,7 @@
         content: |
           $TTL    604800
           @       IN      SOA     vm-dc01.AJ.local. admin.AJ.local. (
-                              2         ; Serial (incrementar al editar)
+                              3         ; Serial (YYYYMMDDNN)
                               604800    ; Refresh
                               86400     ; Retry
                               2419200   ; Expire
@@ -166,9 +166,12 @@
           ; === MONITOREO (vm-monitor01) ===
           monitor         IN      A       192.168.17.11
 
-          ; === WEB ERP (AWS EC2) ===
-          erp             IN      A       192.168.11.11
-          www             IN      CNAME   erp
+          ; === WEB (vm-web01) - AXIOM TECH Blog ===
+          blog            IN      A       192.168.11.11
+          www             IN      CNAME   blog
+
+          ; === WEB ERP (vm-docker01) ===
+          erp             IN      A       192.168.13.12
 
           ; === VOIP (vm-voip01) ===
           voip            IN      A       192.168.15.11

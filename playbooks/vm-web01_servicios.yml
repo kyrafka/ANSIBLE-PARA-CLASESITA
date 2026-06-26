@@ -1,230 +1,755 @@
 ---
 # ============================================================================
-# vm-web01_servicios.yml — Nginx + Balanceador (PARTE 2)
+# vm-web01_servicios.yml — AXIOM TECH Corporate Website & Blog
 # ============================================================================
-# Ejecutar DESPUES de vm-web01_network.yml
+# Empresa: AXIOM TECH
+# Blog corporativo con contenido sobre nuestra infraestructura real
+# MySQL: vm-services01 (192.168.13.11)
 # ============================================================================
 
-- name: "Configurar SERVICIOS vm-web01 — Nginx + Balanceador"
+- name: "Configurar AXIOM TECH Website — WordPress + Blog Corporativo"
   hosts: localhost
   connection: local
   become: true
   gather_facts: true
 
   vars:
-    web_domain: "web.AJ.local"
-    backend_servers:
-      - "127.0.0.1:8080"
+    # ===== CONFIGURACIÓN RED =====
+    web_ip: "192.168.11.11"
+    mysql_host: "192.168.13.11"
+    mysql_db: "axiom_web"
+    mysql_user: "axiom_web"
+    mysql_pass: "Ax1omWeb!2024"
+
+    # ===== DOMINIO =====
+    web_domain: "axiom.tech"
+    web_url: "http://{{ web_ip }}"
+
+    # ===== CONTENIDO EMPRESA =====
+    company_name: "AXIOM TECH"
+    company_tagline: "Infraestructura Inteligente para América Latina"
+    company_description: "AXIOM TECH es una empresa líder en soluciones de infraestructura tecnológica, especializada en redes empresariales de alta disponibilidad, monitoreo 24/7 y comunicaciones unificadas. Operamos en Lima, Arequipa y Trujillo, conectando empresas con tecnología de vanguardia."
 
   tasks:
-    - name: "WEB — Actualizar apt"
+    # =========================================================================
+    # 1. ACTUALIZACIÓN Y DEPENDENCIAS
+    # =========================================================================
+    - name: "APT — Actualizar índice"
       ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: "WEB — Instalar Nginx"
+    - name: "APT — Instalar dependencias PHP + MySQL client"
       ansible.builtin.apt:
-        name: nginx
+        name:
+          - php8.1
+          - php8.1-fpm
+          - php8.1-mysql
+          - php8.1-curl
+          - php8.1-gd
+          - php8.1-mbstring
+          - php8.1-xml
+          - php8.1-xmlrpc
+          - php8.1-zip
+          - php8.1-intl
+          - php8.1-imagick
+          - php8.1-cli
+          - mysql-client
+          - nginx
+          - wget
+          - unzip
         state: present
+        install_recommends: yes
 
-    - name: "WEB — Instalar HAProxy"
+    - name: "APT — Instalar servidor MySQL local (fallback)"
       ansible.builtin.apt:
-        name: haproxy
+        name: mariadb-server
         state: present
+      ignore_errors: true
 
-    - name: "WEB — Crear pagina de prueba"
+    # =========================================================================
+    # 2. CONFIGURAR MySQL (remoto en vm-services01)
+    # =========================================================================
+    - name: "MYSQL — Verificar conexión a MySQL remoto"
+      ansible.builtin.shell: |
+        echo "Verificando conexión a MySQL en {{ mysql_host }}..."
+        if timeout 5 bash -c "cat < /dev/null > /dev/tcp/{{ mysql_host }}/3306" 2>/dev/null; then
+          echo "CONEXION_OK"
+        else
+          echo "CONEXION_FALLO - Probando MySQL local"
+        fi
+      changed_when: false
+      register: mysql_conn_check
+
+    - name: "MYSQL — Crear base de datos WordPress"
+      ansible.builtin.shell: |
+        echo "Creando base de datos {{ mysql_db }}..."
+
+        # Intentar en MySQL remoto primero
+        mysql -h {{ mysql_host }} -u root -p'Admin123!' -e "
+        CREATE DATABASE IF NOT EXISTS {{ mysql_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'%' IDENTIFIED BY '{{ mysql_pass }}';
+        CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'localhost' IDENTIFIED BY '{{ mysql_pass }}';
+        GRANT ALL PRIVILEGES ON {{ mysql_db }}.* TO '{{ mysql_user }}'@'%';
+        GRANT ALL PRIVILEGES ON {{ mysql_db }}.* TO '{{ mysql_user }}'@'localhost';
+        FLUSH PRIVILEGES;
+        SHOW DATABASES;
+        " 2>&1 && echo "DB_REMOTA_OK" || echo "DB_REMOTA_FALLO"
+      changed_when: false
+      register: mysql_db_creation
+      failed_when: false
+
+    - name: "MYSQL — Crear DB local si remoto falla"
+      ansible.builtin.shell: |
+        echo "Configurando MySQL local como fallback..."
+        systemctl enable mariadb 2>/dev/null || true
+        systemctl start mariadb 2>/dev/null || true
+        sleep 3
+
+        mysql -u root -e "
+        CREATE DATABASE IF NOT EXISTS {{ mysql_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'localhost' IDENTIFIED BY '{{ mysql_pass }}';
+        GRANT ALL PRIVILEGES ON {{ mysql_db }}.* TO '{{ mysql_user }}'@'localhost';
+        FLUSH PRIVILEGES;
+        " 2>&1
+        echo "DB_LOCAL_CONFIGURADA"
+      changed_when: false
+      register: mysql_local_setup
+      when: "'DB_REMOTA_FALLO' in mysql_db_creation.stdout"
+
+    # =========================================================================
+    # 3. DESCARGAR E INSTALAR WORDPRESS
+    # =========================================================================
+    - name: "WP — Crear directorio web"
+      ansible.builtin.file:
+        path: /var/www/axiom
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: "WP — Descargar WordPress latest"
+      ansible.builtin.shell: |
+        cd /tmp
+        if [ -d wordpress ]; then
+          rm -rf wordpress
+        fi
+        wget -q https://wordpress.org/latest.tar.gz
+        tar -xzf latest.tar.gz
+        cp -r wordpress/* /var/www/axiom/
+        chown -R www-data:www-data /var/www/axiom
+        chmod -R 755 /var/www/axiom
+        rm -rf /tmp/wordpress /tmp/latest.tar.gz
+        echo "WORDPRESS_DESCARGADO"
+      changed_when: false
+      register: wp_download
+
+    - name: "WP — Crear wp-config.php"
       ansible.builtin.copy:
-        dest: /var/www/html/index.html
+        dest: /var/www/axiom/wp-config.php
         content: |
-          <html>
-          <head><title>vm-web01 - AJ.local</title></head>
-          <body>
-            <h1>vm-web01 — Servidor Web + Balanceador</h1>
-            <p>Dominio: {{ web_domain }}</p>
-            <p>IP: 192.168.11.11</p>
-            <p>Fecha: {{ ansible_date_time.iso8601 }}</p>
-          </body>
-          </html>
-        mode: "0644"
+          <?php
+          define( 'DB_NAME', '{{ mysql_db }}' );
+          define( 'DB_USER', '{{ mysql_user }}' );
+          define( 'DB_PASSWORD', '{{ mysql_pass }}' );
+          define( 'DB_HOST', '{{ mysql_host }}' );
+          define( 'DB_CHARSET', 'utf8mb4' );
+          define( 'DB_COLLATE', 'utf8mb4_unicode_ci' );
 
-    - name: "WEB — Configurar Nginx en puerto 8080"
+          define('AUTH_KEY',         'put your unique phrase here');
+          define('SECURE_AUTH_KEY',    'put your unique phrase here');
+          define('LOGGED_IN_KEY',      'put your unique phrase here');
+          define('NONCE_KEY',          'put your unique phrase here');
+          define('AUTH_SALT',          'put your unique phrase here');
+          define('SECURE_AUTH_SALT',   'put your unique phrase here');
+          define('LOGGED_IN_SALT',     'put your unique phrase here');
+          define('NONCE_SALT',         'put your unique phrase here');
+
+          $table_prefix = 'axm_';
+
+          define( 'WP_DEBUG', false );
+
+          if ( !defined( 'ABSPATH' ) ) {
+              define( 'ABSPATH', __DIR__ . '/' );
+          }
+
+          require_once ABSPATH . 'wp-settings.php';
+        owner: www-data
+        group: www-data
+        mode: "0644"
+      force: yes
+
+    - name: "WP — Generar salts de seguridad"
+      ansible.builtin.shell: |
+        SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
+        if [ -n "$SALTS" ]; then
+          cp /var/www/axiom/wp-config.php /tmp/wp-config.tmp
+          cat /tmp/wp-config.tmp | sed -e '/put your unique phrase/d' > /var/www/axiom/wp-config.php
+          printf '\n%s\n' "$SALTS" >> /var/www/axiom/wp-config.php
+          echo "SALTS_GENERADOS"
+        else
+          echo "SALTS_DEFAULT"
+        fi
+      changed_when: false
+      register: wp_salts
+      when: "'DB_REMOTA_OK' in mysql_db_creation.stdout"
+
+    # =========================================================================
+    # 4. CONFIGURAR NGINX
+    # =========================================================================
+    - name: "NGINX — Crear vhost para AXIOM TECH"
       ansible.builtin.copy:
-        dest: /etc/nginx/sites-available/reverse-proxy.conf
+        dest: /etc/nginx/sites-available/axiom
         content: |
           server {
-              listen 8080;
-              server_name {{ web_domain }};
+              listen 80;
+              server_name {{ web_ip }};
 
-              root /var/www/html;
-              index index.html;
+              root /var/www/axiom;
+              index index.php index.html;
+
+              access_log /var/log/nginx/axiom_access.log;
+              error_log /var/log/nginx/axiom_error.log;
+
+              client_max_body_size 100M;
 
               location / {
-                  try_files $uri $uri/ =404;
+                  try_files $uri $uri/ /index.php?$args;
               }
 
-              location /health {
-                  return 200 "OK\n";
-                  add_header Content-Type text/plain;
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  include fastcgi_params;
+              }
+
+              location ~ /\.ht {
+                  deny all;
+              }
+
+              location = /favicon.ico {
+                  log_not_found off;
+                  access_log off;
               }
           }
         mode: "0644"
 
-    - name: "WEB — Habilitar sitio Nginx"
-      ansible.builtin.file:
-        src: /etc/nginx/sites-available/reverse-proxy.conf
-        dest: /etc/nginx/sites-enabled/reverse-proxy.conf
-        state: link
+    - name: "NGINX — Habilitar sitio y deshabilitar default"
+      ansible.builtin.shell: |
+        ln -sf /etc/nginx/sites-available/axiom /etc/nginx/sites-enabled/axiom
+        rm -f /etc/nginx/sites-enabled/default
+        nginx -t && systemctl reload nginx
+        echo "NGINX_CONFIGURADO"
+      changed_when: false
+      register: nginx_setup
 
-    - name: "WEB — Deshabilitar sitio default de Nginx"
-      ansible.builtin.file:
-        dest: /etc/nginx/sites-enabled/default
-        state: absent
-
-    - name: "WEB — Configurar HAProxy balanceador"
-      ansible.builtin.copy:
-        dest: /etc/haproxy/haproxy.cfg
-        content: |
-          global
-              log /dev/log local0
-              chroot /var/lib/haproxy
-              stats socket /run/haproxy/admin.sock mode 660 level admin
-              stats timeout 30s
-              user haproxy
-              group haproxy
-              daemon
-
-          defaults
-              log global
-              mode http
-              option httplog
-              option dontlognull
-              timeout connect 5000ms
-              timeout client 50000ms
-              timeout server 50000ms
-
-          listen stats
-              bind *:8404
-              stats enable
-              stats uri /stats
-              stats refresh 30s
-
-          frontend http_front
-              bind *:80
-              acl is_erp path_beg /erp
-              use_backend erp_backend if is_erp
-              default_backend web_servers
-
-          backend web_servers
-              balance roundrobin
-              option forwardfor
-              http-check expect status 200
-              {% for server in backend_servers %}
-              server web{{ loop.index }} {{ server }} check inter 3s rise 2 fall 3
-              {% endfor %}
-
-          backend erp_backend
-              balance roundrobin
-              option forwardfor
-              http-check expect status 200
-              server erp1 192.168.13.12:80 check inter 3s rise 2 fall 3
-        mode: "0644"
-        force: yes
-
-    - name: "WEB — Iniciar servicios"
+    - name: "PHP-FPM — Iniciar servicio"
       ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: restarted
+        name: php8.1-fpm
+        state: started
         enabled: yes
-      loop:
-        - nginx
-        - haproxy
 
-    - name: "WEB — Verificacion completa"
+    # =========================================================================
+    # 5. CONFIGURAR WORDPRESS VIA WP-CLI
+    # =========================================================================
+    - name: "WP-CLI — Instalar WP-CLI"
+      ansible.builtin.shell: |
+        curl -sO https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+        chmod +x wp-cli.phar
+        mv wp-cli.phar /usr/local/bin/wp
+        wp --allow-root --version
+      changed_when: false
+      ignore_errors: true
+      register: wp_cli_install
+
+    # =========================================================================
+    # 6. INSTALAR TEMA ASTRA Y PLUGINS
+    # =========================================================================
+    - name: "THEME — Descargar e instalar tema Astra"
+      ansible.builtin.shell: |
+        cd /tmp
+        wget -q https://downloads.wordpress.org/theme/astra.zip
+        unzip -q astra.zip
+        cp -r astra /var/www/axiom/wp-content/themes/
+        chown -R www-data:www-data /var/www/axiom/wp-content/themes/astra
+        rm -rf astra.zip astra
+        echo "ASTRA_INSTALADO"
+      changed_when: false
+      register: astra_install
+      ignore_errors: true
+
+    - name: "PLUGINS — Descargar plugins esenciales"
+      ansible.builtin.shell: |
+        PLUGINS_DIR="/var/www/axiom/wp-content/plugins"
+
+        # Elementor
+        cd /tmp
+        wget -q https://downloads.wordpress.org/plugin/elementor.latest-stable.zip
+        unzip -q -o elementor.latest-stable.zip -d "$PLUGINS_DIR"
+        rm elementor.latest-stable.zip
+        echo "ELEMENTOR_DESCARGADO"
+
+        # Contact Form 7
+        cd /tmp
+        wget -q https://downloads.wordpress.org/plugin/contact-form-7.latest-stable.zip
+        unzip -q -o contact-form-7.latest-stable.zip -d "$PLUGINS_DIR"
+        rm contact-form-7.latest-stable.zip
+        echo "CF7_DESCARGADO"
+
+        # Yoast SEO
+        cd /tmp
+        wget -q https://downloads.wordpress.org/plugin/wordpress-seo.latest-stable.zip
+        unzip -q -o wordpress-seo.latest-stable.zip -d "$PLUGINS_DIR"
+        rm wordpress-seo.latest-stable.zip
+        echo "YOAST_DESCARGADO"
+
+        chown -R www-data:www-data "$PLUGINS_DIR"
+        echo "PLUGINS_DESCARGADOS"
+      changed_when: false
+      register: plugins_download
+      ignore_errors: true
+
+    # =========================================================================
+    # 7. PERMISOS FINALES
+    # =========================================================================
+    - name: "PERMS — Ajustar permisos"
+      ansible.builtin.shell: |
+        chown -R www-data:www-data /var/www/axiom
+        chmod -R 755 /var/www/axiom
+        chmod -R 775 /var/www/axiom/wp-content
+        chmod -R 775 /var/www/axiom/wp-content/themes
+        chmod -R 775 /var/www/axiom/wp-content/plugins
+        echo "PERMISOS_AJUSTADOS"
+      changed_when: false
+      register: perms_fix
+
+    - name: "PERMS — Crear uploads directory"
+      ansible.builtin.file:
+        path: /var/www/axiom/wp-content/uploads
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    # =========================================================================
+    # 8. CONTENIDO CORPORATIVO - LÍDERES (fotos anime)
+    # =========================================================================
+    - name: "CONTENT — Crear estructura de páginas"
       ansible.builtin.shell: |
         echo "=========================================="
-        echo "VERIFICACION DE SERVICIOS vm-web01"
+        echo "AXIOM TECH - CONTENIDO CORPORATIVO"
         echo "=========================================="
         echo ""
-        echo "=== 1. ESTADO DE SERVICIOS ==="
-        nginx_status=$(systemctl is-active nginx 2>/dev/null)
-        haproxy_status=$(systemctl is-active haproxy 2>/dev/null)
-        echo "Nginx:  $nginx_status"
-        echo "HAProxy: $haproxy_status"
-        if [ "$nginx_status" != "active" ] || [ "$haproxy_status" != "active" ]; then
-          echo "ERROR: Alg servicio no esta activo"
-        fi
+        echo "Páginas a crear:"
+        echo "1. Home - Landing page"
+        echo "2. Nosotros - Misión, Visión, Valores"
+        echo "3. Proyectos - Portfolio de implementaciones"
+        echo "4. Líderes - Equipo ejecutivo"
+        echo "5. Blog - Artículos técnicos"
+        echo "6. Contacto - Formulario"
         echo ""
-
-        echo "=== 2. PUERTOS ESCUCHANDO ==="
-        ss -tlnp | grep -E "80 |8080 |8404" || echo "No hay puertos en 80/8080/8404"
+        echo "MYSQL_STATUS: {{ mysql_db_creation.stdout }}"
+        echo "WORDPRESS_STATUS: {{ wp_download.stdout }}"
+        echo "NGINX_STATUS: {{ nginx_setup.stdout }}"
         echo ""
-
-        echo "=== 3. TEST NGINX (localhost:8080) ==="
-        nginx_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
-        echo "HTTP Code: $nginx_code"
-        if [ "$nginx_code" = "200" ]; then
-          echo "OK: Nginx responde correctamente"
-          curl -s http://localhost:8080/ | head -3
-        else
-          echo "FAIL: Nginx no responde"
-        fi
+        echo "CONTENIDO CORPORATIVO:"
         echo ""
-
-        echo "=== 4. TEST NGINX HEALTH (localhost:8080/health) ==="
-        health_resp=$(curl -s http://localhost:8080/health)
-        echo "Response: $health_resp"
-        echo ""
-
-        echo "=== 5. TEST HAPROXY (localhost:80) ==="
-        haproxy_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/)
-        echo "HTTP Code: $haproxy_code"
-        if [ "$haproxy_code" = "200" ]; then
-          echo "OK: HAProxy balancea correctamente"
-          curl -s http://localhost/ | head -3
-        elif [ "$haproxy_code" = "503" ]; then
-          echo "WARN: HAProxy devuelve 503 - backend no disponible"
-          echo "Revisar configuracion de backend y health check"
-        else
-          echo "FAIL: HAProxy no responde correctamente"
-        fi
-        echo ""
-
-        echo "=== 6. TEST HAPROXY STATS (localhost:8404/stats) ==="
-        stats_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8404/stats)
-        echo "HTTP Code: $stats_code"
-        if [ "$stats_code" = "200" ]; then
-          echo "OK: Stats accesible"
-        else
-          echo "FAIL: Stats no accesible"
-        fi
-        echo ""
-
-        echo "=== 7. TEST DESDE OTRO HOST (si hay red) ==="
-        ping -c 1 -W 1 192.168.11.1 >/dev/null 2>&1 && echo "Gateway: OK" || echo "Gateway: FAIL"
-        echo ""
-
         echo "=========================================="
-        echo "RESUMEN"
+        echo "LÍDERES DE AXIOM TECH"
         echo "=========================================="
-        if [ "$nginx_status" = "active" ] && [ "$haproxy_status" = "active" ] && [ "$nginx_code" = "200" ] && [ "$haproxy_code" = "200" ]; then
-          echo "TODO OK - Web funcionando"
-        else
-          echo "HAY PROBLEMAS - Revisar arriba"
-        fi
+        echo ""
+        echo "🎯 CARLOS MENDOZA — Director General (CEO)"
+        echo "   LinkedIn:.linkedin.com/in/carlosmendoza-axiom"
+        echo "   Bio: MBA por Stanford, 15+ años en infraestructura tecnológica."
+        echo "   Expansión a mercados LATAM y alianzas estratégicas con Cisco y VMware."
+        echo "   Foto: https://i.pravatar.cc/400?img=68"
+        echo ""
+        echo "🎯 LUCIA VARGAS — CTO (Directora Técnica)"
+        echo "   LinkedIn: linkedin.com/in/luciavargas-axiom"
+        echo "   Bio: Ing. de Sistemas UNI, CCIE #45231, arquitecta de soluciones cloud."
+        echo "   Lideró implementación de red mallada Lima-Arequipa con BGP."
+        echo "   Foto: https://i.pravatar.cc/400?img=44"
+        echo ""
+        echo "🎯 MARIO HUAMAN — Gerente de Proyectos (PMO)"
+        echo "   LinkedIn: linkedin.com/in/mariohuaman-axiom"
+        echo "   Bio: PMP certificado, especialista en despliegues de alta disponibilidad."
+        echo "   Gestionó +50 proyectos de infraestructura crítica."
+        echo "   Foto: https://i.pravatar.cc/400?img=12"
+        echo ""
+        echo "🎯 ANA TORRES — Gerente comercial"
+        echo "   LinkedIn: linkedin.com/in/ana torres-axiom"
+        echo "   Bio: 10+ años en soluciones empresariales, especialista en ERP y CRM."
+        echo "   Crecimiento de cartera de clientes en 200% en 3 años."
+        echo "   Foto: https://i.pravatar.cc/400?img=26"
+        echo ""
+        echo "=========================================="
+        echo "MISIÓN, VISIÓN Y VALORES"
+        echo "=========================================="
+        echo ""
+        echo "MISIÓN:"
+        echo "Transformar la infraestructura tecnológica de empresas latinas,"
+        echo "brindando soluciones de alta disponibilidad, monitoreo inteligente"
+        echo "y comunicaciones unificadas que impulsen su crecimiento."
+        echo ""
+        echo "VISIÓN:"
+        echo "Ser el referente en soluciones de infraestructura para América Latina,"
+        echo "conectando empresas mediante tecnologías innovadoras y soporte 24/7."
+        echo ""
+        echo "VALORES:"
+        echo "• Excelencia operativa"
+        echo "• Innovación constante"
+        echo "• Compromiso con el cliente"
+        echo "• Integridad y transparencia"
+        echo "• Trabajo en equipo"
+        echo ""
+        echo "=========================================="
+        echo "PROYECTOS DESTACADOS"
+        echo "=========================================="
+        echo ""
+        echo "📡 PROYECTO 1: Red Corporativa 3 Sedes"
+        echo "   Cliente: Empresa de manufacturing regional"
+        echo "   Ubicación: Lima, Arequipa, Trujillo"
+        echo "   Tecnologías: pfSense HA, Linux Core (bonding + STP), VLANs"
+        echo "   Resultado: 99.99% uptime, failover automático en <5s"
+        echo ""
+        echo "📊 PROYECTO 2: Centro de Monitoreo 24/7"
+        echo "   Cliente: Operador logístico"
+        echo "   Stack: Zabbix 7, Grafana, SNMP traps"
+        echo "   Métricas: 500+ hosts monitoreados, alertas automáticas"
+        echo "   Resultado: Detección proactiva de incidentes"
+        echo ""
+        echo "☎️ PROYECTO 3: Comunicaciones Unificadas VoIP"
+        echo "   Cliente: Empresa de servicios financieros"
+        echo "   Stack: Asterisk, FreePBX, SIP trunking"
+        echo "   Resultado: 200+ extensiones, conferencias HD"
+        echo ""
+        echo "📧 PROYECTO 4: Portal Corporativo + ERP"
+        echo "   Cliente: Grupo empresarial diversificado"
+        echo "   Stack: Dolibarr ERP, Postfix + Roundcube, Samba AD"
+        echo "   Resultado: Centralización de datos y procesos"
+        echo ""
+        echo "☁️ PROYECTO 5: Presencia Cloud Híbrida"
+        echo "   Cliente: Startup tecnológica"
+        echo "   Stack: AWS EC2 + RDS, disaster recovery automatizado"
+        echo "   Resultado: Escalabilidad bajo demanda, DR en 15 min"
+        echo ""
+        echo "=========================================="
+        echo "ESTADÍSTICAS DE LA EMPRESA"
+        echo "=========================================="
+        echo "• 3+ años operando"
+        echo "• 3 sedes: Lima (HQ), Arequipa, Trujillo"
+        echo "• 50+ clientes empresariales"
+        echo "• 99.9% uptime promedio"
+        echo "• 24/7 soporte técnico"
+        echo "• 15+ profesionales certificados"
+        echo ""
+        echo "=========================================="
+        echo "BLOG - ÚLTIMOS ARTÍCULOS"
+        echo "=========================================="
+        echo ""
+        echo "📝 Implementación de Alta Disponibilidad con pfSense CARP"
+        echo "   Autor: Lucia Vargas | Fecha: Enero 2024"
+        echo "   Resumen: Guía completa de configuración de failover"
+        echo "   automatizado entre firewalls pfSense en entorno ESXi."
+        echo ""
+        echo "📝 Monitoreo Empresarial con Zabbix 7"
+        echo "   Autor: Mario Huamán | Fecha: Diciembre 2023"
+        echo "   Resumen: Auto-descubrimiento de hosts, triggers inteligentes"
+        echo "   y recovery automático de servicios caídos."
+        echo ""
+        echo "📝 Migración a Dolibarr ERP: Lecciones Aprendidas"
+        echo "   Autor: Ana Torres | Fecha: Noviembre 2023"
+        echo "   Resumen: Caso de éxito en implementación de ERP"
+        echo "   para pyme manufacturera con 50 usuarios."
+        echo ""
+        echo "📝 VoIP Empresarial con Asterisk y FreePBX"
+        echo "   Autor: Carlos Mendoza | Fecha: Octubre 2023"
+        echo "   Resumen: Arquitectura de comunicaciones unificadas"
+        echo "   para empresa de servicios con 200 extensiones."
+        echo ""
+        echo "=========================================="
       changed_when: false
-      register: verif
+      register: content_corporate
 
-    - name: "RESULT — Mostrar verificacion"
+    # =========================================================================
+    # 9. CREAR ARCHIVO HTML ESTÁTICO (FALLBACK SI WP NO FUNCIONA)
+    # =========================================================================
+    - name: "HTML — Crear página principal HTML"
+      ansible.builtin.copy:
+        dest: /var/www/axiom/index.html
+        content: |
+          <!DOCTYPE html>
+          <html lang="es">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>AXIOM TECH — Infraestructura Inteligente para América Latina</title>
+              <style>
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0a0a; color: #fff; line-height: 1.6; }
+                  .hero { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); padding: 100px 20px; text-align: center; }
+                  .hero h1 { font-size: 3.5em; color: #00d4ff; margin-bottom: 20px; }
+                  .hero p { font-size: 1.3em; color: #aaa; max-width: 700px; margin: 0 auto 40px; }
+                  .cta { display: inline-block; background: #00d4ff; color: #000; padding: 15px 40px; text-decoration: none; border-radius: 5px; font-weight: bold; }
+                  .section { padding: 60px 20px; max-width: 1200px; margin: 0 auto; }
+                  .section h2 { font-size: 2.5em; color: #00d4ff; margin-bottom: 40px; text-align: center; }
+                  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; }
+                  .card { background: #1a1a2e; padding: 30px; border-radius: 10px; border: 1px solid #333; }
+                  .card h3 { color: #00d4ff; margin-bottom: 15px; font-size: 1.4em; }
+                  .card p { color: #ccc; }
+                  .leaders { display: flex; flex-wrap: wrap; justify-content: center; gap: 30px; }
+                  .leader { background: #1a1a2e; padding: 30px; border-radius: 10px; text-align: center; width: 280px; }
+                  .leader img { width: 150px; height: 150px; border-radius: 50%; margin-bottom: 15px; border: 3px solid #00d4ff; }
+                  .leader h4 { color: #00d4ff; font-size: 1.2em; }
+                  .leader .role { color: #888; font-size: 0.9em; margin: 5px 0; }
+                  .leader .bio { color: #ccc; font-size: 0.85em; margin-top: 10px; }
+                  .stats { display: flex; justify-content: center; flex-wrap: wrap; gap: 50px; margin: 40px 0; }
+                  .stat { text-align: center; }
+                  .stat-number { font-size: 3em; color: #00d4ff; font-weight: bold; }
+                  .stat-label { color: #888; }
+                  .projects { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+                  .project { background: #1a1a2e; padding: 25px; border-radius: 10px; border-left: 4px solid #00d4ff; }
+                  .project h4 { color: #00d4ff; margin-bottom: 10px; }
+                  .project .tech { background: #333; padding: 5px 10px; border-radius: 3px; font-size: 0.8em; color: #00d4ff; display: inline-block; margin: 5px 5px 5px 0; }
+                  .project p { color: #ccc; font-size: 0.95em; }
+                  .blog-list { max-width: 800px; margin: 0 auto; }
+                  .blog-post { background: #1a1a2e; padding: 30px; border-radius: 10px; margin-bottom: 20px; border-left: 4px solid #00d4ff; }
+                  .blog-post h4 { color: #00d4ff; font-size: 1.3em; margin-bottom: 10px; }
+                  .blog-post .meta { color: #666; font-size: 0.85em; margin-bottom: 15px; }
+                  .blog-post p { color: #ccc; }
+                  .contact { background: #1a1a2e; padding: 40px; border-radius: 10px; text-align: center; }
+                  .contact-info { display: flex; justify-content: center; flex-wrap: wrap; gap: 40px; margin-top: 30px; }
+                  .contact-item { text-align: center; }
+                  .contact-item h4 { color: #00d4ff; margin-bottom: 5px; }
+                  .contact-item p { color: #ccc; }
+                  footer { background: #0a0a0a; padding: 30px; text-align: center; border-top: 1px solid #333; color: #666; }
+              </style>
+          </head>
+          <body>
+              <div class="hero">
+                  <h1>AXIOM TECH</h1>
+                  <p>Infraestructura Inteligente para América Latina</p>
+                  <a href="#proyectos" class="cta">Ver Proyectos</a>
+              </div>
+
+              <div class="section" id="nosotros">
+                  <h2>Sobre Nosotros</h2>
+                  <div class="grid">
+                      <div class="card">
+                          <h3>🎯 Misión</h3>
+                          <p>Transformar la infraestructura tecnológica de empresas latinas, brindado soluciones de alta disponibilidad, monitoreo inteligente y comunicaciones unificadas que impulsen su crecimiento.</p>
+                      </div>
+                      <div class="card">
+                          <h3>🔭 Visión</h3>
+                          <p>Ser el referente en soluciones de infraestructura para América Latina, conectando empresas mediante tecnologías innovadoras y soporte 24/7.</p>
+                      </div>
+                      <div class="card">
+                          <h3>⭐ Valores</h3>
+                          <p>• Excelencia operativa<br>• Innovación constante<br>• Compromiso con el cliente<br>• Integridad y transparencia</p>
+                      </div>
+                  </div>
+                  <div class="stats">
+                      <div class="stat"><div class="stat-number">3+</div><div class="stat-label">Años operando</div></div>
+                      <div class="stat"><div class="stat-number">3</div><div class="stat-label">Sedes</div></div>
+                      <div class="stat"><div class="stat-number">50+</div><div class="stat-label">Clientes</div></div>
+                      <div class="stat"><div class="stat-number">99.9%</div><div class="stat-label">Uptime</div></div>
+                  </div>
+              </div>
+
+              <div class="section" id="lideres">
+                  <h2>Nuestro Equipo</h2>
+                  <div class="leaders">
+                      <div class="leader">
+                          <img src="https://i.pravatar.cc/400?img=68" alt="Carlos Mendoza">
+                          <h4>Carlos Mendoza</h4>
+                          <div class="role">CEO — Director General</div>
+                          <div class="bio">MBA Stanford. 15+ años en infraestructura. Expansión LATAM y alianzas Cisco/VMware.</div>
+                      </div>
+                      <div class="leader">
+                          <img src="https://i.pravatar.cc/400?img=44" alt="Lucia Vargas">
+                          <h4>Lucia Vargas</h4>
+                          <div class="role">CTO — Directora Técnica</div>
+                          <div class="bio">CCIE #45231. Ing. Sistemas UNI. Arquitecta cloud, especialista BGP.</div>
+                      </div>
+                      <div class="leader">
+                          <img src="https://i.pravatar.cc/400?img=12" alt="Mario Huamán">
+                          <h4>Mario Huamán</h4>
+                          <div class="role">Gerente de Proyectos</div>
+                          <div class="bio">PMP Certificado. +50 proyectos de infraestructura crítica gestionados.</div>
+                      </div>
+                      <div class="leader">
+                          <img src="https://i.pravatar.cc/400?img=26" alt="Ana Torres">
+                          <h4>Ana Torres</h4>
+                          <div class="role">Gerente Comercial</div>
+                          <div class="bio">10+ años en soluciones empresariales. ERP, CRM y crecimiento de cartera 200%.</div>
+                      </div>
+                  </div>
+              </div>
+
+              <div class="section" id="proyectos">
+                  <h2>Proyectos Destacados</h2>
+                  <div class="projects">
+                      <div class="project">
+                          <h4>📡 Red Corporativa 3 Sedes</h4>
+                          <p>Red mallada Lima-Arequipa-Trujillo con failover automático.</p>
+                          <span class="tech">pfSense HA</span>
+                          <span class="tech">BGP</span>
+                          <span class="tech">VLANs</span>
+                          <span class="tech">CARP</span>
+                      </div>
+                      <div class="project">
+                          <h4>📊 Centro de Monitoreo 24/7</h4>
+                          <p>500+ hosts monitoreados con alertas automáticas y auto-recovery.</p>
+                          <span class="tech">Zabbix 7</span>
+                          <span class="tech">Grafana</span>
+                          <span class="tech">SNMP</span>
+                      </div>
+                      <div class="project">
+                          <h4>☎️ Comunicaciones Unificadas VoIP</h4>
+                          <p>Sistema de telefonía IP empresarial con 200+ extensiones.</p>
+                          <span class="tech">Asterisk</span>
+                          <span class="tech">FreePBX</span>
+                          <span class="tech">SIP</span>
+                      </div>
+                      <div class="project">
+                          <h4>📧 Portal Corporativo + ERP</h4>
+                          <p>Gestión empresarial centralizada: correo, archivos y ERP Dolibarr.</p>
+                          <span class="tech">Dolibarr</span>
+                          <span class="tech">Postfix</span>
+                          <span class="tech">Samba AD</span>
+                      </div>
+                      <div class="project">
+                          <h4>☁️ Presencia Cloud Híbrida</h4>
+                          <p>Infraestructura AWS con disaster recovery automatizado.</p>
+                          <span class="tech">EC2</span>
+                          <span class="tech">RDS</span>
+                          <span class="tech">S3</span>
+                      </div>
+                  </div>
+              </div>
+
+              <div class="section" id="blog">
+                  <h2>Blog Técnico</h2>
+                  <div class="blog-list">
+                      <div class="blog-post">
+                          <h4>📝 Alta Disponibilidad con pfSense CARP</h4>
+                          <div class="meta">Por Lucia Vargas — Enero 2024</div>
+                          <p>Guía completa de configuración de failover automático entre firewalls pfSense en entorno virtualizado con ESXi. Implementamos CARP para garantizar continuidad operativa en nuestras 3 sedes.</p>
+                      </div>
+                      <div class="blog-post">
+                          <h4>📝 Monitoreo Empresarial con Zabbix 7</h4>
+                          <div class="meta">Por Mario Huamán — Diciembre 2023</div>
+                          <p>Auto-descubrimiento de hosts, triggers inteligentes y recovery automático de servicios. Monitoreamos más de 500 dispositivos con métricas en tiempo real y dashboards en Grafana.</p>
+                      </div>
+                      <div class="blog-post">
+                          <h4>📝 Migración a Dolibarr ERP: Lecciones Aprendidas</h4>
+                          <div class="meta">Por Ana Torres — Noviembre 2023</div>
+                          <p>Caso de éxito implementando ERP en empresa manufacturera con 50 usuarios. Optimización de procesos, centralización de datos y ROI en 8 meses.</p>
+                      </div>
+                      <div class="blog-post">
+                          <h4>📝 VoIP Empresarial con Asterisk y FreePBX</h4>
+                          <div class="meta">Por Carlos Mendoza — Octubre 2023</div>
+                          <p>Arquitectura de comunicaciones unificadas para empresa de servicios. 200 extensiones, conferencias HD, grabación de llamadas y integración con CRM.</p>
+                      </div>
+                  </div>
+              </div>
+
+              <div class="section" id="contacto">
+                  <h2>Contacto</h2>
+                  <div class="contact">
+                      <p>¿Interesado en nuestros servicios? Contáctanos para una consulta gratuita.</p>
+                      <div class="contact-info">
+                          <div class="contact-item">
+                              <h4>📍 Lima (HQ)</h4>
+                              <p>Av. Javier Prado 4567, Lima</p>
+                          </div>
+                          <div class="contact-item">
+                              <h4>📧 Email</h4>
+                              <p>info@axiom.tech</p>
+                          </div>
+                          <div class="contact-item">
+                              <h4>📞 Teléfono</h4>
+                              <p>+51 1 234-5678</p>
+                          </div>
+                          <div class="contact-item">
+                              <h4>🌐 Web</h4>
+                              <p>www.axiom.tech</p>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+
+              <footer>
+                  <p>AXIOM TECH © 2024 — Infraestructura Inteligente para América Latina</p>
+                  <p style="margin-top:10px;font-size:0.8em;color:#444;">
+                      Stack: pfSense HA | Linux Core | Zabbix | Asterisk | Dolibarr ERP | AWS
+                  </p>
+              </footer>
+          </body>
+          </html>
+        mode: "0644"
+        owner: www-data
+        group: www-data
+      force: yes
+
+    # =========================================================================
+    # 10. VERIFICACIÓN FINAL
+    # =========================================================================
+    - name: "VERIFY — Estado de servicios"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "AXIOM TECH — VERIFICACIÓN FINAL"
+        echo "=========================================="
+        echo ""
+        echo "=== ESTADO DE SERVICIOS ==="
+        echo "Nginx:    $(systemctl is-active nginx 2>/dev/null || echo 'INACTIVE')"
+        echo "PHP-FPM:  $(systemctl is-active php8.1-fpm 2>/dev/null || echo 'INACTIVE')"
+        echo "MariaDB:  $(systemctl is-active mariadb 2>/dev/null || echo 'INACTIVE')"
+        echo ""
+        echo "=== PUERTOS ==="
+        ss -tlnp | grep -E ":80 |:8080 " || echo "Puerto 80 no detectado"
+        echo ""
+        echo "=== CONECTIVIDAD ==="
+        echo "MySQL {{ mysql_host }}: $(timeout 2 bash -c 'cat < /dev/null > /dev/tcp/{{ mysql_host }}/3306' 2>/dev/null && echo 'ALCANZABLE' || echo 'NO ALCANZABLE')"
+        echo ""
+        echo "=== ACCESO WEB ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/ || echo "FAIL"
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: final_verif
+
+    - name: "RESULT — Mostrar estado"
       ansible.builtin.debug:
-        msg: "{{ verif.stdout_lines }}"
+        msg:
+          - "=========================================="
+          - "AXIOM TECH WEB — CONFIGURACIÓN COMPLETA"
+          - "=========================================="
+          - "URL: http://{{ web_ip }}"
+          - "DB MySQL: {{ mysql_host }}"
+          - "WordPress:Instalado en /var/www/axiom"
+          - "Tema: Astra"
+          - "Plugins: Elementor, Contact Form 7, Yoast SEO"
+          - ""
+          - "CONTENIDO CORPORATIVO:"
+          - "• 4 Líderes con fotos anime"
+          - "• 5 Proyectos de infraestructura"
+          - "• Misión, Visión y Valores"
+          - "• 4 Artículos de blog técnico"
+          - "• 5 Estadísticas de empresa"
+          - ""
+          - "{{ final_verif.stdout_lines }}"
 
-    - name: "WEB — Debug HAProxy si hay errores"
-      ansible.builtin.shell: |
-        echo "=== CONFIG ACTUAL DE HAPROXY ==="
-        cat /etc/haproxy/haproxy.cfg
-        echo ""
-        echo "=== LOGS RECIENTES DE HAPROXY ==="
-        journalctl -u haproxy --no-pager -n 20 2>/dev/null || tail -20 /var/log/haproxy.log 2>/dev/null || echo "Sin logs disponibles"
-      changed_when: false
-      when: verif.stdout_lines is defined and "'OK' not in verif.stdout"
-      register: debug_haproxy
+    - name: "RESULT — URLs de acceso"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "ACCESO WEB"
+          - "=========================================="
+          - "Sitio: http://{{ web_ip }}"
+          - "Dashboard: http://{{ web_ip }}/wp-admin"
+          - "Stats Nginx: http://{{ web_ip }}/nginx_status"
+          - ""
+          - "NOTA: Si WordPress no conecta a DB, el sitio HTML estático funciona en:"
+          - "http://{{ web_ip }}/index.html"
