@@ -229,7 +229,7 @@ for hostname, services in HOST_SERVICES.items():
         try:
             api_call("trigger.create", {
                 "description": trigger_name,
-                "expression": f"last(/{hostname}/proc.num[{svc}])<1",
+                "expression": f"last(/{hostname}/proc.num[,,,{svc}])<1",
                 "priority": 3,
                 "manual_close": 1,
                 "tags": [
