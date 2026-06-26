@@ -143,7 +143,8 @@ print(f"  Email: {ALERT_EMAIL} → Admin")
 # =========================================================================
 print("\n=== ACTIONS ===")
 
-# Action 1: VM apagada (severity High+) → PowerOn ESXi
+# Action 1: VM apagada → PowerOn ESXi
+# severity >= Average cubre: agente no disponible (Average) y cualquier problema grave (High+)
 upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
@@ -151,7 +152,7 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "esc_period": "2m",
     "filter": {
         "evaltype": 0,
-        "conditions": [{"conditiontype": 4, "operator": 5, "value": "4"}]
+        "conditions": [{"conditiontype": 4, "operator": 5, "value": "2"}]
     },
     "operations": [{
         "operationtype": 1,
