@@ -1,6 +1,6 @@
 ---
 # ============================================================================
-# zabbix_orchestrator.yml — Zabbix 7 completo con auto-recovery ESXi
+# zabbix_orchestrator.yml — Zabbix 7 completo con auto-recovery ESXi via govc
 # ============================================================================
 
 - name: "Configurar Zabbix 7 — Orchestrator Completo"
@@ -29,8 +29,22 @@
         state: present
         update_cache: false
 
+    - name: "DEPS — Verificar si govc esta instalado"
+      ansible.builtin.stat:
+        path: /usr/local/bin/govc
+      register: govc_stat
+
+    - name: "DEPS — Instalar govc"
+      ansible.builtin.shell: |
+        curl -sSL https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_x86_64.tar.gz \
+          | tar -xz -C /usr/local/bin govc
+        chmod +x /usr/local/bin/govc
+      args:
+        executable: /bin/bash
+      when: not govc_stat.stat.exists
+
     # =========================================================================
-    # 2. SCRIPT vm-poweron.sh — conecta al ESXi y enciende la VM por nombre
+    # 2. SCRIPT vm-poweron.sh — usa govc para hablar SOAP con ESXi 8
     # =========================================================================
     - name: "ESXI — Crear script vm-poweron.sh"
       ansible.builtin.copy:
@@ -38,81 +52,33 @@
         mode: "0755"
         content: |
           #!/bin/bash
-          # vm-poweron.sh — Enciende una VM en ESXi via API REST (no requiere SSH)
           VM_NAME="$1"
-          ESXI_HOST="{{ esxi_host }}"
-          ESXI_PORT="{{ esxi_port }}"
-          ESXI_USER="{{ esxi_user }}"
-          ESXI_PASS="{{ esxi_pass }}"
-          BASE="https://$ESXI_HOST:$ESXI_PORT"
+          export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
+          export GOVC_INSECURE=1
 
           if [ -z "$VM_NAME" ]; then
             echo "ERROR: Se requiere nombre de VM"
             exit 1
           fi
 
-          echo "[$(date)] Buscando VM: $VM_NAME via API REST ESXi $ESXI_HOST:$ESXI_PORT"
+          echo "[$(date)] Verificando VM: $VM_NAME"
 
-          # ESXi 8 usa /api/session con autenticacion Basic standard
-          TOKEN=$(curl -sk -X POST "$BASE/api/session" \
-            -u "$ESXI_USER:$ESXI_PASS" \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json" | tr -d '"')
+          POWER=$(govc vm.info "$VM_NAME" 2>/dev/null | grep "Power state" | awk '{print $3}')
+          echo "Estado actual: ${POWER:-desconocido}"
 
-          API_VER="v8"
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ] || echo "$TOKEN" | grep -qi "error"; then
-            # Fallback /rest/ por si acaso
-            TOKEN=$(curl -sk -X POST "$BASE/rest/com/vmware/cis/session" \
-              -u "$ESXI_USER:$ESXI_PASS" \
-              -H "Accept: application/json" \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('value', d) if isinstance(d,dict) else d)" 2>/dev/null | tr -d '"')
-            API_VER="v6"
-          fi
-
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "ERROR: No se pudo autenticar. Verifica credenciales y conectividad a $BASE"
-            echo "Test manual: curl -sk -X POST $BASE/api/session -u $ESXI_USER:PASS"
-            exit 1
-          fi
-          echo "Auth OK (ESXi API $API_VER, token: ${TOKEN:0:20}...)"
-
-          # Listar VMs
-          VMS=$(curl -sk -X GET "$BASE/api/vcenter/vm" \
-            -H "vmware-api-session-id: $TOKEN" \
-            -H "Accept: application/json")
-
-          # Buscar VM por nombre (case insensitive)
-          VM_ID=$(echo "$VMS" | python3 -c "import sys,json; vms=json.load(sys.stdin); name='$VM_NAME'.lower(); [print(v['vm']) for v in vms if v.get('name','').lower()==name or v.get('name','').lower().startswith(name)]" 2>/dev/null | head -1)
-
-          if [ -z "$VM_ID" ]; then
-            echo "ERROR: VM '$VM_NAME' no encontrada"
-            echo "VMs disponibles:"
-            echo "$VMS" | python3 -c "import sys,json; [print('  '+v['name']) for v in json.load(sys.stdin)]" 2>/dev/null
-            curl -sk -X DELETE "$BASE/api/session" -H "vmware-api-session-id: $TOKEN" > /dev/null
-            exit 1
-          fi
-          echo "VM encontrada: $VM_ID"
-
-          # Verificar estado
-          POWER=$(curl -sk -X GET "$BASE/api/vcenter/vm/$VM_ID/power" \
-            -H "vmware-api-session-id: $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state',''))" 2>/dev/null)
-          echo "Estado actual: $POWER"
-
-          if [ "$POWER" = "POWERED_ON" ]; then
-            echo "VM ya está encendida"
-            curl -sk -X DELETE "$BASE/api/session" -H "vmware-api-session-id: $TOKEN" > /dev/null
+          if [ "$POWER" = "poweredOn" ]; then
+            echo "VM ya esta encendida"
             exit 0
           fi
 
-          # Encender VM (ESXi 8 API)
           echo "Encendiendo VM..."
-          curl -sk -X POST "$BASE/api/vcenter/vm/$VM_ID/power?action=start" \
-            -H "vmware-api-session-id: $TOKEN" \
-            -H "Content-Type: application/json" > /dev/null
-          curl -sk -X DELETE "$BASE/api/session" \
-            -H "vmware-api-session-id: $TOKEN" > /dev/null
-
-          echo "[$(date)] OK — $VM_NAME ($VM_ID) encendida"
+          govc vm.power -on "$VM_NAME"
+          if [ $? -eq 0 ]; then
+            echo "[$(date)] OK — $VM_NAME encendida"
+          else
+            echo "ERROR: fallo encendiendo $VM_NAME"
+            exit 1
+          fi
 
     # =========================================================================
     # 3. SCRIPT service-restart.sh — SSH a la VM y reinicia el servicio
@@ -144,7 +110,7 @@
           fi
 
     # =========================================================================
-    # 4. COPIAR SCRIPT PYTHON DE CONFIGURACION ZABBIX
+    # 4. COPIAR Y EJECUTAR CONFIGURACION ZABBIX
     # =========================================================================
     - name: "ZABBIX — Copiar script de configuracion"
       ansible.builtin.copy:
@@ -152,9 +118,6 @@
         dest: /tmp/zabbix_setup.py
         mode: "0755"
 
-    # =========================================================================
-    # 5. EJECUTAR CONFIGURACION: hosts, scripts, actions, email
-    # =========================================================================
     - name: "ZABBIX — Ejecutar configuracion completa"
       ansible.builtin.command:
         cmd: >-
