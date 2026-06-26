@@ -216,31 +216,64 @@ for hostname, services in HOST_SERVICES.items():
         continue
 
     for svc in services:
+        item_key = f"proc.num[{svc}]"
         trigger_name = f"{hostname}: Servicio {svc} caido"
-        # Verificar si ya existe
-        existing = api_call("trigger.get", {
+
+        # Crear item primero si no existe
+        existing_item = api_call("item.get", {
+            "hostids": [hostid],
+            "filter": {"key_": item_key}
+        }, token)
+
+        if not existing_item:
+            try:
+                # Obtener interfaz del host
+                ifaces = api_call("hostinterface.get", {"hostids": [hostid]}, token)
+                if not ifaces:
+                    print(f"  SKIP {hostname}/{svc}: sin interfaz")
+                    continue
+                ifaceid = ifaces[0]["interfaceid"]
+
+                api_call("item.create", {
+                    "hostid": hostid,
+                    "name": f"Procesos {svc} corriendo",
+                    "key_": item_key,
+                    "type": 0,          # Zabbix agent
+                    "value_type": 3,    # numeric unsigned
+                    "interfaceid": ifaceid,
+                    "delay": "60s",
+                    "history": "7d",
+                    "trends": "30d",
+                    "tags": [{"tag": "service", "value": svc}]
+                }, token)
+                print(f"  Item creado: {item_key} en {hostname}")
+            except Exception as e:
+                print(f"  ERROR item {hostname}/{svc}: {e}")
+                continue
+
+        # Crear trigger
+        existing_trigger = api_call("trigger.get", {
             "filter": {"description": trigger_name},
             "hostids": [hostid]
         }, token)
-        if existing:
-            print(f"  Existe: {trigger_name}")
+        if existing_trigger:
+            print(f"  Existe trigger: {trigger_name}")
             continue
 
         try:
             api_call("trigger.create", {
                 "description": trigger_name,
-                "expression": f"last(/{hostname}/proc.num[,,,{svc}])<1",
+                "expression": f"last(/{hostname}/{item_key})<1",
                 "priority": 3,
                 "manual_close": 1,
                 "tags": [
                     {"tag": "service", "value": svc},
-                    {"tag": "auto_recovery", "value": "service"},
                     {"tag": "scope", "value": "availability"}
                 ]
             }, token)
-            print(f"  Creado trigger: {trigger_name}")
+            print(f"  Trigger creado: {trigger_name}")
         except Exception as e:
-            print(f"  ERROR trigger {trigger_name}: {e}")
+            print(f"  ERROR trigger {hostname}/{svc}: {e}")
 
 
 # =========================================================================
