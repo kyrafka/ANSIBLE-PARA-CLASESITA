@@ -27,7 +27,7 @@
         msg: "{{ r1.stdout_lines + r1.stderr_lines }}"
 
     - name: "govc vm.list"
-      ansible.builtin.command: govc vm.list
+      ansible.builtin.command: govc vm.list -dc ha-datacenter
       environment:
         GOVC_URL: "https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
         GOVC_INSECURE: "1"
@@ -38,3 +38,16 @@
     - name: "govc vm.list resultado"
       ansible.builtin.debug:
         msg: "{{ r2.stdout_lines + r2.stderr_lines }}"
+
+    - name: "govc find VMs"
+      ansible.builtin.command: govc find -type m
+      environment:
+        GOVC_URL: "https://{{ esxi_user }}:{{ esxi_pass }}@{{ esxi_host }}:{{ esxi_port }}"
+        GOVC_INSECURE: "1"
+      register: r3
+      failed_when: false
+      changed_when: false
+
+    - name: "govc find resultado"
+      ansible.builtin.debug:
+        msg: "{{ r3.stdout_lines + r3.stderr_lines }}"
