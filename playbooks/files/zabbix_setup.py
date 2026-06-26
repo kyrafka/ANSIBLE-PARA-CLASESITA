@@ -198,10 +198,10 @@ HOST_SERVICES = {
     "vm-web01":      ["nginx", "haproxy", "postgresql"],
     "vm-services01": ["smbd", "named", "isc-dhcp-server"],
     "vm-voip01":     ["asterisk", "freepbx"],
-    "vm-monitor01":  ["zabbix-server", "grafana-server"],
+    "vm-monitor01":  ["zabbix_server", "grafana"],
     "vm-storage01":  ["nfs-server", "rclone"],
-    "vm-docker01":   ["docker"],
-    "vm-dc01":       ["samba", "named"],
+    "vm-docker01":   ["dockerd"],
+    "vm-dc01":       ["smbd", "named"],
 }
 
 # Obtener hosts registrados
