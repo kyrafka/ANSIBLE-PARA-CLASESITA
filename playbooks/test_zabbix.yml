@@ -195,21 +195,7 @@
       when: esxi_auth.status == 201 and all_vms.status == 200
 
     # =========================================================================
-    # 8. TEST: Buscar puerto correcto del ESXi (443, 8443, 10112)
-    # =========================================================================
-    - name: "TEST 8 — Probar puertos ESXi API REST"
-      ansible.builtin.command:
-        cmd: >
-          curl -sk -o /dev/null -w "%{http_code}"
-          https://{{ esxi_host }}:{{ item }}/api/session
-          -X POST -u "{{ esxi_user }}:{{ esxi_pass }}"
-      loop: ["443", "8443", "10112", "80", "9443"]
-      register: port_scan
-      failed_when: false
-      changed_when: false
-
-    # =========================================================================
-    # 9. RESUMEN FINAL
+    # 8. RESUMEN FINAL
     # =========================================================================
     - name: "RESUMEN — Estado general"
       ansible.builtin.debug:
@@ -222,6 +208,4 @@
           - "Script PowerOn: {{ 'OK' if poweron_stat.stat.exists else 'FALTA' }}"
           - "VMs alcanzables por ping:"
           - "{% for r in ping_results.results %}  {{ r.item.name }}: {{ 'OK' if r.rc == 0 else 'NO' }}{% endfor %}"
-          - "------- Puertos ESXi {{ esxi_host }} -------"
-          - "{% for r in port_scan.results %}  puerto {{ r.item }}: HTTP {{ r.stdout }}{% endfor %}"
           - "======================================="
