@@ -29,6 +29,14 @@
         state: present
         update_cache: false
 
+    - name: "DEPS — Permitir a zabbix ejecutar scripts sin sudo password"
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/zabbix-scripts
+        mode: "0440"
+        content: |
+          zabbix ALL=(ALL) NOPASSWD: /usr/local/bin/vm-poweron.sh
+          zabbix ALL=(ALL) NOPASSWD: /usr/local/bin/service-restart.sh
+
     - name: "DEPS — Verificar si govc esta instalado"
       ansible.builtin.stat:
         path: /usr/local/bin/govc

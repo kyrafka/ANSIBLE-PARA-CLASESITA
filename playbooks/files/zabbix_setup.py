@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-zabbix_setup.py — Configura actions, scripts y notificaciones en Zabbix 7
+zabbix_setup.py — Configura Zabbix 7 completo
 Uso: python3 zabbix_setup.py <api_url> <user> <pass> <email>
 """
 import sys
 import json
 import urllib.request
-import urllib.error
 
 API = sys.argv[1]
 ZABBIX_USER = sys.argv[2]
@@ -27,45 +26,81 @@ def api_call(method, params, token=None):
     return result["result"]
 
 
-# 1. Autenticar
-print("=== AUTENTICACION ===")
-token = api_call("user.login", {"username": ZABBIX_USER, "password": ZABBIX_PASS})
-print(f"TOKEN OK: {token[:20]}...")
-
-
-# 2. Registrar scripts en Zabbix
-print("\n=== SCRIPTS ===")
-
-def upsert_script(name, command, description):
+def upsert_script(name, command, description, scope=1):
     existing = api_call("script.get", {"filter": {"name": [name]}}, token)
     if existing:
         sid = existing[0]["scriptid"]
         api_call("script.update", {"scriptid": sid, "command": command}, token)
         print(f"  Actualizado: {name} (id:{sid})")
+        return sid
     else:
         result = api_call("script.create", {
             "name": name,
             "command": command,
             "execute_on": 0,
             "type": 0,
-            "scope": 1,
+            "scope": scope,
             "description": description
         }, token)
-        print(f"  Creado: {name} (id:{result['scriptids'][0]})")
+        sid = result["scriptids"][0]
+        print(f"  Creado: {name} (id:{sid})")
+        return sid
 
-upsert_script(
+
+def upsert_action(name, params):
+    existing = api_call("action.get", {"filter": {"name": [name]}, "output": ["actionid"]}, token)
+    if existing:
+        aid = existing[0]["actionid"]
+        api_call("action.delete", [aid], token)
+        print(f"  Eliminada previa: {name}")
+    result = api_call("action.create", params, token)
+    print(f"  Creada: {name} (id:{result['actionids'][0]})")
+
+
+# =========================================================================
+# 1. Autenticar
+# =========================================================================
+print("=== AUTENTICACION ===")
+token = api_call("user.login", {"username": ZABBIX_USER, "password": ZABBIX_PASS})
+print(f"TOKEN OK: {token[:20]}...")
+
+
+# =========================================================================
+# 2. Scripts
+# =========================================================================
+print("\n=== SCRIPTS ===")
+
+poweron_sid = upsert_script(
     "AXIOM: PowerOn VM en ESXi",
-    "/usr/local/bin/vm-poweron.sh {HOST.NAME}",
-    "Enciende la VM en ESXi usando el nombre del host Zabbix"
+    "sudo /usr/local/bin/vm-poweron.sh {HOST.NAME}",
+    "Enciende la VM en ESXi via govc"
 )
+
 upsert_script(
     "AXIOM: Restart Service via SSH",
-    "/usr/local/bin/service-restart.sh {HOST.CONN} {EVENT.TAGS.__service}",
-    "Reinicia el servicio caido en el host remoto via SSH"
+    "sudo /usr/local/bin/service-restart.sh {HOST.CONN} {EVENT.TAGS.__service}",
+    "Reinicia servicio caido en host remoto via SSH"
+)
+
+# Script manual para ejecutar desde la UI de Zabbix
+upsert_script(
+    "AXIOM: PowerOn VM (manual)",
+    "sudo /usr/local/bin/vm-poweron.sh {HOST.NAME}",
+    "Encender VM manualmente desde Zabbix UI",
+    scope=2  # scope=2 = manual host action (visible en UI)
+)
+
+upsert_script(
+    "AXIOM: Ver servicios del host",
+    "ssh -o StrictHostKeyChecking=no sysadmin@{HOST.CONN} 'systemctl list-units --type=service --state=running'",
+    "Lista servicios corriendo en el host",
+    scope=2
 )
 
 
-# 3. Configurar media type Email
+# =========================================================================
+# 3. Media type Email
+# =========================================================================
 print("\n=== MEDIA TYPE EMAIL ===")
 mt_list = api_call("mediatype.get", {"filter": {"name": ["Email"]}}, token)
 if mt_list:
@@ -81,16 +116,14 @@ else:
         "smtp_email": "zabbix@zabbix.local"
     }, token)
     mt_id = result["mediatypeids"][0]
-    print(f"  Creado Email media type (id:{mt_id})")
+    print(f"  Creado (id:{mt_id})")
 
 
-# 4. Asignar email al usuario Admin
+# =========================================================================
+# 4. Usuario Admin — asignar email
+# =========================================================================
 print("\n=== USUARIO ADMIN ===")
 users = api_call("user.get", {"filter": {"username": ["Admin"]}, "output": ["userid"]}, token)
-if not users:
-    print("  ERROR: Usuario Admin no encontrado")
-    sys.exit(1)
-
 user_id = users[0]["userid"]
 api_call("user.update", {
     "userid": user_id,
@@ -102,32 +135,15 @@ api_call("user.update", {
         "period": "1-7,00:00-24:00"
     }]
 }, token)
-print(f"  Email asignado a Admin: {ALERT_EMAIL}")
+print(f"  Email: {ALERT_EMAIL} → Admin")
 
 
-# 5. Crear/actualizar actions
+# =========================================================================
+# 5. Actions
+# =========================================================================
 print("\n=== ACTIONS ===")
 
-# Obtener scriptid del script de PowerOn que creamos antes
-script_list = api_call("script.get", {"filter": {"name": ["AXIOM: PowerOn VM en ESXi"]}}, token)
-if not script_list:
-    print("  ERROR: Script PowerOn no encontrado")
-    sys.exit(1)
-poweron_scriptid = script_list[0]["scriptid"]
-print(f"  Script PowerOn ID: {poweron_scriptid}")
-
-
-def upsert_action(name, params):
-    existing = api_call("action.get", {"filter": {"name": [name]}, "output": ["actionid"]}, token)
-    if existing:
-        aid = existing[0]["actionid"]
-        api_call("action.delete", [aid], token)
-        print(f"  Eliminada action previa: {name}")
-    result = api_call("action.create", params, token)
-    print(f"  Creada: {name} (id:{result['actionids'][0]})")
-
-
-# Action: VM apagada → PowerOn ESXi (severity >= High = 4)
+# Action 1: VM apagada (severity High+) → PowerOn ESXi
 upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
@@ -135,25 +151,19 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "esc_period": "2m",
     "filter": {
         "evaltype": 0,
-        "conditions": [{
-            "conditiontype": 4,
-            "operator": 5,
-            "value": "4"
-        }]
+        "conditions": [{"conditiontype": 4, "operator": 5, "value": "4"}]
     },
     "operations": [{
         "operationtype": 1,
         "esc_period": "0",
         "esc_step_from": 1,
         "esc_step_to": 1,
-        "opcommand": {
-            "scriptid": poweron_scriptid
-        },
+        "opcommand": {"scriptid": poweron_sid},
         "opcommand_hst": [{"hostid": "0"}]
     }]
 })
 
-# Action: Notificacion email en problemas >= Warning
+# Action 2: Email en cualquier problema >= Warning
 upsert_action("AXIOM: Notificacion Email Problemas", {
     "name": "AXIOM: Notificacion Email Problemas",
     "eventsource": 0,
@@ -161,35 +171,81 @@ upsert_action("AXIOM: Notificacion Email Problemas", {
     "esc_period": "1h",
     "filter": {
         "evaltype": 0,
-        "conditions": [{
-            "conditiontype": 4,
-            "operator": 5,
-            "value": "2"
-        }]
+        "conditions": [{"conditiontype": 4, "operator": 5, "value": "2"}]
     },
     "operations": [{
         "operationtype": 0,
         "esc_period": "0",
         "esc_step_from": 1,
         "esc_step_to": 1,
-        "opmessage": {
-            "default_msg": 1,
-            "mediatypeid": mt_id
-        },
+        "opmessage": {"default_msg": 1, "mediatypeid": mt_id},
         "opmessage_usr": [{"userid": user_id}]
     }],
     "recovery_operations": [{
         "operationtype": 0,
-        "opmessage": {
-            "default_msg": 1,
-            "mediatypeid": mt_id
-        },
+        "opmessage": {"default_msg": 1, "mediatypeid": mt_id},
         "opmessage_usr": [{"userid": user_id}]
     }]
 })
 
 
-# 6. Resumen final
+# =========================================================================
+# 6. Triggers de servicios por host
+# =========================================================================
+print("\n=== TRIGGERS DE SERVICIOS ===")
+
+# Mapa de servicios por host (según inventario)
+HOST_SERVICES = {
+    "vm-web01":      ["nginx", "haproxy", "postgresql"],
+    "vm-services01": ["smbd", "named", "isc-dhcp-server"],
+    "vm-voip01":     ["asterisk", "freepbx"],
+    "vm-monitor01":  ["zabbix-server", "grafana-server"],
+    "vm-storage01":  ["nfs-server", "rclone"],
+    "vm-docker01":   ["docker"],
+    "vm-dc01":       ["samba", "named"],
+}
+
+# Obtener hosts registrados
+all_hosts = api_call("host.get", {"output": ["hostid", "name"]}, token)
+hosts_map = {h["name"]: h["hostid"] for h in all_hosts}
+
+for hostname, services in HOST_SERVICES.items():
+    hostid = hosts_map.get(hostname)
+    if not hostid:
+        print(f"  SKIP: {hostname} no encontrado en Zabbix")
+        continue
+
+    for svc in services:
+        trigger_name = f"{hostname}: Servicio {svc} caido"
+        # Verificar si ya existe
+        existing = api_call("trigger.get", {
+            "filter": {"description": trigger_name},
+            "hostids": [hostid]
+        }, token)
+        if existing:
+            print(f"  Existe: {trigger_name}")
+            continue
+
+        try:
+            api_call("trigger.create", {
+                "description": trigger_name,
+                "expression": f"last(/{hostname}/proc.num[{svc}])<1",
+                "priority": 3,
+                "manual_close": 1,
+                "tags": [
+                    {"tag": "service", "value": svc},
+                    {"tag": "auto_recovery", "value": "service"},
+                    {"tag": "scope", "value": "availability"}
+                ]
+            }, token)
+            print(f"  Creado trigger: {trigger_name}")
+        except Exception as e:
+            print(f"  ERROR trigger {trigger_name}: {e}")
+
+
+# =========================================================================
+# 7. Resumen
+# =========================================================================
 print("\n=== ACTIONS ACTIVAS ===")
 all_actions = api_call("action.get", {
     "output": ["name", "status"],
@@ -199,5 +255,10 @@ print(f"Total: {len(all_actions)}")
 for a in all_actions:
     estado = "ACTIVA" if a["status"] == "0" else "DESACT"
     print(f"  [{estado}] {a['name']}")
+
+print("\n=== SCRIPTS REGISTRADOS ===")
+all_scripts = api_call("script.get", {"output": ["name", "command"]}, token)
+for s in all_scripts:
+    print(f"  {s['name']}")
 
 print("\nOK — Configuracion completada")
