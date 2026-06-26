@@ -41,29 +41,22 @@
   tasks:
     - name: "Asegurar directorio .ssh existe"
       ansible.builtin.file:
-        path: /root/.ssh
+        path: /home/ubuntu/.ssh
         state: directory
         mode: "0700"
-        owner: root
+        owner: ubuntu
 
-    - name: "Autorizar clave root de vm-monitor01"
+    - name: "Autorizar clave de vm-monitor01 en ubuntu"
       ansible.posix.authorized_key:
-        user: root
+        user: ubuntu
         state: present
         key: "{{ hostvars[monitor_host]['root_pub'] }}"
 
-    - name: "Autorizar clave root en sysadmin tambien"
-      ansible.posix.authorized_key:
-        user: sysadmin
-        state: present
-        key: "{{ hostvars[monitor_host]['root_pub'] }}"
-      ignore_errors: true
-
-    - name: "Test SSH desde vm-monitor01"
+    - name: "Test SSH desde vm-monitor01 como ubuntu"
       ansible.builtin.command:
         cmd: >
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes
-          root@{{ ansible_host }} "echo SSH_OK_$(hostname)"
+          ubuntu@{{ ansible_host }} "echo SSH_OK_$(hostname)"
       delegate_to: "{{ monitor_host }}"
       register: ssh_test
       failed_when: false
