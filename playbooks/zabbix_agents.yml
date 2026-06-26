@@ -155,7 +155,11 @@
           TLSConnect=unencrypted
           TLSAccept=unencrypted
           ListenPort=10050
-          # Remote Commands habilitado para auto-restart de servicios
+          RefreshActiveChecks=300
+          Timeout=30
+          BufferSend=10
+          BufferSize=100
+          MaxLinesPerSecond=100
           EnableRemoteCommands=1
           AllowRoot=1
           Include=/etc/zabbix/zabbix_agentd.conf.d/*.conf
