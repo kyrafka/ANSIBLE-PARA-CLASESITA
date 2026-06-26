@@ -13,7 +13,7 @@
 
   vars:
     esxi_external: "172.17.25.12"
-    esxi_port: "10112"
+    esxi_port: "443"
     esxi_user: "root"
     esxi_pass: "qwe123$"
     # Subredes candidatas donde podria estar el ESXi

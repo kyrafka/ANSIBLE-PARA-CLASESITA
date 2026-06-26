@@ -13,7 +13,7 @@
 
   vars:
     esxi_host: "172.17.25.12"
-    esxi_port: "10112"
+    esxi_port: "443"
     esxi_user: "root"
     esxi_pass: "qwe123$"
     zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
