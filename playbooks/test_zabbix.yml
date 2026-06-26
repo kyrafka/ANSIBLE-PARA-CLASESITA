@@ -1,0 +1,201 @@
+---
+# ============================================================================
+# test_zabbix.yml — Prueba conectividad SSH a VMs y ESXi + scripts Zabbix
+# ============================================================================
+# Uso: sudo ansible-playbook playbooks/test_zabbix.yml -i inventario/hosts.yml
+# ============================================================================
+
+- name: "TEST — Conectividad SSH y scripts de auto-recovery"
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+
+  vars:
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+    zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
+    vms:
+      - { name: "vm-dc01",       ip: "192.168.16.10" }
+      - { name: "vm-web01",      ip: "192.168.11.11" }
+      - { name: "vm-services01", ip: "192.168.13.11" }
+      - { name: "vm-storage01",  ip: "192.168.14.11" }
+      - { name: "vm-voip01",     ip: "192.168.15.11" }
+      - { name: "vm-monitor01",  ip: "192.168.17.11" }
+      - { name: "vm-docker01",   ip: "192.168.13.12" }
+
+  tasks:
+
+    # =========================================================================
+    # 1. TEST: Zabbix API responde
+    # =========================================================================
+    - name: "TEST 1 — Zabbix API"
+      ansible.builtin.uri:
+        url: "{{ zabbix_api }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: "apiinfo.version"
+          params: {}
+          id: 1
+        status_code: 200
+      register: api_test
+      failed_when: false
+
+    - name: "TEST 1 — Resultado Zabbix API"
+      ansible.builtin.debug:
+        msg: "Zabbix API: {{ 'OK — version ' + api_test.json.result if api_test.status == 200 else 'FALLO — ' + (api_test.msg | default('no responde')) }}"
+
+    # =========================================================================
+    # 2. TEST: Ping ICMP a cada VM
+    # =========================================================================
+    - name: "TEST 2 — Ping ICMP a VMs"
+      ansible.builtin.command:
+        cmd: "ping -c 1 -W 2 {{ item.ip }}"
+      loop: "{{ vms }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.ip }})"
+      register: ping_results
+      failed_when: false
+      changed_when: false
+
+    - name: "TEST 2 — Resultados ping"
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }} ({{ item.item.ip }}): {{ 'ALCANZABLE' if item.rc == 0 else 'NO RESPONDE' }}"
+      loop: "{{ ping_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # =========================================================================
+    # 3. TEST: SSH a cada VM (puerto 22 abierto)
+    # =========================================================================
+    - name: "TEST 3 — Puerto SSH 22 en VMs"
+      ansible.builtin.wait_for:
+        host: "{{ item.ip }}"
+        port: 22
+        timeout: 5
+        state: started
+      loop: "{{ vms }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.ip }})"
+      register: ssh_port_results
+      failed_when: false
+
+    - name: "TEST 3 — Resultados puerto SSH"
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }} SSH:22: {{ 'ABIERTO' if not item.failed else 'CERRADO/TIMEOUT' }}"
+      loop: "{{ ssh_port_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # =========================================================================
+    # 4. TEST: SSH con clave a cada VM (login real)
+    # =========================================================================
+    - name: "TEST 4 — Login SSH a VMs"
+      ansible.builtin.command:
+        cmd: >
+          ssh -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              -o ConnectTimeout=5
+              -o BatchMode=yes
+              sysadmin@{{ item.ip }}
+              "echo SSH_OK_$(hostname)"
+      loop: "{{ vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: ssh_login_results
+      failed_when: false
+      changed_when: false
+
+    - name: "TEST 4 — Resultados login SSH"
+      ansible.builtin.debug:
+        msg: "{{ item.item.name }}: {{ item.stdout if item.rc == 0 else 'FALLO — ' + (item.stderr | regex_replace('\\n',' ') | truncate(80)) }}"
+      loop: "{{ ssh_login_results.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # =========================================================================
+    # 5. TEST: Conectividad SSH al ESXi
+    # =========================================================================
+    - name: "TEST 5 — SSH al ESXi"
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p {{ esxi_pass }}
+          ssh -p {{ esxi_port }}
+              -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              -o ConnectTimeout=10
+              {{ esxi_user }}@{{ esxi_host }}
+              "echo ESXI_OK && vim-cmd vmsvc/getallvms | head -5"
+      register: esxi_test
+      failed_when: false
+      changed_when: false
+
+    - name: "TEST 5 — Resultado ESXi SSH"
+      ansible.builtin.debug:
+        msg: "ESXi {{ esxi_host }}:{{ esxi_port }}: {{ 'CONECTADO' if esxi_test.rc == 0 else 'FALLO — ' + (esxi_test.stderr | regex_replace('\\n',' ') | truncate(100)) }}"
+
+    - name: "TEST 5 — VMs en ESXi"
+      ansible.builtin.debug:
+        msg: "{{ esxi_test.stdout_lines }}"
+      when: esxi_test.rc == 0
+
+    # =========================================================================
+    # 6. TEST: Script vm-poweron.sh existe y es ejecutable
+    # =========================================================================
+    - name: "TEST 6 — Script vm-poweron.sh"
+      ansible.builtin.stat:
+        path: /usr/local/bin/vm-poweron.sh
+      register: poweron_stat
+
+    - name: "TEST 6 — Script service-restart.sh"
+      ansible.builtin.stat:
+        path: /usr/local/bin/service-restart.sh
+      register: restart_stat
+
+    - name: "TEST 6 — Resultado scripts"
+      ansible.builtin.debug:
+        msg:
+          - "vm-poweron.sh:      {{ 'OK (ejecutable)' if poweron_stat.stat.exists and poweron_stat.stat.executable else 'FALTA o no ejecutable' }}"
+          - "service-restart.sh: {{ 'OK (ejecutable)' if restart_stat.stat.exists and restart_stat.stat.executable else 'FALTA o no ejecutable' }}"
+
+    # =========================================================================
+    # 7. TEST: Simular vm-poweron.sh (dry-run — solo lista VMs, no enciende)
+    # =========================================================================
+    - name: "TEST 7 — Simular PowerOn (lista VMs en ESXi sin encender)"
+      ansible.builtin.command:
+        cmd: >
+          sshpass -p {{ esxi_pass }}
+          ssh -p {{ esxi_port }}
+              -o StrictHostKeyChecking=no
+              -o UserKnownHostsFile=/dev/null
+              -o ConnectTimeout=10
+              {{ esxi_user }}@{{ esxi_host }}
+              "vim-cmd vmsvc/getallvms"
+      register: vm_list
+      failed_when: false
+      changed_when: false
+
+    - name: "TEST 7 — VMs registradas en ESXi"
+      ansible.builtin.debug:
+        msg: "{{ vm_list.stdout_lines }}"
+      when: vm_list.rc == 0
+
+    # =========================================================================
+    # 8. RESUMEN FINAL
+    # =========================================================================
+    - name: "RESUMEN — Estado general"
+      ansible.builtin.debug:
+        msg:
+          - "======================================="
+          - "RESUMEN TEST ZABBIX + SSH"
+          - "======================================="
+          - "Zabbix API:    {{ 'OK' if api_test.status == 200 else 'FALLO' }}"
+          - "ESXi SSH:      {{ 'OK' if esxi_test.rc == 0 else 'FALLO' }}"
+          - "Script PowerOn: {{ 'OK' if poweron_stat.stat.exists else 'FALTA' }}"
+          - "VMs alcanzables por ping:"
+          - "{% for r in ping_results.results %}  {{ r.item.name }}: {{ 'OK' if r.rc == 0 else 'NO' }}{% endfor %}"
+          - "======================================="
