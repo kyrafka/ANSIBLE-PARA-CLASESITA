@@ -126,6 +126,14 @@
         ls /opt/dolibarr/
 
     - name: "DOLIBARR — Crear documento de configuración"
+      ansible.builtin.file:
+        path: /opt/dolibarr/htdocs/conf
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: "DOLIBARR — Escribir conf.php"
       ansible.builtin.copy:
         dest: /opt/dolibarr/htdocs/conf/conf.php
         content: |
