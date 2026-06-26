@@ -108,7 +108,7 @@
           echo "[$(date)] Reiniciando $SERVICE en $HOST_IP..."
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=10 -o BatchMode=yes \
-              ubuntu@$HOST_IP "sudo systemctl restart $SERVICE && systemctl is-active $SERVICE"
+              ubuntu@$HOST_IP "sudo systemctl restart $SERVICE && sudo systemctl is-active $SERVICE"
 
           if [ $? -eq 0 ]; then
             echo "[$(date)] OK — $SERVICE reiniciado en $HOST_IP"

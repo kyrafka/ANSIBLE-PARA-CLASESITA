@@ -55,7 +55,8 @@
     - name: "Test SSH desde vm-monitor01 como ubuntu"
       ansible.builtin.command:
         cmd: >
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes
+          sshpass -p "123"
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5
           ubuntu@{{ ansible_host }} "echo SSH_OK_$(hostname)"
       delegate_to: "{{ monitor_host }}"
       register: ssh_test
