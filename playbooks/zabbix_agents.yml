@@ -137,6 +137,10 @@
         chmod 755 /run/zabbix /var/log/zabbix
         ls -la /run/zabbix /var/log/zabbix
 
+    - name: "AGN — DETECTAR HOSTNAME CORRECTO"
+      ansible.builtin.set_fact:
+        zabbix_hostname: "{{ inventory_hostname if inventory_hostname != 'localhost' else ansible_hostname }}"
+
     - name: "AGN — CONFIGURAR Zabbix Agent"
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_agentd.conf
@@ -146,7 +150,7 @@
           LogFileSize=10
           Server={{ zabbix_server }},127.0.0.1
           ServerActive={{ zabbix_server }},127.0.0.1
-          Hostname={{ inventory_hostname }}
+          Hostname={{ zabbix_hostname }}
           TLSConnect=unencrypted
           TLSAccept=unencrypted
           ListenPort=10050
@@ -248,7 +252,7 @@
         echo ""
         echo "=== IDENTIFICADORES ==="
         echo "Hostname Sistema: $(hostname -s)"
-        echo "Hostname Zabbix (inventory): {{ inventory_hostname }}"
+        echo "Hostname Zabbix (config): {{ zabbix_hostname }}"
         echo "IP Local: {{ ansible_default_ipv4.address | default('N/A') }}"
         echo "Zabbix Server: {{ zabbix_server }}"
         echo ""
@@ -314,13 +318,16 @@
         fi
 
         # Check 3: Hostname correct in config
-        if grep -q "Hostname={{ inventory_hostname }}" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
-          echo "✅ Hostname en config: {{ inventory_hostname }}"
-        elif grep -q "Hostname=.*{{ inventory_hostname }}" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
-          echo "✅ Hostname en config: {{ inventory_hostname }}"
-        else
-          echo "⚠️ Hostname en config: REVISAR (puede no coincidir con inventory)"
+        if grep -q "^Hostname={{ zabbix_hostname }}$" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
+          echo "✅ Hostname en config: {{ zabbix_hostname }}"
+        elif grep -q "^Hostname=.*" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
+          echo "Hostname actual en config:"
+          grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf
+          echo "⚠️ Hostname puede no coincidir con esperado ({{ zabbix_hostname }})"
           WARNINGS=$((WARNINGS + 1))
+        else
+          echo "❌ Hostname NO configurado"
+          ERRORS=$((ERRORS + 1))
         fi
 
         # Check 4: Server connectivity
