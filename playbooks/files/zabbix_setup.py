@@ -200,12 +200,10 @@ upsert_action("AXIOM: Auto Restart Servicio Caido", {
     "status": 0,
     "esc_period": "60",
     "filter": {
-        "evaltype": 2,
+        "evaltype": 0,
         "conditions": [
-            {"conditiontype": 4, "operator": 5, "value": "2"},
-            {"conditiontype": 4, "operator": 6, "value": "3"}
-        ],
-        "evals": [{"formulaid": "A or B"}]
+            {"conditiontype": 4, "operator": 5, "value": "2"}
+        ]
     },
     "operations": [{
         "operationtype": 1,
