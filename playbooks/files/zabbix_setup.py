@@ -30,21 +30,39 @@ def upsert_script(name, command, description, scope=1):
     existing = api_call("script.get", {"filter": {"name": [name]}}, token)
     if existing:
         sid = existing[0]["scriptid"]
-        api_call("script.update", {"scriptid": sid, "command": command}, token)
-        print(f"  Actualizado: {name} (id:{sid})")
-        return sid
+        api_call("script.delete", [sid], token)
+        print(f"  Eliminada previa: {name}")
+    result = api_call("script.create", {
+        "name": name,
+        "command": command,
+        "execute_on": 0,
+        "type": 0,
+        "scope": scope,
+        "description": description
+    }, token)
+    sid = result["scriptids"][0]
+    print(f"  Creado: {name} (id:{sid})")
+    return sid
+
+
+def upsert_trigger(description, expression, priority, tags, hostid=None):
+    if hostid:
+        existing = api_call("trigger.get", {"filter": {"description": [description]}, "hostids": [hostid]}, token)
     else:
-        result = api_call("script.create", {
-            "name": name,
-            "command": command,
-            "execute_on": 0,
-            "type": 0,
-            "scope": scope,
-            "description": description
-        }, token)
-        sid = result["scriptids"][0]
-        print(f"  Creado: {name} (id:{sid})")
-        return sid
+        existing = api_call("trigger.get", {"filter": {"description": [description]}}, token)
+    if existing:
+        tid = existing[0]["triggerid"]
+        api_call("trigger.delete", [tid], token)
+        print(f"  Eliminada previa trigger: {description[:50]}")
+    result = api_call("trigger.create", {
+        "description": description,
+        "expression": expression,
+        "priority": priority,
+        "manual_close": 1,
+        "tags": tags
+    }, token)
+    print(f"  Creado trigger: {description[:50]} (id:{result['triggerids'][0]})")
+    return result['triggerids'][0]
 
 
 def upsert_action(name, params):
@@ -250,12 +268,15 @@ for h in all_hosts:
     tname = f"{hname}: Agent no responde — PowerOn ESXi"
     existing = api_call("trigger.get", {"filter": {"description": tname}, "hostids": [hid]}, token)
     if existing:
-        print(f"  Existe: {tname}")
-        continue
+        try:
+            api_call("trigger.delete", [existing[0]["triggerid"]], token)
+            print(f"  Eliminada previa: {tname}")
+        except:
+            pass
     try:
         api_call("trigger.create", {
             "description": tname,
-            "expression": f"nodata(/{hname}/agent.ping,30s)=1",
+            "expression": f"nodata(/{hname}/agent.ping,60s)=1",
             "priority": 4,
             "manual_close": 1,
             "tags": [{"tag": "scope", "value": "availability"}, {"tag": "auto_recovery", "value": "poweron"}]
@@ -274,39 +295,45 @@ for hostname, services in HOST_SERVICES.items():
         item_key = f"proc.num[{svc}]"
         trigger_name = f"{hostname}: Servicio {svc} caido"
 
-        # Crear item primero si no existe
+        # Obtener interfaz del host
+        ifaces = api_call("hostinterface.get", {"hostids": [hostid]}, token)
+        if not ifaces:
+            print(f"  SKIP {hostname}/{svc}: sin interfaz")
+            continue
+        ifaceid = ifaces[0]["interfaceid"]
+
+        # Crear/actualizar item - eliminar primero si existe
         existing_item = api_call("item.get", {
             "hostids": [hostid],
             "filter": {"key_": item_key}
         }, token)
 
-        if not existing_item:
+        if existing_item:
             try:
-                # Obtener interfaz del host
-                ifaces = api_call("hostinterface.get", {"hostids": [hostid]}, token)
-                if not ifaces:
-                    print(f"  SKIP {hostname}/{svc}: sin interfaz")
-                    continue
-                ifaceid = ifaces[0]["interfaceid"]
+                api_call("item.delete", [existing_item[0]["itemid"]], token)
+                print(f"  Item eliminado previa: {hostname}/{item_key}")
+            except:
+                pass
 
-                api_call("item.create", {
-                    "hostid": hostid,
-                    "name": f"Procesos {svc} corriendo",
-                    "key_": item_key,
-                    "type": 0,          # Zabbix agent
-                    "value_type": 3,    # numeric unsigned
-                    "interfaceid": ifaceid,
-                    "delay": "30s",
-                    "history": "7d",
-                    "trends": "30d",
-                    "tags": [{"tag": "service", "value": svc}]
-                }, token)
-                print(f"  Item creado: {item_key} en {hostname}")
-            except Exception as e:
-                print(f"  ERROR item {hostname}/{svc}: {e}")
-                continue
+        try:
+            api_call("item.create", {
+                "hostid": hostid,
+                "name": f"Procesos {svc} corriendo",
+                "key_": item_key,
+                "type": 0,          # Zabbix agent
+                "value_type": 3,    # numeric unsigned
+                "interfaceid": ifaceid,
+                "delay": "30s",
+                "history": "7d",
+                "trends": "30d",
+                "tags": [{"tag": "service", "value": svc}]
+            }, token)
+            print(f"  Item creado: {item_key} en {hostname}")
+        except Exception as e:
+            print(f"  ERROR item {hostname}/{svc}: {e}")
+            continue
 
-        # Crear trigger
+        # Crear trigger (eliminar primero si existe)
         existing_trigger = api_call("trigger.get", {
             "filter": {"description": trigger_name},
             "hostids": [hostid]
@@ -314,6 +341,12 @@ for hostname, services in HOST_SERVICES.items():
         if existing_trigger:
             print(f"  Existe trigger: {trigger_name}")
             continue
+
+        try:
+            api_call("trigger.delete", [existing_trigger[0]["triggerid"]], token)
+            print(f"  Eliminada previa trigger: {trigger_name}")
+        except:
+            pass
 
         try:
             api_call("trigger.create", {
