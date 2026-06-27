@@ -137,39 +137,27 @@
         chmod 755 /run/zabbix /var/log/zabbix
         ls -la /run/zabbix /var/log/zabbix
 
-    - name: "AGN — DETECTAR HOSTNAME CORRECTO"
-      ansible.builtin.shell: |
-        HOSTNAME_SISTEMA=$(hostname -s)
-        IP_PRIMARIA=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1 | head -1)
-        echo "HOSTNAME_SISTEMA=$HOSTNAME_SISTEMA"
-        echo "IP_PRIMARIA=$IP_PRIMARIA"
-
-        # Si ya tenemos hostname correcto del inventory (no es ubuntu/localhost)
-        if [ "$HOSTNAME_SISTEMA" != "ubuntu" ] && [ "$HOSTNAME_SISTEMA" != "localhost" ]; then
-          echo "HOSTNAME_ZABBIX=$HOSTNAME_SISTEMA"
-        else
-          # Mapear por IP
-          case "$IP_PRIMARIA" in
-            192.168.17.11) echo "HOSTNAME_ZABBIX=vm-monitor01" ;;
-            192.168.16.10) echo "HOSTNAME_ZABBIX=vm-dc01" ;;
-            192.168.13.11) echo "HOSTNAME_ZABBIX=vm-services01" ;;
-            192.168.11.11) echo "HOSTNAME_ZABBIX=vm-web01" ;;
-            192.168.15.11) echo "HOSTNAME_ZABBIX=vm-voip01" ;;
-            192.168.14.11) echo "HOSTNAME_ZABBIX=vm-storage01" ;;
-            192.168.13.12) echo "HOSTNAME_ZABBIX=vm-docker01" ;;
-            *) echo "HOSTNAME_ZABBIX=$HOSTNAME_SISTEMA" ;;
-          esac
-        fi
-      changed_when: false
-      register: hostname_detect
-
-    - name: "AGN — MOSTRAR hostname detectado"
-      ansible.builtin.debug:
-        msg: "{{ hostname_detect.stdout_lines }}"
-
     - name: "AGN — SETEAR HOSTNAME"
       ansible.builtin.set_fact:
-        zabbix_hostname: "{{ hostname_detect.stdout_lines[-1].split('=')[1] | trim }}"
+        zabbix_hostname: >-
+          {% if inventory_hostname in ['localhost', 'all'] %}
+            {% if ansible_default_ipv4 is defined and ansible_default_ipv4.address is defined %}
+              {% if ansible_default_ipv4.address == '192.168.17.11' %}vm-monitor01
+              {% elif ansible_default_ipv4.address == '192.168.16.10' %}vm-dc01
+              {% elif ansible_default_ipv4.address == '192.168.13.11' %}vm-services01
+              {% elif ansible_default_ipv4.address == '192.168.11.11' %}vm-web01
+              {% elif ansible_default_ipv4.address == '192.168.15.11' %}vm-voip01
+              {% elif ansible_default_ipv4.address == '192.168.14.11' %}vm-storage01
+              {% elif ansible_default_ipv4.address == '192.168.13.12' %}vm-docker01
+              {% else %}{{ inventory_hostname }}
+              {% endif %}
+            {% else %}vm-monitor01{% endif %}
+          {% else %}{{ inventory_hostname }}
+          {% endif %}
+
+    - name: "AGN — MOSTRAR hostname"
+      ansible.builtin.debug:
+        msg: "Hostname Zabbix: {{ zabbix_hostname }}"
 
     - name: "AGN — CONFIGURAR Zabbix Agent"
       ansible.builtin.copy:
