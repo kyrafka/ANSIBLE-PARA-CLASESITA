@@ -1,0 +1,149 @@
+---
+# ============================================================================
+# test_vm_poweron.yml — Diagnosticar cuál método de PowerOn funciona
+# ============================================================================
+
+- name: "TEST — Diagnosticar vm-poweron.sh"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+    test_vm: "vm-web01"
+
+  tasks:
+    - name: "TEST 1 — Verificar script actual"
+      ansible.builtin.shell: |
+        echo "=== SCRIPT ACTUAL ==="
+        cat /usr/local/bin/vm-poweron.sh
+        echo ""
+        ls -la /usr/local/bin/vm-poweron.sh
+      register: current_script
+
+    - name: "RESULT 1"
+      ansible.builtin.debug:
+        msg: "{{ current_script.stdout_lines }}"
+
+    # =========================================================================
+    # MÉTODO 1: SSH directo (vim-cmd) — versión zabbix_agents.yml
+    # =========================================================================
+    - name: "TEST 2 — Método SSH directo (vim-cmd)"
+      ansible.builtin.shell: |
+        echo "=== METODO 1: SSH DIRECTO (vim-cmd) ==="
+
+        VM_INFO=$(sshpass -p "{{ esxi_pass }}" ssh -p {{ esxi_port }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          "{{ esxi_user }}@{{ esxi_host }}" "vim-cmd vmsvc/getallvms" 2>/dev/null)
+
+        echo "=== VMs en ESXi ==="
+        echo "$VM_INFO"
+
+        VM_LINE=$(echo "$VM_INFO" | grep -i "{{ test_vm }}" | head -1)
+        echo ""
+        echo "=== VM {{ test_vm }} ==="
+        echo "$VM_LINE"
+
+        if [ -z "$VM_LINE" ]; then
+          echo "ERROR: VM {{ test_vm }} no encontrada"
+          exit 1
+        fi
+
+        VM_ID=$(echo "$VM_LINE" | awk '{print $1}')
+        echo "VM ID: $VM_ID"
+
+        echo "=== Verificando estado actual ==="
+        VM_STATE=$(sshpass -p "{{ esxi_pass }}" ssh -p {{ esxi_port }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+          "{{ esxi_user }}@{{ esxi_host }}" "vim-cmd vmsvc/power.getstate $VM_ID" 2>/dev/null | tail -1)
+        echo "Estado: $VM_STATE"
+
+        if echo "$VM_STATE" | grep -q "poweredOn"; then
+          echo "VM YA ESTÁ ENCENDIDA"
+          echo "NO SE NECESITA ENCENDER"
+        else
+          echo "=== ENCENDIENDO VM via SSH/vim-cmd ==="
+          sshpass -p "{{ esxi_pass }}" ssh -p {{ esxi_port }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "{{ esxi_user }}@{{ esxi_host }}" "vim-cmd vmsvc/power.on $VM_ID"
+
+          sleep 5
+          VM_STATE2=$(sshpass -p "{{ esxi_pass }}" ssh -p {{ esxi_port }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "{{ esxi_user }}@{{ esxi_host }}" "vim-cmd vmsvc/power.getstate $VM_ID" 2>/dev/null | tail -1)
+          echo "Estado después: $VM_STATE2"
+        fi
+      register: ssh_method
+      changed_when: false
+
+    - name: "RESULT SSH"
+      ansible.builtin.debug:
+        msg:
+          - "=== MÉTODO SSH (vim-cmd) ==="
+          - "{{ ssh_method.stdout_lines }}"
+
+    # =========================================================================
+    # MÉTODO 2: govc — versión zabbix_orchestrator.yml
+    # =========================================================================
+    - name: "TEST 3 — Método govc"
+      ansible.builtin.shell: |
+        echo "=== METODO 2: govc ==="
+
+        which govc || echo "govc NO INSTALADO"
+        govc version 2>/dev/null || echo "govc FALLO"
+
+        echo "=== Variables de entorno govc ==="
+        echo "GOVC_URL: https://{{ esxi_user }}:***@{{ esxi_host }}:{{ esxi_port }}"
+        echo "GOVC_INSECURE: 1"
+
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+
+        echo "=== Listando VMs ==="
+        govc vm.list 2>&1 || echo "govc vm.list FALLO"
+
+        echo "=== Info de {{ test_vm }} ==="
+        govc vm.info "/ha-datacenter/vm/{{ test_vm }}" 2>&1 || echo "govc vm.info FALLO"
+
+        echo "=== Estado de {{ test_vm }} ==="
+        POWER=$(govc vm.info "/ha-datacenter/vm/{{ test_vm }}" 2>/dev/null | grep "Power state" | awk '{print $3}')
+        echo "Power state: ${POWER:-UNKNOWN}"
+
+        if [ "$POWER" = "poweredOn" ]; then
+          echo "VM YA ESTÁ ENCENDIDA (govc)"
+        else
+          echo "=== ENCENDIENDO VM via govc ==="
+          govc vm.power -on "/ha-datacenter/vm/{{ test_vm }}" 2>&1
+          sleep 5
+          POWER2=$(govc vm.info "/ha-datacenter/vm/{{ test_vm }}" 2>/dev/null | grep "Power state" | awk '{print $3}')
+          echo "Estado después: ${POWER2:-UNKNOWN}"
+        fi
+      register: govc_method
+      changed_when: false
+      ignore_errors: true
+
+    - name: "RESULT govc"
+      ansible.builtin.debug:
+        msg:
+          - "=== MÉTODO govc ==="
+          - "{{ govc_method.stdout_lines }}"
+          - "{{ govc_method.stderr_lines }}"
+
+    # =========================================================================
+    # RESUMEN
+    # =========================================================================
+    - name: "RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "RESUMEN DIAGNÓSTICO"
+          - "=========================================="
+          - "Script en /usr/local/bin/vm-poweron.sh:"
+          - "  {{ current_script.stdout | regex_search('^#!/.*') | first }}"
+          - ""
+          - "Método SSH (vim-cmd): {{ 'OK' if ssh_method.rc == 0 else 'FALLO' }}"
+          - "Método govc: {{ 'OK' if govc_method.rc == 0 else 'FALLO' }}"
+          - ""
+          - "NOTA: Para que Zabbix auto-recover funcione,"
+          - "el script en /usr/local/bin/vm-poweron.sh debe"
+          - "usar el método que funciona en ESTE servidor."
