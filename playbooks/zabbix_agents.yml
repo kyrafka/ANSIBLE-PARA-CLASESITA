@@ -139,26 +139,37 @@
 
     - name: "AGN — DETECTAR HOSTNAME CORRECTO"
       ansible.builtin.shell: |
-        IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1 | head -1)
-        echo "IP_LOCAL=$IP"
+        HOSTNAME_SISTEMA=$(hostname -s)
+        IP_PRIMARIA=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1 | head -1)
+        echo "HOSTNAME_SISTEMA=$HOSTNAME_SISTEMA"
+        echo "IP_PRIMARIA=$IP_PRIMARIA"
 
-        # Mapear IP a hostname basado en inventario
-        case "$IP" in
-          192.168.17.11) echo "HOSTNAME_ZABBIX=vm-monitor01" ;;
-          192.168.16.10) echo "HOSTNAME_ZABBIX=vm-dc01" ;;
-          192.168.13.11) echo "HOSTNAME_ZABBIX=vm-services01" ;;
-          192.168.11.11) echo "HOSTNAME_ZABBIX=vm-web01" ;;
-          192.168.15.11) echo "HOSTNAME_ZABBIX=vm-voip01" ;;
-          192.168.14.11) echo "HOSTNAME_ZABBIX=vm-storage01" ;;
-          192.168.13.12) echo "HOSTNAME_ZABBIX=vm-docker01" ;;
-          *) echo "HOSTNAME_ZABBIX=unknown" ;;
-        esac
+        # Si ya tenemos hostname correcto del inventory (no es ubuntu/localhost)
+        if [ "$HOSTNAME_SISTEMA" != "ubuntu" ] && [ "$HOSTNAME_SISTEMA" != "localhost" ]; then
+          echo "HOSTNAME_ZABBIX=$HOSTNAME_SISTEMA"
+        else
+          # Mapear por IP
+          case "$IP_PRIMARIA" in
+            192.168.17.11) echo "HOSTNAME_ZABBIX=vm-monitor01" ;;
+            192.168.16.10) echo "HOSTNAME_ZABBIX=vm-dc01" ;;
+            192.168.13.11) echo "HOSTNAME_ZABBIX=vm-services01" ;;
+            192.168.11.11) echo "HOSTNAME_ZABBIX=vm-web01" ;;
+            192.168.15.11) echo "HOSTNAME_ZABBIX=vm-voip01" ;;
+            192.168.14.11) echo "HOSTNAME_ZABBIX=vm-storage01" ;;
+            192.168.13.12) echo "HOSTNAME_ZABBIX=vm-docker01" ;;
+            *) echo "HOSTNAME_ZABBIX=$HOSTNAME_SISTEMA" ;;
+          esac
+        fi
       changed_when: false
       register: hostname_detect
 
+    - name: "AGN — MOSTRAR hostname detectado"
+      ansible.builtin.debug:
+        msg: "{{ hostname_detect.stdout_lines }}"
+
     - name: "AGN — SETEAR HOSTNAME"
       ansible.builtin.set_fact:
-        zabbix_hostname: "{{ hostname_detect.stdout.split('=')[1] | trim }}"
+        zabbix_hostname: "{{ hostname_detect.stdout_lines[-1].split('=')[1] | trim }}"
 
     - name: "AGN — CONFIGURAR Zabbix Agent"
       ansible.builtin.copy:
@@ -256,12 +267,19 @@
     - name: "AGN — REINICIAR servicio con nueva config"
       ansible.builtin.shell: |
         echo "=== REINICIANDO ZABBIX AGENT ==="
-        systemctl restart zabbix-agent
+        systemctl restart zabbix-agent 2>&1
         sleep 3
-        
+
         echo "=== ESTADO FINAL ==="
         systemctl is-active zabbix-agent && echo "AGENT: OK" || echo "AGENT: FAIL"
-        ss -tlnp | grep 10050 || echo "PUERTO 10050: no escuchando"
+
+        echo ""
+        echo "=== ULTIMOS ERRORES DEL SERVICIO ==="
+        journalctl -u zabbix-agent.service -n 10 --no-pager 2>/dev/null || echo "Sin errores en journal"
+
+        echo ""
+        echo "=== LOG DE ZABBIX AGENT ==="
+        tail -20 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin log"
 
     - name: "AGN — VERIFICACION FINAL Y RESUMEN"
       ansible.builtin.shell: |
