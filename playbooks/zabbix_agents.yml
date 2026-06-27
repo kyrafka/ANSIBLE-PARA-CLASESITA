@@ -139,8 +139,20 @@
 
     - name: "AGN — DETECTAR HOSTNAME CORRECTO"
       ansible.builtin.shell: |
-        INVENTORY_NAME=$(cat /etc/hostname 2>/dev/null || hostname -s)
-        echo "inventory_name=$INVENTORY_NAME"
+        IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v 127.0.0.1 | head -1)
+        echo "IP_LOCAL=$IP"
+
+        # Mapear IP a hostname basado en inventario
+        case "$IP" in
+          192.168.17.11) echo "HOSTNAME_ZABBIX=vm-monitor01" ;;
+          192.168.16.10) echo "HOSTNAME_ZABBIX=vm-dc01" ;;
+          192.168.13.11) echo "HOSTNAME_ZABBIX=vm-services01" ;;
+          192.168.11.11) echo "HOSTNAME_ZABBIX=vm-web01" ;;
+          192.168.15.11) echo "HOSTNAME_ZABBIX=vm-voip01" ;;
+          192.168.14.11) echo "HOSTNAME_ZABBIX=vm-storage01" ;;
+          192.168.13.12) echo "HOSTNAME_ZABBIX=vm-docker01" ;;
+          *) echo "HOSTNAME_ZABBIX=unknown" ;;
+        esac
       changed_when: false
       register: hostname_detect
 
