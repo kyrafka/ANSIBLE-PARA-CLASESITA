@@ -138,8 +138,15 @@
         ls -la /run/zabbix /var/log/zabbix
 
     - name: "AGN — DETECTAR HOSTNAME CORRECTO"
+      ansible.builtin.shell: |
+        INVENTORY_NAME=$(cat /etc/hostname 2>/dev/null || hostname -s)
+        echo "inventory_name=$INVENTORY_NAME"
+      changed_when: false
+      register: hostname_detect
+
+    - name: "AGN — SETEAR HOSTNAME"
       ansible.builtin.set_fact:
-        zabbix_hostname: "{{ inventory_hostname if inventory_hostname != 'localhost' else ansible_hostname }}"
+        zabbix_hostname: "{{ hostname_detect.stdout.split('=')[1] | trim }}"
 
     - name: "AGN — CONFIGURAR Zabbix Agent"
       ansible.builtin.copy:
@@ -461,11 +468,24 @@
         mode: "0644"
         force: yes
 
+    - name: "AGN — Esperar a que apt esté libre"
+      ansible.builtin.shell: |
+        echo "Esperando a que apt esté libre..."
+        for i in {1..30}; do
+          if [ ! -f /var/lib/apt/lists/lock ] || ! fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
+            echo "apt libre"
+            break
+          fi
+          echo "Esperando... ($i/30)"
+          sleep 2
+        done
+
     - name: "AGN — Instalar Zabbix Agent"
       ansible.builtin.apt:
         name: zabbix-agent
         state: present
         update_cache: yes
+        lock_timeout: 120
 
     - name: "AGN — Hacer script vm-poweron.sh ejecutable"
       ansible.builtin.shell: |
