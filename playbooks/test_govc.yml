@@ -1,0 +1,83 @@
+---
+# ============================================================================
+# test_govc.yml — Probar govc directamente con credenciales correctas
+# ============================================================================
+
+- name: "TEST govc directo"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "TEST 1 — govc instalado?"
+      ansible.builtin.shell: |
+        which govc && govc version
+      register: govc_check
+
+    - name: "RESULT"
+      ansible.builtin.debug:
+        msg: "{{ govc_check.stdout_lines }}"
+
+    - name: "TEST 2 — Probar govc con credenciales CORRECTAS"
+      ansible.builtin.shell: |
+        export GOVC_URL="https://root:qwe123\$@168.121.48.254:10112"
+        export GOVC_INSECURE=1
+
+        echo "=== Probando govc about ==="
+        govc about 2>&1
+
+        echo ""
+        echo "=== Listando VMs ==="
+        govc find /ha-datacenter -type m 2>&1
+
+        echo ""
+        echo "=== vm-web01 info ==="
+        govc vm.info "/ha-datacenter/vm/vm-web01" 2>&1
+
+        echo ""
+        echo "=== Estado vm-web01 ==="
+        govc vm.info "/ha-datacenter/vm/vm-web01" 2>&1 | grep "Power state"
+      register: govc_test
+      changed_when: false
+      ignore_errors: true
+
+    - name: "RESULT govc"
+      ansible.builtin.debug:
+        msg:
+          - "{{ govc_test.stdout_lines }}"
+          - "{{ govc_test.stderr_lines }}"
+
+    - name: "TEST 3 — Si apagada, encender"
+      ansible.builtin.shell: |
+        export GOVC_URL="https://root:qwe123\$@168.121.48.254:10112"
+        export GOVC_INSECURE=1
+
+        POWER=$(govc vm.info "/ha-datacenter/vm/vm-web01" 2>/dev/null | grep "Power state" | awk '{print $3}')
+        echo "Estado actual: $POWER"
+
+        if [ "$POWER" = "poweredOn" ]; then
+          echo "YA ESTÁ ENCENDIDA - No se hace nada"
+        else
+          echo "APAGADA - Encendiendo..."
+          govc vm.power -on "/ha-datacenter/vm/vm-web01" 2>&1
+          sleep 3
+          POWER2=$(govc vm.info "/ha-datacenter/vm/vm-web01" 2>/dev/null | grep "Power state" | awk '{print $3}')
+          echo "Nuevo estado: $POWER2"
+        fi
+      register: poweron_test
+      changed_when: false
+      ignore_errors: true
+
+    - name: "RESULT PowerOn"
+      ansible.builtin.debug:
+        msg: "{{ poweron_test.stdout_lines }}"
+
+    - name: "RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "RESUMEN"
+          - "govc funciona: {{ 'SI' if 'VMware' in govc_test.stdout else 'NO' }}"
+          - "vm-web01 se encendió: {{ 'SI' if 'poweredOn' in poweron_test.stdout else 'REVISAR' }}"
+          - "=========================================="
