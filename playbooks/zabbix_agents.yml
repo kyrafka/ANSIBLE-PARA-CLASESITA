@@ -137,11 +137,6 @@
         chmod 755 /run/zabbix /var/log/zabbix
         ls -la /run/zabbix /var/log/zabbix
 
-    - name: "AGN — OBTENER hostname"
-      ansible.builtin.shell: hostname -s
-      changed_when: false
-      register: host_name
-
     - name: "AGN — CONFIGURAR Zabbix Agent"
       ansible.builtin.copy:
         dest: /etc/zabbix/zabbix_agentd.conf
@@ -151,7 +146,7 @@
           LogFileSize=10
           Server={{ zabbix_server }},127.0.0.1
           ServerActive={{ zabbix_server }},127.0.0.1
-          Hostname={{ host_name.stdout }}
+          Hostname={{ inventory_hostname }}
           TLSConnect=unencrypted
           TLSAccept=unencrypted
           ListenPort=10050
