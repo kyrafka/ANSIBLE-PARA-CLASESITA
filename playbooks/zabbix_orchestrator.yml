@@ -13,8 +13,8 @@
     zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
     zabbix_user: "Admin"
     zabbix_pass: "zabbix"
-    esxi_host: "172.17.25.12"
-    esxi_port: "443"
+    esxi_host: "168.121.48.254"
+    esxi_port: "10112"
     esxi_user: "root"
     esxi_pass: "qwe123$"
 
