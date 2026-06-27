@@ -30,19 +30,21 @@ def upsert_script(name, command, description, scope=1):
     existing = api_call("script.get", {"filter": {"name": [name]}}, token)
     if existing:
         sid = existing[0]["scriptid"]
-        api_call("script.delete", [sid], token)
-        print(f"  Eliminada previa: {name}")
-    result = api_call("script.create", {
-        "name": name,
-        "command": command,
-        "execute_on": 0,
-        "type": 0,
-        "scope": scope,
-        "description": description
-    }, token)
-    sid = result["scriptids"][0]
-    print(f"  Creado: {name} (id:{sid})")
-    return sid
+        api_call("script.update", {"scriptid": sid, "command": command}, token)
+        print(f"  Actualizado: {name} (id:{sid})")
+        return sid
+    else:
+        result = api_call("script.create", {
+            "name": name,
+            "command": command,
+            "execute_on": 0,
+            "type": 0,
+            "scope": scope,
+            "description": description
+        }, token)
+        sid = result["scriptids"][0]
+        print(f"  Creado: {name} (id:{sid})")
+        return sid
 
 
 def upsert_trigger(description, expression, priority, tags, hostid=None):
