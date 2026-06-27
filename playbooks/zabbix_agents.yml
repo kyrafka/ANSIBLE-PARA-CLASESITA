@@ -356,3 +356,141 @@
     - name: "AGN — RESULTADO"
       ansible.builtin.debug:
         msg: "{{ verif.stdout_lines }}"
+
+
+# ============================================================================
+# PLAY 2: Configurar AGENTES por SSH en otras VMs (lima_servers)
+# ============================================================================
+- name: "Instalar Zabbix Agent en VMs remotas"
+  hosts: lima_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    zabbix_server: "192.168.17.11"
+
+  tasks:
+    - name: "AGN — Detectar hostname"
+      ansible.builtin.set_fact:
+        zabbix_hostname: "{{ inventory_hostname }}"
+
+    - name: "AGN — Instalar sshpass"
+      ansible.builtin.apt:
+        name: sshpass
+        state: present
+
+    - name: "AGN — Crear directorios"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /run/zabbix
+        - /var/log/zabbix
+        - /etc/zabbix
+
+    - name: "AGN — Crear usuario zabbix"
+      ansible.builtin.user:
+        name: zabbix
+        system: yes
+        shell: /bin/bash
+        create_home: no
+        state: present
+      failed_when: false
+
+    - name: "AGN — Configurar sudoers"
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/zabbix
+        content: |
+          zabbix ALL=(ALL) NOPASSWD: /usr/local/bin/vm-poweron.sh
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart zabbix-agent
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart apache2
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart mariadb
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart postfix
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dovecot
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart asterisk
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart smbd
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nfs-server
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart keepalived
+          zabbix ALL=(ALL) NOPASSWD: /sbin/reboot
+          zabbix ALL=(ALL) NOPASSWD: /sbin/poweroff
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot
+        mode: "0440"
+        force: yes
+
+    - name: "AGN — Configurar Zabbix Agent"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agentd.conf
+        content: |
+          PidFile=/run/zabbix/zabbix_agentd.pid
+          LogFile=/var/log/zabbix/zabbix_agentd.log
+          LogFileSize=10
+          Server={{ zabbix_server }},127.0.0.1
+          ServerActive={{ zabbix_server }},127.0.0.1
+          Hostname={{ zabbix_hostname }}
+          TLSConnect=unencrypted
+          TLSAccept=unencrypted
+          ListenPort=10050
+          RefreshActiveChecks=300
+          Timeout=30
+          BufferSend=10
+          BufferSize=100
+          MaxLinesPerSecond=100
+          EnableRemoteCommands=1
+          AllowRoot=1
+          Include=/etc/zabbix/zabbix_agentd.conf.d/*.conf
+        force: yes
+        mode: "0644"
+
+    - name: "AGN — Crear reglas remote commands"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agentd.conf.d/remote_commands.conf
+        content: |
+          AllowKey=system.run[/usr/bin/systemctl restart apache2]
+          AllowKey=system.run[/usr/bin/systemctl restart mariadb]
+          AllowKey=system.run[/usr/bin/systemctl restart postfix]
+          AllowKey=system.run[/usr/bin/systemctl restart dovecot]
+          AllowKey=system.run[/usr/bin/systemctl restart asterisk]
+          AllowKey=system.run[/usr/bin/systemctl restart smbd]
+          AllowKey=system.run[/usr/bin/systemctl restart nfs-server]
+          AllowKey=system.run[/usr/bin/systemctl restart zabbix-server]
+          AllowKey=system.run[/usr/bin/systemctl restart keepalived]
+          AllowKey=system.run[/sbin/reboot]
+          AllowKey=system.run[/sbin/poweroff]
+          AllowKey=system.run[/usr/bin/systemctl reboot]
+        mode: "0644"
+        force: yes
+
+    - name: "AGN — Instalar Zabbix Agent"
+      ansible.builtin.apt:
+        name: zabbix-agent
+        state: present
+        update_cache: yes
+
+    - name: "AGN — Hacer script vm-poweron.sh ejecutable"
+      ansible.builtin.shell: |
+        chmod 755 /usr/local/bin/vm-poweron.sh 2>/dev/null || true
+        chown zabbix:zabbix /usr/local/bin/vm-poweron.sh 2>/dev/null || true
+
+    - name: "AGN — Reiniciar servicio"
+      ansible.builtin.systemd:
+        name: zabbix-agent
+        state: restarted
+        enabled: yes
+
+    - name: "AGN — RESUMEN por SSH"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "  RESUMEN {{ inventory_hostname }}"
+        echo "=========================================="
+        echo "Hostname Zabbix: {{ zabbix_hostname }}"
+        echo "Zabbix Server: {{ zabbix_server }}"
+        echo ""
+        echo "=== CONFIG ==="
+        grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf 2>/dev/null || echo "SinHostname"
+        grep "^Server=" /etc/zabbix/zabbix_agentd.conf 2>/dev/null || echo "SinServer"
+        echo ""
+        echo "=== SERVICIO ==="
+        systemctl is-active zabbix-agent && echo "Status: ACTIVO" || echo "Status: INACTIVO"
+        echo "=========================================="
+      changed_when: false
