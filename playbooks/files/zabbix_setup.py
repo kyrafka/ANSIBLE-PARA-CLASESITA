@@ -97,6 +97,12 @@ upsert_script(
     scope=2
 )
 
+restart_sid = upsert_script(
+    "AXIOM: Restart Service",
+    "sudo /usr/local/bin/service-restart.sh {HOST.CONN} {EVENT.TAGS.__service}",
+    "Reinicia servicio caido en host remoto via SSH"
+)
+
 
 # =========================================================================
 # 3. Media type Email
@@ -187,6 +193,35 @@ upsert_action("AXIOM: Notificacion Email Problemas", {
     }]
 })
 
+# Action: Servicio caido → Restart via SSH
+upsert_action("AXIOM: Auto Restart Servicio Caido", {
+    "name": "AXIOM: Auto Restart Servicio Caido",
+    "eventsource": 0,
+    "status": 0,
+    "esc_period": "30s",
+    "filter": {
+        "evaltype": 2,
+        "conditions": [
+            {"conditiontype": 4, "operator": 5, "value": "2"},
+            {"conditiontype": 4, "operator": 6, "value": "3"}
+        ],
+        "evals": [{"formulaid": "A or B"}]
+    },
+    "operations": [{
+        "operationtype": 1,
+        "esc_period": "0",
+        "esc_step_from": 1,
+        "esc_step_to": 1,
+        "opcommand": {"scriptid": restart_sid},
+        "opcommand_hst": [{"hostid": "0"}]
+    }],
+    "recovery_operations": [{
+        "operationtype": 0,
+        "opmessage": {"default_msg": 1, "mediatypeid": mt_id},
+        "opmessage_usr": [{"userid": user_id}]
+    }]
+})
+
 
 # =========================================================================
 # 6. Triggers de servicios por host
@@ -263,7 +298,7 @@ for hostname, services in HOST_SERVICES.items():
                     "type": 0,          # Zabbix agent
                     "value_type": 3,    # numeric unsigned
                     "interfaceid": ifaceid,
-                    "delay": "60s",
+                    "delay": "30s",
                     "history": "7d",
                     "trends": "30d",
                     "tags": [{"tag": "service", "value": svc}]
@@ -290,6 +325,7 @@ for hostname, services in HOST_SERVICES.items():
                 "manual_close": 1,
                 "tags": [
                     {"tag": "service", "value": svc},
+                    {"tag": "__service", "value": svc},
                     {"tag": "scope", "value": "availability"}
                 ]
             }, token)
