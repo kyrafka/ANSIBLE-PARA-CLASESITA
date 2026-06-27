@@ -1,0 +1,66 @@
+---
+# ============================================================================
+# fix_hostname.yml — Solo corrige el hostname del agente Zabbix
+# ============================================================================
+# Uso: ansible-playbook fix_hostname.yml -l <vm_name>
+# ============================================================================
+
+- name: "Corregir hostname Zabbix Agent"
+  hosts: "{{ target_host | default('localhost') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    zabbix_server: "192.168.17.11"
+
+  tasks:
+    - name: "DETECT — Mostrar info actual"
+      ansible.builtin.shell: |
+        echo "=== ACTUAL ==="
+        echo "Hostname sistema: $(hostname -s)"
+        echo "IP local: {{ ansible_default_ipv4.address | default('N/A') }}"
+        echo "Hostname en config:"
+        grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf 2>/dev/null || echo "NO EXISTE"
+
+    - name: "SET — Hostname basado en IP"
+      ansible.builtin.set_fact:
+        zabbix_hostname: >-
+          {% if ansible_default_ipv4.address is defined %}
+            {% if ansible_default_ipv4.address == '192.168.17.11' %}vm-monitor01
+            {% elif ansible_default_ipv4.address == '192.168.16.10' %}vm-dc01
+            {% elif ansible_default_ipv4.address == '192.168.13.11' %}vm-services01
+            {% elif ansible_default_ipv4.address == '192.168.11.11' %}vm-web01
+            {% elif ansible_default_ipv4.address == '192.168.15.11' %}vm-voip01
+            {% elif ansible_default_ipv4.address == '192.168.14.11' %}vm-storage01
+            {% elif ansible_default_ipv4.address == '192.168.13.12' %}vm-docker01
+            {% else %}{{ inventory_hostname }}
+            {% endif %}
+          {% else %}{{ inventory_hostname }}
+          {% endif %}
+
+    - name: "FIX — Actualizar hostname en config"
+      ansible.builtin.lineinfile:
+        path: /etc/zabbix/zabbix_agentd.conf
+        regexp: "^Hostname=.*"
+        line: "Hostname={{ zabbix_hostname }}"
+        create: yes
+        mode: "0644"
+
+    - name: "FIX — Agregar línea si no existe"
+      ansible.builtin.shell: |
+        if ! grep -q "^Hostname=" /etc/zabbix/zabbix_agentd.conf; then
+          echo "Hostname={{ zabbix_hostname }}" >> /etc/zabbix/zabbix_agentd.conf
+        fi
+
+    - name: "RESTART — Reiniciar agente"
+      ansible.builtin.systemd:
+        name: zabbix-agent
+        state: restarted
+
+    - name: "VERIFY — Mostrar resultado"
+      ansible.builtin.shell: |
+        sleep 2
+        echo "=== RESULTADO ==="
+        echo "Hostname config: $(grep '^Hostname=' /etc/zabbix/zabbix_agentd.conf)"
+        systemctl is-active zabbix-agent && echo "Agent: ACTIVO" || echo "Agent: INACTIVO"
+      changed_when: false
