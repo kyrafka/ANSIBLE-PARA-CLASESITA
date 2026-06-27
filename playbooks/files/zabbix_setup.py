@@ -155,7 +155,7 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
     "status": 0,
-    "esc_period": "30",
+    "esc_period": "60",
     "filter": {
         "evaltype": 0,
         "conditions": [{"conditiontype": 4, "operator": 5, "value": "2"}]
@@ -198,7 +198,7 @@ upsert_action("AXIOM: Auto Restart Servicio Caido", {
     "name": "AXIOM: Auto Restart Servicio Caido",
     "eventsource": 0,
     "status": 0,
-    "esc_period": "30",
+    "esc_period": "60",
     "filter": {
         "evaltype": 2,
         "conditions": [
