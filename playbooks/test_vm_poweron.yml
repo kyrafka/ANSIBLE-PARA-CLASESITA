@@ -53,12 +53,15 @@
         govc about 2>&1 || echo "govc about: FALLO"
         echo ""
 
-        echo "=== Listando VMs en ESXi ==="
-        govc vm.list 2>&1 || echo "govc vm.list: FALLO"
+        echo "=== Listando TODAS las VMs en ha-datacenter ==="
+        govc find /ha-datacenter -type m 2>&1 || echo "No VMs found in ha-datacenter"
         echo ""
 
-        echo "=== Info de {{ test_vm }} ==="
-        govc vm.info "/ha-datacenter/vm/{{ test_vm }}" 2>&1 || echo "govc vm.info: FALLO"
+        echo "=== Listando VMs con info completa ==="
+        for vm in $(govc find /ha-datacenter -type m 2>/dev/null); do
+          echo "---"
+          govc vm.info "$vm" 2>&1
+        done
         echo ""
 
         echo "=== Estado de {{ test_vm }} ==="
@@ -97,13 +100,17 @@
       ansible.builtin.shell: |
         echo "=== VERIFICANDO TIPO DE SCRIPT ==="
 
-        if grep -q "govc" /usr/local/bin/vm-poweron.sh 2>/dev/null; then
-          echo "✅ Script USA govc — CORRECTO"
-        elif grep -q "vim-cmd\|sshpass" /usr/local/bin/vm-poweron.sh 2>/dev/null; then
-          echo "❌ Script USA SSH/vim-cmd — NO FUNCIONARÁ (root SSH deshabilitado)"
-          echo "RECOMENDACIÓN: Ejecutar zabbix_orchestrator.yml para sobreescribir con govc"
+        if [ -f /usr/local/bin/vm-poweron.sh ]; then
+          if grep -q "govc" /usr/local/bin/vm-poweron.sh; then
+            echo "✅ Script USA govc — CORRECTO"
+          elif grep -q "vim-cmd\|sshpass" /usr/local/bin/vm-poweron.sh; then
+            echo "❌ Script USA SSH/vim-cmd — NO FUNCIONARÁ"
+            echo "RECOMENDACIÓN: ansible-playbook playbooks/zabbix_orchestrator.yml"
+          else
+            echo "⚠️ Script vacío o tipo desconocido"
+          fi
         else
-          echo "⚠️ Script vacío o no existe"
+          echo "⚠️ Script no existe"
         fi
       register: script_type
       changed_when: false
@@ -127,4 +134,3 @@
           - ""
           - "NOTA: Si el script usa SSH/vim-cmd, ejecutar:"
           - "  ansible-playbook playbooks/zabbix_orchestrator.yml"
-          - "para sobreescribir con la versión govc"
