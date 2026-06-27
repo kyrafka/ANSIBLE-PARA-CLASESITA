@@ -149,7 +149,7 @@ upsert_action("AXIOM: Auto PowerOn VM en ESXi", {
     "name": "AXIOM: Auto PowerOn VM en ESXi",
     "eventsource": 0,
     "status": 0,
-    "esc_period": "2m",
+    "esc_period": "30s",
     "filter": {
         "evaltype": 0,
         "conditions": [{"conditiontype": 4, "operator": 5, "value": "2"}]
@@ -222,7 +222,7 @@ for h in all_hosts:
     try:
         api_call("trigger.create", {
             "description": tname,
-            "expression": f"nodata(/{hname}/agent.ping,60s)=1",
+            "expression": f"nodata(/{hname}/agent.ping,30s)=1",
             "priority": 4,
             "manual_close": 1,
             "tags": [{"tag": "scope", "value": "availability"}, {"tag": "auto_recovery", "value": "poweron"}]
