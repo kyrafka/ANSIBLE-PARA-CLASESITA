@@ -240,26 +240,109 @@
         systemctl is-active zabbix-agent && echo "AGENT: OK" || echo "AGENT: FAIL"
         ss -tlnp | grep 10050 || echo "PUERTO 10050: no escuchando"
 
-    - name: "AGN — VERIFICACION FINAL"
+    - name: "AGN — VERIFICACION FINAL Y RESUMEN"
       ansible.builtin.shell: |
         echo "=========================================="
         echo "  RESUMEN INSTALACION ZABBIX AGENT"
         echo "=========================================="
-        echo "Hostname: $(hostname -s)"
+        echo ""
+        echo "=== IDENTIFICADORES ==="
+        echo "Hostname Sistema: $(hostname -s)"
+        echo "Hostname Zabbix (inventory): {{ inventory_hostname }}"
+        echo "IP Local: {{ ansible_default_ipv4.address | default('N/A') }}"
         echo "Zabbix Server: {{ zabbix_server }}"
+        echo ""
+        echo "=== ARCHIVO DE CONFIGURACION ==="
+        if [ -f /etc/zabbix/zabbix_agentd.conf ]; then
+          echo "Config existe: SI"
+          echo "Hostname configurado:"
+          grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf | head -1
+          echo "Server configurado:"
+          grep "^Server=" /etc/zabbix/zabbix_agentd.conf | head -1
+        else
+          echo "Config existe: NO"
+        fi
         echo ""
         echo "=== SERVICIO ==="
         systemctl is-active zabbix-agent && echo "Status: ACTIVO" || echo "Status: INACTIVO"
         systemctl status zabbix-agent --no-pager | head -5
         echo ""
-        echo "=== RED ==="
-        ss -tlnp | grep 10050
+        echo "=== PERMISOS SUDOERS ==="
+        if [ -f /etc/sudoers.d/zabbix ]; then
+          echo "sudoers zabbix: SI"
+          grep -v "^#" /etc/sudoers.d/zabbix | grep -v "^$" | head -5
+        else
+          echo "sudoers zabbix: NO"
+        fi
         echo ""
-        echo "=== CONECTIVIDAD AL SERVER ==="
+        echo "=== SCRIPT VM-POWERON ==="
+        if [ -f /usr/local/bin/vm-poweron.sh ]; then
+          echo "vm-poweron.sh: EXISTE"
+          grep "GOVC_URL" /usr/local/bin/vm-poweron.sh | head -1
+        else
+          echo "vm-poweron.sh: NO EXISTE"
+        fi
+        echo ""
+        echo "=== RED Y CONECTIVIDAD ==="
+        ss -tlnp | grep 10050 || echo "Puerto 10050: no escuchando"
         timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>&1 && echo "Zabbix Server: ALCANZABLE" || echo "Zabbix Server: NO ALCANZABLE"
         echo ""
-        echo "=== LOGS (ultimas 10 lineas) ==="
-        tail -10 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs"
+        echo "=== LOGS ZABBIX AGENT (ultimas 10 lineas) ==="
+        tail -10 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs aun"
+        echo ""
+        echo "=========================================="
+        echo "  VALIDACION FINAL"
+        echo "=========================================="
+
+        ERRORS=0
+        WARNINGS=0
+
+        # Check 1: Service running
+        if systemctl is-active zabbix-agent | grep -q "active"; then
+          echo "✅ Servicio Zabbix Agent: ACTIVO"
+        else
+          echo "❌ Servicio Zabbix Agent: INACTIVO"
+          ERRORS=$((ERRORS + 1))
+        fi
+
+        # Check 2: Config file exists
+        if [ -f /etc/zabbix/zabbix_agentd.conf ]; then
+          echo "✅ Archivo config: EXISTE"
+        else
+          echo "❌ Archivo config: NO EXISTE"
+          ERRORS=$((ERRORS + 1))
+        fi
+
+        # Check 3: Hostname correct in config
+        if grep -q "Hostname={{ inventory_hostname }}" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
+          echo "✅ Hostname en config: {{ inventory_hostname }}"
+        elif grep -q "Hostname=.*{{ inventory_hostname }}" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
+          echo "✅ Hostname en config: {{ inventory_hostname }}"
+        else
+          echo "⚠️ Hostname en config: REVISAR (puede no coincidir con inventory)"
+          WARNINGS=$((WARNINGS + 1))
+        fi
+
+        # Check 4: Server connectivity
+        if timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>/dev/null; then
+          echo "✅ Conectividad Zabbix Server: OK"
+        else
+          echo "❌ Conectividad Zabbix Server: FALLO"
+          ERRORS=$((ERRORS + 1))
+        fi
+
+        # Check 5: sudoers
+        if [ -f /etc/sudoers.d/zabbix ]; then
+          echo "✅ Sudoers zabbix: CONFIGURADO"
+        else
+          echo "⚠️ Sudoers zabbix: NO CONFIGURADO"
+          WARNINGS=$((WARNINGS + 1))
+        fi
+
+        echo ""
+        echo "=========================================="
+        echo "RESUMEN: $ERRORS errores, $WARNINGS advertencias"
+        echo "=========================================="
       changed_when: false
       register: verif
 
