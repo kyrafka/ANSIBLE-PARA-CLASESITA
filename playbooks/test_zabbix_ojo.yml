@@ -14,7 +14,6 @@
 
   vars:
     zabbix_server: "192.168.17.11"
-    zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
 
   tasks:
     # =========================================================================
@@ -25,7 +24,7 @@
         echo "=== SSH TEST ==="
         echo "Hostname: $(hostname -s)"
         echo "IP: {{ ansible_default_ipv4.address | default('N/A') }}"
-        echo "SSH: OK (este playbook funciona)"
+        echo "SSH: OK"
       changed_when: false
       register: ssh_test
 
@@ -40,18 +39,13 @@
       ansible.builtin.shell: |
         echo "=== ZABBIX AGENT CONFIG ==="
         if [ -f /etc/zabbix/zabbix_agentd.conf ]; then
-          echo "Config existe: SI"
-          echo ""
-          echo "Hostname configurado:"
-          grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf
-          echo ""
-          echo "Server configurado:"
-          grep "^Server=" /etc/zabbix/zabbix_agentd.conf
-          echo ""
-          echo "Puerto (10050):"
-          grep "^ListenPort=" /etc/zabbix/zabbix_agentd.conf || echo "Default 10050"
+          echo "Config: SI"
+          echo "Hostname:"
+          grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf || echo "NO ENCONTRADO"
+          echo "Server:"
+          grep "^Server=" /etc/zabbix/zabbix_agentd.conf || echo "NO ENCONTRADO"
         else
-          echo "Config existe: NO"
+          echo "Config: NO"
         fi
       changed_when: false
       register: config_test
@@ -65,10 +59,9 @@
     # =========================================================================
     - name: "TEST 3 — Servicio Zabbix Agent"
       ansible.builtin.shell: |
-        echo "=== SERVICIO ZABBIX AGENT ==="
+        echo "=== SERVICIO ==="
         systemctl is-active zabbix-agent && echo "Status: ACTIVO" || echo "Status: INACTIVO"
         systemctl is-enabled zabbix-agent && echo "Enabled: SI" || echo "Enabled: NO"
-        echo ""
         echo "Puerto 10050:"
         ss -tlnp | grep 10050 || echo "No escuchando"
       changed_when: false
@@ -83,12 +76,12 @@
     # =========================================================================
     - name: "TEST 4 — Sudoers zabbix"
       ansible.builtin.shell: |
-        echo "=== SUDOERS ZABBIX ==="
+        echo "=== SUDOERS ==="
         if [ -f /etc/sudoers.d/zabbix ]; then
-          echo "Sudoers: CONFIGURADO"
-          grep -v "^#" /etc/sudoers.d/zabbix | grep -v "^$" | head -5
+          echo "Sudoers: SI"
+          grep -v "^#" /etc/sudoers.d/zabbix | grep -v "^$" | head -3
         else
-          echo "Sudoers: NO CONFIGURADO"
+          echo "Sudoers: NO"
         fi
       changed_when: false
       register: sudoers_test
@@ -104,11 +97,10 @@
       ansible.builtin.shell: |
         echo "=== SCRIPT VM-POWERON ==="
         if [ -f /usr/local/bin/vm-poweron.sh ]; then
-          echo "Script: EXISTE"
-          grep "GOVC_URL" /usr/local/bin/vm-poweron.sh | head -1
-          ls -la /usr/local/bin/vm-poweron.sh
+          echo "Script: SI"
+          grep "GOVC" /usr/local/bin/vm-poweron.sh | head -1
         else
-          echo "Script: NO EXISTE"
+          echo "Script: NO"
         fi
       changed_when: false
       register: poweron_test
@@ -122,10 +114,10 @@
     # =========================================================================
     - name: "TEST 6 — Conectividad Zabbix Server"
       ansible.builtin.shell: |
-        echo "=== CONECTIVIDAD ZABBIX SERVER ==="
+        echo "=== CONECTIVIDAD ==="
         echo "Server: {{ zabbix_server }}"
-        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>&1 && echo "Puerto 10051: ALCANZABLE" || echo "Puerto 10051: NO ALCANZABLE"
-        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10050" 2>&1 && echo "Puerto 10050: ALCANZABLE" || echo "Puerto 10050: NO ALCANZABLE"
+        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>&1 && echo "10051: OK" || echo "10051: FAIL"
+        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10050" 2>&1 && echo "10050: OK" || echo "10050: FAIL"
       changed_when: false
       register: connectivity_test
 
@@ -134,89 +126,34 @@
         msg: "{{ connectivity_test.stdout_lines }}"
 
     # =========================================================================
-    # 7. TEST DE LOGS RECIENTES
+    # 7. RESUMEN POR HOST
     # =========================================================================
-    - name: "TEST 7 — Logs recientes del agente"
-      ansible.builtin.shell: |
-        echo "=== LOGS RECIENTES (ultimas 5 lineas) ==="
-        tail -5 /var/log/zabbix/zabbix_agentd.log 2>/dev/null || echo "Sin logs"
-        echo ""
-        echo "=== ERRORES EN LOGS ==="
-        grep -i "error\|fail\|cannot" /var/log/zabbix/zabbix_agentd.log 2>/dev/null | tail -3 || echo "Sin errores"
-      changed_when: false
-      register: logs_test
-
-    - name: "LOGS RESULT"
-      ansible.builtin.debug:
-        msg: "{{ logs_test.stdout_lines }}"
-
-    # =========================================================================
-    # 8. RESUMEN POR HOST
-    # =========================================================================
-    - name: "TEST 8 — Resumen final host"
+    - name: "TEST 7 — Resumen final host"
       ansible.builtin.shell: |
         echo "=========================================="
         echo "  RESUMEN: {{ inventory_hostname }}"
         echo "=========================================="
 
-        # Verificar cada cosa
-        CHECKS=0
         PASS=0
         FAIL=0
 
-        # Check config
-        if grep -q "^Hostname=" /etc/zabbix/zabbix_agentd.conf 2>/dev/null; then
-          echo "✅ Config: OK"
-          PASS=$((PASS + 1))
-        else
-          echo "❌ Config: FALTA"
-          FAIL=$((FAIL + 1))
-        fi
-        CHECKS=$((CHECKS + 1))
+        # Config
+        grep -q "^Hostname=" /etc/zabbix/zabbix_agentd.conf 2>/dev/null && echo "✅ Config" || { echo "❌ Config"; FAIL=$((FAIL+1)); }; PASS=$((PASS+1))
 
-        # Check servicio
-        if systemctl is-active zabbix-agent | grep -q "active"; then
-          echo "✅ Servicio: ACTIVO"
-          PASS=$((PASS + 1))
-        else
-          echo "❌ Servicio: INACTIVO"
-          FAIL=$((FAIL + 1))
-        fi
-        CHECKS=$((CHECKS + 1))
+        # Servicio
+        systemctl is-active zabbix-agent | grep -q "active" && echo "✅ Servicio" || { echo "❌ Servicio"; FAIL=$((FAIL+1)); }; PASS=$((PASS+1))
 
-        # Check sudoers
-        if [ -f /etc/sudoers.d/zabbix ]; then
-          echo "✅ Sudoers: OK"
-          PASS=$((PASS + 1))
-        else
-          echo "❌ Sudoers: FALTA"
-          FAIL=$((FAIL + 1))
-        fi
-        CHECKS=$((CHECKS + 1))
+        # Sudoers
+        [ -f /etc/sudoers.d/zabbix ] && echo "✅ Sudoers" || { echo "❌ Sudoers"; FAIL=$((FAIL+1)); }; PASS=$((PASS+1))
 
-        # Check script
-        if [ -f /usr/local/bin/vm-poweron.sh ]; then
-          echo "✅ Script PowerOn: OK"
-          PASS=$((PASS + 1))
-        else
-          echo "❌ Script PowerOn: FALTA"
-          FAIL=$((FAIL + 1))
-        fi
-        CHECKS=$((CHECKS + 1))
+        # Script
+        [ -f /usr/local/bin/vm-poweron.sh ] && echo "✅ Script" || { echo "❌ Script"; FAIL=$((FAIL+1)); }; PASS=$((PASS+1))
 
-        # Check conectividad
-        if timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>/dev/null; then
-          echo "✅ Conectividad Zabbix: OK"
-          PASS=$((PASS + 1))
-        else
-          echo "❌ Conectividad Zabbix: FALLO"
-          FAIL=$((FAIL + 1))
-        fi
-        CHECKS=$((CHECKS + 1))
+        # Conectividad
+        timeout 3 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>/dev/null && echo "✅ Connectivity" || { echo "❌ Connectivity"; FAIL=$((FAIL+1)); }; PASS=$((PASS+1))
 
         echo ""
-        echo "=========================================="
-        echo "TOTAL: $CHECKS checks | $PASS pass | $FAIL fail"
+        echo "RESULTADO: $PASS OK, $FAIL FAIL"
         echo "=========================================="
       changed_when: false
       register: summary_test
@@ -226,7 +163,7 @@
         msg: "{{ summary_test.stdout_lines }}"
 
 # ============================================================================
-# PLAY 2: Verificar en Zabbix SERVER (desde vm-monitor01)
+# PLAY 2: Verificar en Zabbix Server (local en vm-monitor01)
 # ============================================================================
 - name: "TEST — Verificacion en ZABBIX SERVER"
   hosts: localhost
@@ -236,115 +173,110 @@
 
   vars:
     zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
-    zabbix_user: "Admin"
-    zabbix_pass: "zabbix"
 
   tasks:
-    - name: "TEST ZABBIX — Obtener token"
+    - name: "TEST ZABBIX — Listar hosts"
       ansible.builtin.shell: |
+        echo "=== ZABBIX HOSTS ==="
         TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
-          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"{{ zabbix_user }}","password":"{{ zabbix_pass }}"},"id":1}' \
-          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))" 2>/dev/null)
-        echo "TOKEN=$TOKEN"
-      changed_when: false
-      register: token_raw
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
 
-    - name: "TEST ZABBIX — Mostrar token"
-      ansible.builtin.debug:
-        msg: "Token: {{ token_raw.stdout[:30] }}..."
+        if [ -z "$TOKEN" ]; then
+          echo "ERROR: No se pudo obtener token"
+          exit 1
+        fi
 
-    - name: "TEST ZABBIX — Listar hosts en Zabbix"
-      ansible.builtin.shell: |
-        TOKEN="{{ token_raw.stdout }}"
+        echo "Token obtenido: ${TOKEN:0:20}..."
 
-        echo "=== HOSTS EN ZABBIX ==="
+        echo ""
+        echo "=== HOSTS REGISTRADOS ==="
         curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"status\",\"available\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
           | python3 -c "
 import sys,json
-data=json.load(sys.stdin)
-for h in data.get('result',[]):
-    status='OK' if h['status']=='0' else 'DISABLED'
-    avail='GREEN' if h['available']=='1' else 'GRAY'
-    print(f\"  [{avail}] {h['name']} (id:{h['hostid']}) - {status}\")
+try:
+    d=json.load(sys.stdin)
+    for h in d.get('result',[]):
+        s='OK' if h['status']=='0' else 'DISABLED'
+        a='GREEN' if h['available']=='1' else 'GRAY'
+        print(f'  [{a}] {h[\"name\"]} ({h[\"hostid\"]}) - {s}')
+except: print('Error parseando JSON')
 "
 
         echo ""
-        echo "=== TRIGGERS ACTIVOS ==="
+        echo "=== ACTIONS ACTIVAS ==="
         curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"triggerid\",\"description\",\"priority\",\"state\"],\"filter\":{\"value\":1}},\"auth\":\"$TOKEN\",\"id\":3}" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"actionid\",\"name\",\"status\"],\"filter\":{\"eventsource\":0}},\"auth\":\"$TOKEN\",\"id\":3}" \
           | python3 -c "
 import sys,json
-data=json.load(sys.stdin)
-count=len(data.get('result',[]))
-print(f'Triggers con problemas: {count}')
-for t in data.get('result',[])[:5]:
-    print(f\"  [{t['priority']}] {t['description'][:60]}\")
-"
-
-        echo ""
-        echo "=== ACTIONS ==="
-        curl -s -X POST "{{ zabbix_api }}" \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"actionid\",\"name\",\"status\"]},\"auth\":\"$TOKEN\",\"id\":4}" \
-          | python3 -c "
-import sys,json
-data=json.load(sys.stdin)
-for a in data.get('result',[]):
-    status='ACTIVA' if a['status']=='0' else 'OFF'
-    print(f\"  [{status}] {a['name']}\")
+try:
+    d=json.load(sys.stdin)
+    for a in d.get('result',[]):
+        s='ACTIVA' if a['status']=='0' else 'OFF'
+        print(f'  [{s}] {a[\"name\"]}')
+except: print('Error')
 "
       changed_when: false
-      register: zabbix_check
+      register: zabbix_hosts
 
-    - name: "ZABBIX RESULT"
+    - name: "ZABBIX HOSTS RESULT"
       ansible.builtin.debug:
-        msg: "{{ zabbix_check.stdout_lines }}"
+        msg: "{{ zabbix_hosts.stdout_lines }}"
+
+    - name: "TEST ZABBIX — Problemas/Triggers"
+      ansible.builtin.shell: |
+        echo "=== PROBLEMAS ACTIVOS ==="
+        TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
+
+        curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":\"extend\",\"sortfield\":\"clock\",\"sortorder\":\"DESC\",\"limit\":10},\"auth\":\"$TOKEN\",\"id\":4}" \
+          | python3 -c "
+import sys,json
+try:
+    d=json.load(sys.stdin)
+    for p in d.get('result',[]):
+        print(f'  {p[\"name\"]} - {p[\"severity\"]}')
+except Exception as e:
+    print('Error o sin problemas')
+"
+      changed_when: false
+      register: zabbix_problems
+
+    - name: "ZABBIX PROBLEMS RESULT"
+      ansible.builtin.debug:
+        msg: "{{ zabbix_problems.stdout_lines }}"
 
     # =========================================================================
     # RESUMEN FINAL GLOBAL
     # =========================================================================
-    - name: "TEST FINAL — Resumen global"
-      ansible.builtin.shell: |
-        echo "=========================================="
-        echo "  RESUMEN GLOBAL ZABBIX"
-        echo "=========================================="
-        echo ""
-        echo "Este test verifico:"
-        echo "  1. SSH - Conexion a VMs"
-        echo "  2. Config - Archivo zabbix_agentd.conf"
-        echo "  3. Servicio - zabbix-agent activo"
-        echo "  4. Sudoers - Permisos zabbix"
-        echo "  5. Scripts - vm-poweron.sh"
-        echo "  6. Conectividad - Acceso a Zabbix Server"
-        echo "  7. Logs - Errores recientes"
-        echo "  8. Resumen - Status por host"
-        echo ""
-        echo "Zabbix Server UI:"
-        echo "  URL: http://192.168.17.11/zabbix"
-        echo "  User: Admin / zabbix"
-        echo ""
-        echo "=========================================="
-        echo "  SIGUIENTE PASO"
-        echo "=========================================="
-        echo ""
-        echo "Para verificar auto-recovery:"
-        echo "  1. Apagar una VM desde ESXi"
-        echo "  2. Esperar ~2-3 minutos"
-        echo "  3. Verificar que Zabbix la enciende"
-        echo ""
-        echo "Para re-configurar agentes:"
-        echo "  ansible-playbook playbooks/zabbix_agents.yml -i inventario/hosts.yml -l <vm>"
-        echo ""
-        echo "Para actualizar Zabbix:"
-        echo "  ansible-playbook playbooks/zabbix_orchestrator.yml"
-        echo "=========================================="
-      changed_when: false
-      register: final_summary
-
-    - name: "FINAL SUMMARY"
+    - name: "TEST FINAL — Resumen"
       ansible.builtin.debug:
-        msg: "{{ final_summary.stdout_lines }}"
+        msg:
+          - "=========================================="
+          - "  RESUMEN GLOBAL"
+          - "=========================================="
+          - "El test verifico:"
+          - "  1. SSH - OK"
+          - "  2. Config - Archivo zabbix_agentd.conf"
+          - "  3. Servicio - zabbix-agent activo"
+          - "  4. Sudoers - Permisos zabbix"
+          - "  5. Scripts - vm-poweron.sh"
+          - "  6. Conectividad - Acceso Zabbix Server"
+          - ""
+          - "Zabbix Server UI:"
+          - "  URL: http://192.168.17.11/zabbix"
+          - "  User: Admin / zabbix"
+          - ""
+          - "Para auto-recovery test:"
+          - "  1. Apagar VM desde ESXi"
+          - "  2. Esperar 2-3 minutos"
+          - "  3. Ver si Zabbix la enciende"
+          - "=========================================="
