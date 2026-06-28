@@ -1,5 +1,5 @@
 ---
-- name: "CHECK — Agentes Zabbix"
+- name: "CHECK — Todo sobre agentes y triggers"
   hosts: localhost
   connection: local
   become: false
@@ -12,33 +12,95 @@
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])" > /tmp/zbx_token
 
-    - name: "Hosts"
+    - name: "1. Hosts"
       shell: |
         TOKEN=$(cat /tmp/zbx_token)
-        echo "=== HOSTS ==="
+        echo "=========================================="
+        echo "1. HOSTS"
+        echo "=========================================="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"status\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
           | python3 -c "import sys,json; d=json.load(sys.stdin); [print(h['hostid'],h['name']) for h in d.get('result',[])]"
-
-    - name: "Items agent.ping"
-      shell: |
-        TOKEN=$(cat /tmp/zbx_token)
-        echo "=== AGENT.PING ==="
-        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"hostid\",\"key_\",\"lastvalue\",\"state\",\"status\"],\"search\":{\"key_\":\"agent.ping\"}},\"auth\":\"$TOKEN\",\"id\":3}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['hostid'],t['key_'],'val:',t.get('lastvalue','?'),'state:',t.get('state','?'),'status:',t.get('status','?')) for t in d.get('result',[])]"
-
-    - name: "Problemas"
-      shell: |
-        TOKEN=$(cat /tmp/zbx_token)
-        echo "=== PROBLEMAS ==="
-        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":[\"name\",\"severity\"],\"limit\":20},\"auth\":\"$TOKEN\",\"id\":4}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('['+str(p['severity'])+']',p['name'][:60]) for p in d.get('result',[])]"
-      register: problems
+      register: hosts_out
 
     - debug:
-        var: problems.stdout_lines
+        var: hosts_out.stdout_lines
+
+    - name: "2. Triggers nodata (no responde)"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=========================================="
+        echo "2. TRIGGERS: Agent no responde"
+        echo "=========================================="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"priority\",\"state\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":3}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('['+t['priority']+']',t['description']) for t in d.get('result',[])]" || echo "NO HAY TRIGGERS NODATA"
+      register: nodata_triggers
+
+    - debug:
+        var: nodata_triggers.stdout_lines
+
+    - name: "3. Actions"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=========================================="
+        echo "3. ACTIONS"
+        echo "=========================================="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"name\",\"status\"],\"filter\":{\"eventsource\":[\"0\"]}},\"auth\":\"$TOKEN\",\"id\":4}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('ON' if a['status']=='0' else 'OFF',a['name']) for a in d.get('result',[])]"
+      register: actions_out
+
+    - debug:
+        var: actions_out.stdout_lines
+
+    - name: "4. Items agent.ping (ultimo valor)"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=========================================="
+        echo "4. AGENT.PING ULTIMO VALOR"
+        echo "=========================================="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"lastvalue\",\"state\",\"status\"],\"search\":{\"key_\":\"agent.ping\"}},\"auth\":\"$TOKEN\",\"id\":5}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['hostid'],'val:',t.get('lastvalue','?'),'state:',t.get('state','?'),'status:',t.get('status','?')) for t in d.get('result',[])]"
+      register: agent_ping
+
+    - debug:
+        var: agent_ping.stdout_lines
+
+    - name: "5. Problemas activos"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=========================================="
+        echo "5. PROBLEMAS ACTIVOS"
+        echo "=========================================="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":[\"name\",\"severity\"],\"limit\":25},\"auth\":\"$TOKEN\",\"id\":6}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('['+str(p['severity'])+']',p['name'][:65]) for p in d.get('result',[])]"
+      register: problems_out
+
+    - debug:
+        var: problems_out.stdout_lines
+
+    - name: "6. RESUMEN"
+      debug:
+        msg:
+          - "=========================================="
+          - "RESUMEN"
+          - "=========================================="
+          - "PARA AUTO-RECOVERY FUNCIONE:"
+          - "1. DEBE haber triggers 'Agent no responde' <- LoTienes? "
+          - "2. DEBE haber action 'Auto PowerOn' <- LoTienes?"
+          - "3. La trigger debe estar en estado PROBLEM"
+          - "4. La action debe estar ON"
+          - ""
+          - "SI LA VM ESTA APAGADA:"
+          - "- agent.ping debe dar 0 o nada"
+          - "- trigger nodata debe detectarlo"
+          - "- action debe ejecutarse"
+          - "=========================================="
