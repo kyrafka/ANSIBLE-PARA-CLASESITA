@@ -1,9 +1,9 @@
 ---
 # ============================================================================
-# test_govc_simple.yml — Test simple de govc y auto-recovery
+# test_govc_simple.yml — Test completo de govc y auto-recovery
 # ============================================================================
 
-- name: "TEST GOVC"
+- name: "TEST GOVC Completo"
   hosts: localhost
   connection: local
   become: true
@@ -15,57 +15,184 @@
     esxi_pass: "qwe123$"
 
   tasks:
-    - name: "1. govc directo"
+    # =========================================================================
+    # 1. DIAGNOSTICO DEL SISTEMA
+    # =========================================================================
+    - name: "1.1 Usuario zabbix existe?"
+      ansible.builtin.shell: |
+        echo "=== USUARIO ZABBIX ==="
+        id zabbix 2>/dev/null && echo "EXISTE" || echo "NO EXISTE"
+        echo ""
+        echo "=== HOME DE ZABBIX ==="
+        getent passwd zabbix | cut -d: -f6
+        echo ""
+        echo "=== PERMISOS /tmp ==="
+        ls -la /tmp/ | head -5
+      changed_when: false
+      register: diag_user
+
+    - name: "USER DIAG"
+      ansible.builtin.debug:
+        msg: "{{ diag_user.stdout_lines }}"
+
+    # =========================================================================
+    # 2. DIAGNOSTICO DEL SCRIPT
+    # =========================================================================
+    - name: "2.1 Script existe y permisos?"
+      ansible.builtin.shell: |
+        echo "=== SCRIPT VM-POWERON ==="
+        if [ -f /usr/local/bin/vm-poweron.sh ]; then
+          echo "Existe: SI"
+          ls -la /usr/local/bin/vm-poweron.sh
+        else
+          echo "Existe: NO"
+        fi
+        echo ""
+        echo "=== CONTENIDO (primeras 15 lineas) ==="
+        head -15 /usr/local/bin/vm-poweron.sh 2>/dev/null || echo "NO SE PUEDE LEER"
+        echo ""
+        echo "=== GOVC_DATA_DIR en script ==="
+        grep -n "GOVC_DATA" /usr/local/bin/vm-poweron.sh 2>/dev/null || echo "NO ENCONTRADO"
+        echo ""
+        echo "=== mkdir en script ==="
+        grep -n "mkdir" /usr/local/bin/vm-poweron.sh 2>/dev/null || echo "NO ENCONTRADO"
+      changed_when: false
+      register: diag_script
+
+    - name: "SCRIPT DIAG"
+      ansible.builtin.debug:
+        msg: "{{ diag_script.stdout_lines }}"
+
+    # =========================================================================
+    # 3. DIAGNOSTICO SUDOERS
+    # =========================================================================
+    - name: "3.1 sudoers para zabbix?"
+      ansible.builtin.shell: |
+        echo "=== SUDOERS ZABBIX ==="
+        if [ -f /etc/sudoers.d/zabbix ]; then
+          echo "Archivo existe: SI"
+          cat /etc/sudoers.d/zabbix
+        else
+          echo "Archivo existe: NO"
+        fi
+        echo ""
+        echo "=== OTROS SUDOERS ==="
+        ls -la /etc/sudoers.d/
+      changed_when: false
+      register: diag_sudoers
+
+    - name: "SUDOERS DIAG"
+      ansible.builtin.debug:
+        msg: "{{ diag_sudoers.stdout_lines }}"
+
+    # =========================================================================
+    # 4. TEST GOVC DIRECTO
+    # =========================================================================
+    - name: "4.1 govc about"
       ansible.builtin.shell: |
         export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
         export GOVC_INSECURE=1
         export GOVC_DATA_DIR=/tmp/govc-test
         mkdir -p /tmp/govc-test
 
-        echo "=== Test govc about ==="
-        govc about
+        echo "=== GOVC ABOUT ==="
+        govc about 2>&1 || echo "ERROR"
+      changed_when: false
+      register: govc_about
+
+    - name: "GOVC ABOUT"
+      ansible.builtin.debug:
+        msg: "{{ govc_about.stdout_lines }}"
+
+    # =========================================================================
+    # 5. TEST GOVC ENCENDER
+    # =========================================================================
+    - name: "4.2 govc vm-web01 info y encender"
+      ansible.builtin.shell: |
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+        export GOVC_DATA_DIR=/tmp/govc-test
+        mkdir -p /tmp/govc-test
+
+        echo "=== VM-WEB01 INFO ==="
+        govc vm.info "/ha-datacenter/vm/vm-web01" 2>&1 | grep -E "Name:|Power state:"
 
         echo ""
-        echo "=== Test VM list ==="
-        govc vm.list
+        echo "=== ENCENDER VM-WEB01 ==="
+        govc vm.power -on "/ha-datacenter/vm/vm-web01" 2>&1
 
         echo ""
-        echo "=== Test vm-web01 info ==="
-        govc vm.info "/ha-datacenter/vm/vm-web01"
-
-        echo ""
-        echo "=== Test encender vm-web01 ==="
-        govc vm.power -on "/ha-datacenter/vm/vm-web01"
-
-        echo ""
-        echo "=== Verificar estado ==="
-        govc vm.info "/ha-datacenter/vm/vm-web01" | grep "Power state"
+        echo "=== VERIFICAR ==="
+        govc vm.info "/ha-datacenter/vm/vm-web01" 2>&1 | grep "Power state"
       changed_when: false
       register: govc_test
 
-    - name: "RESULT"
+    - name: "GOVC TEST"
       ansible.builtin.debug:
         msg: "{{ govc_test.stdout_lines }}"
 
-    - name: "2. Script vm-poweron.sh"
+    # =========================================================================
+    # 6. TEST SCRIPT COMO ZABBIX
+    # =========================================================================
+    - name: "5.1 Script como usuario zabbix"
       ansible.builtin.shell: |
-        echo "=== Test script completo ==="
-        sudo -u zabbix /usr/local/bin/vm-poweron.sh vm-web01
+        echo "=== EJECUTAR SCRIPT COMO ZABBIX ==="
+
+        # Ver que el script existe
+        ls -la /usr/local/bin/vm-poweron.sh
+
+        # Ver contenido
+        echo ""
+        echo "=== CONTENIDO ==="
+        cat /usr/local/bin/vm-poweron.sh
+
+        echo ""
+        echo "=== EJECUTAR ==="
+        sudo -u zabbix bash -c 'echo "HOME=$HOME"; echo "USER=$USER"; /usr/local/bin/vm-poweron.sh vm-web01; echo "EXIT: $?"'
       changed_when: false
       register: script_test
 
-    - name: "SCRIPT RESULT"
+    - name: "SCRIPT TEST"
       ansible.builtin.debug:
         msg: "{{ script_test.stdout_lines }}"
 
-    - name: "3. RESUMEN"
+    # =========================================================================
+    # 7. TEST CON HOME CORRECTO
+    # =========================================================================
+    - name: "5.2 Script con HOME de zabbix"
+      ansible.builtin.shell: |
+        echo "=== SCRIPT CON HOME=ZABBIX ==="
+        ZABBIX_HOME=$(getent passwd zabbix | cut -d: -f6)
+        echo "ZABBIX HOME: $ZABBIX_HOME"
+
+        sudo -u zabbix bash -c "HOME=$ZABBIX_HOME /usr/local/bin/vm-poweron.sh vm-web01; echo EXIT:\$?"
+      changed_when: false
+      register: script_home_test
+
+    - name: "SCRIPT HOME TEST"
+      ansible.builtin.debug:
+        msg: "{{ script_home_test.stdout_lines }}"
+
+    # =========================================================================
+    # 8. RESUMEN FINAL
+    # =========================================================================
+    - name: "6. RESUMEN"
       ansible.builtin.debug:
         msg:
           - "============================================"
-          - "RESUMEN"
+          - "RESUMEN DIAGNOSTICO"
           - "============================================"
-          - "Si govc directo funciona pero script no:"
-          - "  - Revisar password en script"
-          - "  - Revisar permisos de archivo"
-          - "  - Revisar GOVC_DATA_DIR"
+          - ""
+          - "GOVC DIRECTO: {{ 'OK' if 'embeddedEsx' in govc_about.stdout else 'FAIL' }}"
+          - "GOVC ENCENDIO: {{ 'OK' if 'poweredOn' in govc_test.stdout else 'FAIL' }}"
+          - "SCRIPT COMO ZABBIX: {{ 'OK' if 'permission denied' not in script_test.stdout else 'FAIL (permission denied)' }}"
+          - ""
+          - "SI GOVC OK pero SCRIPT FAIL:"
+          - "  1. El error 'mkdir /var/lib/zabbix: permission denied' significa"
+          - "  2. GOVC_DATA_DIR no existe o zabbix no puede escribir ahi"
+          - "  3. Solucion: cambiar GOVC_DATA_DIR a /tmp/govc"
+          - ""
+          - "SI GOVC FAIL:"
+          - "  1. Ver IP/credenciales ESXi"
+          - "  2. Ver que govc esté instalado"
           - "============================================"
