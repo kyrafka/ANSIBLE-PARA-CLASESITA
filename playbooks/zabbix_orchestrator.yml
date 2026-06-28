@@ -51,6 +51,14 @@
         executable: /bin/bash
       when: not govc_stat.stat.exists
 
+    - name: "DEPS — Crear directorios para govc y zabbix"
+      ansible.builtin.shell: |
+        mkdir -p /var/lib/zabbix/.govmomi/sessions
+        mkdir -p /tmp/govc
+        chown -R zabbix:zabbix /var/lib/zabbix /tmp/govc 2>/dev/null || true
+        chmod 755 /var/lib/zabbix /tmp/govc
+        echo "Directorios creados"
+
     # =========================================================================
     # 2. SCRIPT vm-poweron.sh — usa govc para hablar SOAP con ESXi 8
     # =========================================================================
