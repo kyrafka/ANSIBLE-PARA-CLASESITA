@@ -1,84 +1,77 @@
 ---
 - name: "Test Mail Server - vm-services01"
-  hosts: localhost
-  connection: local
+  hosts: vm-services01
   become: true
   gather_facts: false
 
   tasks:
-    - name: "1. MySQL - Verificar bases de datos"
-      ansible.builtin.shell: |
-        echo "=== Bases de datos en MySQL ==="
-        ssh ubuntu@192.168.13.11 "mysql -u root -p'AdminMail123!' -e \"SHOW DATABASES;\" 2>&1"
-        echo ""
-        echo "=== Usuario axiom_web ==="
-        ssh ubuntu@192.168.13.11 "mysql -u root -p'AdminMail123!' -e \"SELECT user,host FROM mysql.user WHERE user='axiom_web';\" 2>&1"
-      register: mysql_check
-      changed_when: false
-
-    - name: "Mostrar MySQL"
-      ansible.builtin.debug:
-        msg: "{{ mysql_check.stdout_lines }}"
-
-    - name: "2. Estado de servicios de correo"
+    - name: "1. Estado de servicios de correo"
       ansible.builtin.shell: |
         echo "=== MySQL ==="
-        ssh ubuntu@192.168.13.11 "systemctl is-active mysql 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active mysql 2>/dev/null || echo "INACTIVE"
         echo "=== Apache2 ==="
-        ssh ubuntu@192.168.13.11 "systemctl is-active apache2 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active apache2 2>/dev/null || echo "INACTIVE"
         echo "=== Postfix ==="
-        ssh ubuntu@192.168.13.11 "systemctl is-active postfix 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active postfix 2>/dev/null || echo "INACTIVE"
         echo "=== Dovecot ==="
-        ssh ubuntu@192.168.13.11 "systemctl is-active dovecot 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active dovecot 2>/dev/null || echo "INACTIVE"
       register: mail_services
-      changed_when: false
 
     - name: "Mostrar servicios"
       ansible.builtin.debug:
         msg: "{{ mail_services.stdout_lines }}"
 
+    - name: "2. MySQL - Verificar axiom_web"
+      ansible.builtin.shell: |
+        echo "=== Bases de datos ==="
+        mysql -u root -p'AdminMail123!' -e "SHOW DATABASES;" 2>/dev/null
+        echo ""
+        echo "=== Usuario axiom_web ==="
+        mysql -u root -p'AdminMail123!' -e "SELECT user,host FROM mysql.user WHERE user='axiom_web';" 2>/dev/null
+      register: mysql_check
+
+    - name: "Mostrar MySQL"
+      ansible.builtin.debug:
+        msg: "{{ mysql_check.stdout_lines }}"
+
     - name: "3. Verificar Postfix"
       ansible.builtin.shell: |
-        ssh ubuntu@192.168.13.11 "postconf -n | grep -E 'myhostname|inet_interfaces|mydomain' 2>/dev/null || echo 'Postfix no responde'"
+        postconf -n | grep -E 'myhostname|inet_interfaces|mydomain' 2>/dev/null || echo "Postfix no responde"
       register: postfix_conf
-      changed_when: false
+      ignore_errors: true
 
     - name: "Mostrar Postfix config"
       ansible.builtin.debug:
         msg: "{{ postfix_conf.stdout_lines }}"
 
-    - name: "4. Verificar Apache/Roundcube"
+    - name: "4. Verificar Roundcube"
       ansible.builtin.shell: |
         echo "=== Roundcube accesible ==="
-        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://192.168.13.11/roundcube/ 2>/dev/null || echo "No responde"
-        echo "=== Puerto 443 ==="
-        ssh ubuntu@192.168.13.11 "ss -tlnp | grep ':443 ' 2>/dev/null || echo '443 no está listening'"
-      register: apache_check
-      changed_when: false
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/roundcube/ 2>/dev/null || echo "No responde"
+      register: roundcube_check
+      ignore_errors: true
 
-    - name: "Mostrar Apache/Roundcube"
+    - name: "Mostrar Roundcube"
       ansible.builtin.debug:
-        msg: "{{ apache_check.stdout_lines }}"
+        msg: "{{ roundcube_check.stdout }}"
 
     - name: "5. Puertos listening"
       ansible.builtin.shell: |
-        ssh ubuntu@192.168.13.11 "ss -tlnp | grep -E ':25 |:993 |:995 |:3306 |:80 |:443 '"
+        ss -tlnp | grep -E ':25 |:993 |:995 |:3306 |:80 |:443 '
       register: ports
-      changed_when: false
       ignore_errors: true
 
     - name: "Mostrar puertos"
       ansible.builtin.debug:
-        msg: "{{ ports.stdout if ports.stdout else 'No hay datos de puertos' }}"
+        msg: "{{ ports.stdout if ports.stdout else 'Sin datos' }}"
 
-    - name: "6. DNS - Verificar MX record"
+    - name: "6. Probar configuracion de email"
       ansible.builtin.shell: |
-        echo "=== Verificando DNS local ==="
-        ssh ubuntu@192.168.13.11 "nslookup vm-dc01 2>/dev/null | head -3 || echo 'DNS no responde'"
-      register: dns_check
-      changed_when: false
+        echo "=== Hosts de邮件 ==="
+        postconf -n | grep -E '^myhostname|^mydomain|^myorigin' 2>/dev/null
+      register: email_config
       ignore_errors: true
 
-    - name: "Mostrar DNS"
+    - name: "Mostrar config email"
       ansible.builtin.debug:
-        msg: "{{ dns_check.stdout if dns_check.stdout else 'No hay datos DNS' }}"
+        msg: "{{ email_config.stdout_lines }}"

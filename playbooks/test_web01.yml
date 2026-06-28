@@ -1,77 +1,71 @@
 ---
 - name: "Test Web Server - vm-web01"
-  hosts: localhost
-  connection: local
+  hosts: vm-web01
   become: true
   gather_facts: false
 
   tasks:
-    - name: "1. MySQL en vm-services01 - Verificar axiom_web existe"
-      ansible.builtin.shell: |
-        ssh ubuntu@192.168.13.11 "mysql -u root -p'AdminMail123!' -e \"SHOW DATABASES;\" 2>&1"
-      register: mysql_check
-      changed_when: false
-
-    - name: "Mostrar bases de datos MySQL"
-      ansible.builtin.debug:
-        msg: "{{ mysql_check.stdout_lines }}"
-
-    - name: "2. Conectividad desde vm-web01 a MySQL"
-      ansible.builtin.shell: |
-        ssh ubuntu@192.168.11.11 "mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' -e \"SELECT 'CONEXION_OK' as test;\" 2>&1"
-      register: mysql_conn
-      changed_when: false
-
-    - name: "Mostrar resultado de conectividad"
-      ansible.builtin.debug:
-        msg: "{{ mysql_conn.stdout }}"
-
-    - name: "3. Estado de servicios en vm-web01"
+    - name: "1. Estado de servicios"
       ansible.builtin.shell: |
         echo "=== NGINX ==="
-        ssh ubuntu@192.168.11.11 "systemctl is-active nginx 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active nginx 2>/dev/null || echo "INACTIVE"
         echo "=== PHP-FPM ==="
-        ssh ubuntu@192.168.11.11 "systemctl is-active php8.3-fpm 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active php8.3-fpm 2>/dev/null || echo "INACTIVE"
         echo "=== MariaDB Local ==="
-        ssh ubuntu@192.168.11.11 "systemctl is-active mariadb 2>/dev/null || echo 'INACTIVE'"
+        systemctl is-active mariadb 2>/dev/null || echo "INACTIVE"
       register: services_status
-      changed_when: false
 
     - name: "Mostrar estado de servicios"
       ansible.builtin.debug:
         msg: "{{ services_status.stdout_lines }}"
 
-    - name: "4. Probar acceso web"
+    - name: "2. Probar acceso web"
       ansible.builtin.shell: |
         echo "=== HTTP Response ==="
-        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://192.168.11.11/
-        echo "=== Contenido /index.html ==="
-        curl -s http://192.168.11.11/index.html | head -3 || echo "No responde"
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/
+        echo "=== Contenido /index.html (primeras 3 lineas) ==="
+        curl -s http://localhost/index.html | head -3
       register: web_test
-      changed_when: false
 
     - name: "Mostrar resultado web"
       ansible.builtin.debug:
         msg: "{{ web_test.stdout_lines }}"
 
-    - name: "5. Verificar wp-config.php"
+    - name: "3. Verificar wp-config.php"
       ansible.builtin.shell: |
-        ssh ubuntu@192.168.11.11 "grep -E 'DB_NAME|DB_USER|DB_HOST|DB_PASSWORD' /var/www/axiom/wp-config.php 2>/dev/null | head -5"
+        grep -E 'DB_NAME|DB_USER|DB_HOST|DB_PASSWORD' /var/www/axiom/wp-config.php 2>/dev/null | head -5 || echo "wp-config no existe"
       register: wp_config
-      changed_when: false
       ignore_errors: true
 
     - name: "Mostrar wp-config"
       ansible.builtin.debug:
         msg: "{{ wp_config.stdout_lines }}"
 
-    - name: "6. Puerto 80 listening"
+    - name: "4. Conectar a MySQL remoto en vm-services01"
       ansible.builtin.shell: |
-        ssh ubuntu@192.168.11.11 "ss -tlnp | grep ':80 '"
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' -e "SELECT 'CONEXION_OK' as test;" 2>&1
+      register: mysql_conn
+      ignore_errors: true
+
+    - name: "Mostrar conectividad MySQL"
+      ansible.builtin.debug:
+        msg: "{{ mysql_conn.stdout }}"
+
+    - name: "5. Puerto 80 listening"
+      ansible.builtin.shell: |
+        ss -tlnp | grep ':80 '
       register: port_80
-      changed_when: false
       ignore_errors: true
 
     - name: "Mostrar puerto 80"
       ansible.builtin.debug:
-        msg: "{{ port_80.stdout if port_80.stdout else 'Puerto 80 sin datos' }}"
+        msg: "{{ port_80.stdout if port_80.stdout else 'Sin datos' }}"
+
+    - name: "6. Archivos en /var/www/axiom"
+      ansible.builtin.shell: |
+        ls -la /var/www/axiom/ | head -10
+      register: www_dir
+
+    - name: "Mostrar contenido de /var/www/axiom"
+      ansible.builtin.debug:
+        msg: "{{ www_dir.stdout_lines }}"
