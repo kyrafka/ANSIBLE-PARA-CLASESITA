@@ -1,46 +1,29 @@
 ---
-- name: "CHECK Zabbix Triggers y Actions"
+- name: "CHECK Zabbix"
   hosts: localhost
   connection: local
   become: false
 
-  vars:
-    zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
-
   tasks:
-    - name: "CHECK — Triggers y Actions"
+    - name: "Login"
       shell: |
-        echo "=== LOGIN ==="
-        TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
+        TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
-        echo "Token: ${TOKEN:0:15}..."
+        echo "TOKEN=$TOKEN"
 
-        echo ""
         echo "=== ACTIONS ==="
-        curl -s -X POST "{{ zabbix_api }}" \
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"actionid\",\"name\",\"status\"],\"filter\":{\"eventsource\":[\"0\"]}},\"auth\":\"$TOKEN\",\"id\":2}" \
-          | python3 << 'PYEOF'
-import sys,json
-d=json.load(sys.stdin)
-for a in d.get('result',[]):
-    s='ON' if a['status']=='0' else 'OFF'
-    print(f"  [{s}] {a['name']}")
-PYEOF
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('[ON]' if a['status']=='0' else '[OFF]',a['name']) for a in d.get('result',[])]"
 
-        echo ""
-        echo "=== TRIGGERS (primeras 10) ==="
-        curl -s -X POST "{{ zabbix_api }}" \
+        echo "=== TRIGGERS (ultimas 10) ==="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"triggerid\",\"description\",\"priority\",\"state\"],\"limit\":10},\"auth\":\"$TOKEN\",\"id\":3}" \
-          | python3 << 'PYEOF'
-import sys,json
-d=json.load(sys.stdin)
-for t in d.get('result',[]):
-    print(f"  [{t['priority']}] {t['description'][:70]}")
-PYEOF
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"priority\"],\"limit\":10,\"sortfield\":\"triggerid\",\"sortorder\":\"DESC\"},\"auth\":\"$TOKEN\",\"id\":3}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f\"[{t['priority']}] {t['description'][:60]}\") for t in d.get('result',[])]"
       register: result
 
     - debug:
