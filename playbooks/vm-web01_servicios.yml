@@ -88,7 +88,7 @@
         done
       changed_when: false
       register: php_version_detected
-      when: "'PPA_AGREGADO' in php_ppa_added.stdout"
+      when: "php_version_check.stdout == 'PHP_NONE'"
 
     - name: "Set PHP version fact"
       ansible.builtin.set_fact:
