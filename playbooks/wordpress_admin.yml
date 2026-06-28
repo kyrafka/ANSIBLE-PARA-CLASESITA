@@ -46,7 +46,27 @@
       ansible.builtin.debug:
         msg: "{{ tables_check.stdout }}"
 
-    - name: "4. Instalar WordPress core (crea tablas)"
+    - name: "4. Descargar WordPress core si falta"
+      ansible.builtin.shell: |
+        cd /var/www/axiom
+        if [ ! -f wp-load.php ]; then
+          echo "Descargando WordPress core..."
+          rm -rf /tmp/wordpress /tmp/latest.tar.gz 2>/dev/null
+          wget -q https://wordpress.org/latest.tar.gz -O /tmp/latest.tar.gz
+          tar -xzf /tmp/latest.tar.gz -C /tmp/
+          cp -r /tmp/wordpress/* /var/www/axiom/
+          chown -R www-data:www-data /var/www/axiom
+          echo "WORDPRESS_DESCARGADO"
+        else
+          echo "WORDPRESS_Y_EXISTE"
+        fi
+      register: wp_download
+
+    - name: "Mostrar descarga"
+      ansible.builtin.debug:
+        msg: "{{ wp_download.stdout }}"
+
+    - name: "5. Instalar WordPress core (crea tablas)"
       ansible.builtin.shell: |
         cd /var/www/axiom
         wp --allow-root core install \
