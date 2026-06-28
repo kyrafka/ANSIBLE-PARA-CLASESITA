@@ -1,0 +1,159 @@
+---
+# ============================================================================
+# wireguard_vpn.yml — Setup WireGuard VPN
+# ============================================================================
+# Server: Lima (monitor01) - 10.0.0.1
+# Client: Arequipa - 10.0.0.2
+# Client: Trujillo - 10.0.0.3
+# ============================================================================
+
+- name: "Setup WireGuard VPN"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    vpn_network: "10.0.0.0/24"
+    server_vpn_ip: "10.0.0.1"
+    aqp_vpn_ip: "10.0.0.2"
+    tru_vpn_ip: "10.0.0.3"
+    listen_port: "51820"
+    aqp_public_key: "REEMPLAZAR_CON_PUBLIC_KEY_AQP"
+    tru_public_key: "REEMPLAZAR_CON_PUBLIC_KEY_TRU"
+
+  tasks:
+    # =========================================================================
+    # 1. INSTALAR WIREGUARD
+    # =========================================================================
+    - name: "1. Instalar WireGuard"
+      apt:
+        name: wireguard
+        state: present
+        update_cache: yes
+
+    # =========================================================================
+    # 2. GENERAR LLAVES
+    # =========================================================================
+    - name: "2. Generar llaves del server"
+      shell: |
+        cd /etc/wireguard
+        if [ ! -f server_private.key ]; then
+          wg genkey | tee server_private.key | wg pubkey > server_public.key
+          chmod 600 server_private.key
+          chmod 644 server_public.key
+          echo "Llaves server generadas"
+        else
+          echo "Llaves ya existen"
+        fi
+        echo "Public key server:"
+        cat server_public.key
+      register: server_keys
+
+    - debug:
+        var: server_keys.stdout_lines
+
+    # =========================================================================
+    # 3. CONFIGURAR SERVER (Lima)
+    # =========================================================================
+    - name: "3. Crear config server"
+      copy:
+        dest: /etc/wireguard/wg0.conf
+        content: |
+          [Interface]
+          Address = {{ server_vpn_ip }}/24
+          ListenPort = {{ listen_port }}
+          PrivateKey = $(cat /etc/wireguard/server_private.key)
+          PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ens33 -j MASQUERADE
+          PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ens33 -j MASQUERADE
+
+          # Client Arequipa
+          [Peer]
+          PublicKey = {{ aqp_public_key }}
+          AllowedIPs = {{ aqp_vpn_ip }}/32
+
+          # Client Trujillo
+          [Peer]
+          PublicKey = {{ tru_public_key }}
+          AllowedIPs = {{ tru_vpn_ip }}/32
+        mode: "0600"
+
+    - name: "3b. Habilitar IP forwarding"
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+
+    # =========================================================================
+    # 4. GENERAR CONFIG PARA CLIENTES
+    # =========================================================================
+    - name: "4. Config Arequipa"
+      copy:
+        dest: /tmp/wireguard-aqp.conf
+        content: |
+          [Interface]
+          Address = {{ aqp_vpn_ip }}/24
+          PrivateKey = REEMPLAZAR_PRIVATE_KEY_AQP
+          DNS = 10.0.0.1
+
+          [Peer]
+          PublicKey = $(cat /etc/wireguard/server_public.key)
+          Endpoint = TU_IP_PUBLICA_LIMA:51820
+          AllowedIPs = 10.0.0.0/24, 192.168.0.0/16
+          PersistentKeepalive = 25
+
+    - name: "5. Config Trujillo"
+      copy:
+        dest: /tmp/wireguard-tru.conf
+        content: |
+          [Interface]
+          Address = {{ tru_vpn_ip }}/24
+          PrivateKey = REEMPLAZAR_PRIVATE_KEY_TRU
+          DNS = 10.0.0.1
+
+          [Peer]
+          PublicKey = $(cat /etc/wireguard/server_public.key)
+          Endpoint = TU_IP_PUBLICA_LIMA:51820
+          AllowedIPs = 10.0.0.0/24, 192.168.0.0/16
+          PersistentKeepalive = 25
+
+    # =========================================================================
+    # 5. MOSTRAR INFO
+    # =========================================================================
+    - name: "6. Mostrar config"
+      shell: |
+        echo "============================================"
+        echo "WIREGUARD VPN SETUP"
+        echo "============================================"
+        echo ""
+        echo "Server Public Key:"
+        cat /etc/wireguard/server_public.key
+        echo ""
+        echo "Configs guardadas:"
+        echo "  - Arequipa: /tmp/wireguard-aqp.conf"
+        echo "  - Trujillo: /tmp/wireguard-tru.conf"
+        echo ""
+        echo "Para ver keys generadas:"
+        echo "  cat /etc/wireguard/server_public.key"
+        echo "  cat /etc/wireguard/server_private.key"
+        echo ""
+        echo "Para iniciar:"
+        echo "  systemctl enable wg-quick@wg0"
+        echo "  systemctl start wg-quick@wg0"
+        echo "============================================"
+      register: info
+
+    - debug:
+        var: info.stdout_lines
+
+    # =========================================================================
+    # 6. Habilitar y arrancar
+    # =========================================================================
+    - name: "7. Arrancar VPN"
+      shell: |
+        systemctl enable wg-quick@wg0
+        systemctl restart wg-quick@wg0
+        systemctl status wg-quick@wg0 --no-pager | head -10
+      register: start_vpn
+
+    - debug:
+        var: start_vpn.stdout_lines
