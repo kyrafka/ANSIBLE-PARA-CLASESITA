@@ -105,24 +105,33 @@
 
     - name: "MAIL — Configurar MySQL"
       ansible.builtin.shell: |
+        # Configurar bind-address para escuchar en todas las interfaces
+        sed -i "s/^bind-address.*/bind-address = 0.0.0.0/" /etc/mysql/mysql.conf.d/mysqld.cnf
         systemctl enable mysql
-        systemctl start mysql
+        systemctl restart mysql
         sleep 3
         mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}';"
         mysql -e "CREATE DATABASE IF NOT EXISTS postfix;"
         # Verificar si axiom_web ya existe
         if mysql -u root -p'{{ mysql_root_password }}' -e "USE axiom_web;" 2>/dev/null; then
           echo "axiom_web ya existe - skipping"
+          # Actualizar permisos por si el host cambió
+          mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'%' IDENTIFIED BY 'Ax1omWeb!2024';"
+          mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'192.168.11.11' IDENTIFIED BY 'Ax1omWeb!2024';"
+          mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'192.168.13.11' IDENTIFIED BY 'Ax1omWeb!2024';"
+          mysql -u root -p'{{ mysql_root_password }}' -e "FLUSH PRIVILEGES;"
         else
           mysql -u root -p'{{ mysql_root_password }}' -e "CREATE DATABASE axiom_web CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
           mysql -u root -p'{{ mysql_root_password }}' -e "CREATE USER IF NOT EXISTS 'axiom_web'@'%' IDENTIFIED BY 'Ax1omWeb!2024';"
           mysql -u root -p'{{ mysql_root_password }}' -e "CREATE USER IF NOT EXISTS 'axiom_web'@'localhost' IDENTIFIED BY 'Ax1omWeb!2024';"
+          mysql -u root -p'{{ mysql_root_password }}' -e "CREATE USER IF NOT EXISTS 'axiom_web'@'192.168.11.11' IDENTIFIED BY 'Ax1omWeb!2024';"
           mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'%';"
           mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'localhost';"
+          mysql -u root -p'{{ mysql_root_password }}' -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'192.168.11.11';"
           mysql -u root -p'{{ mysql_root_password }}' -e "FLUSH PRIVILEGES;"
           echo "axiom_web creada"
         fi
-        echo "MySQL configurado"
+        echo "MySQL configurado con bind-address 0.0.0.0"
 
     - name: "MAIL — Configurar Dovecot"
       ansible.builtin.copy:
