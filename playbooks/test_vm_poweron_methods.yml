@@ -1,0 +1,144 @@
+---
+# ============================================================================
+# test_vm_poweron_methods.yml — Probar diferentes formas de ejecutar vm-poweron.sh
+# ============================================================================
+
+- name: "TEST — Metodos de ejecucion vm-poweron.sh"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    esxi_host: "172.17.25.12"
+    esxi_port: "443"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+
+  tasks:
+    # =========================================================================
+    # METODO 1: Ejecucion directa
+    # =========================================================================
+    - name: "METODO 1 — sudo -u zabbix /usr/local/bin/vm-poweron.sh"
+      ansible.builtin.shell: |
+        echo "=== METODO 1: Ejecucion directa ==="
+        echo "Comando: sudo -u zabbix /usr/local/bin/vm-poweron.sh vm-web01"
+        echo ""
+
+        # Apagar primero
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+        export GOVC_DATA_DIR=/tmp/govc-test
+        mkdir -p /tmp/govc-test
+        govc vm.power -off "/ha-datacenter/vm/vm-web01" 2>/dev/null
+        sleep 2
+
+        # Ejecutar
+        sudo -u zabbix /usr/local/bin/vm-poweron.sh vm-web01 2>&1
+        echo "EXIT: $?"
+      changed_when: false
+      register: method1
+
+    - name: "RESULT 1"
+      ansible.builtin.debug:
+        msg: "{{ method1.stdout_lines }}"
+
+    # =========================================================================
+    # METODO 2: Con bash -c y export HOME
+    # =========================================================================
+    - name: "METODO 2 — sudo -u zabbix bash -c 'export HOME=...; ...'"
+      ansible.builtin.shell: |
+        echo "=== METODO 2: Con bash -c y export HOME ==="
+        echo "Comando: sudo -u zabbix bash -c 'export HOME=/var/lib/zabbix; ...'"
+        echo ""
+
+        # Apagar primero
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+        export GOVC_DATA_DIR=/tmp/govc-test
+        mkdir -p /tmp/govc-test
+        govc vm.power -off "/ha-datacenter/vm/vm-web01" 2>/dev/null
+        sleep 2
+
+        # Ejecutar
+        sudo -u zabbix bash -c 'export HOME=/var/lib/zabbix; mkdir -p /tmp/govc; /usr/local/bin/vm-poweron.sh vm-web01' 2>&1
+        echo "EXIT: $?"
+      changed_when: false
+      register: method2
+
+    - name: "RESULT 2"
+      ansible.builtin.debug:
+        msg: "{{ method2.stdout_lines }}"
+
+    # =========================================================================
+    # METODO 3: Con HOME y GOVC_DATA_DIR ambos
+    # =========================================================================
+    - name: "METODO 3 — sudo -u zabbix bash -c 'export HOME=... GOVC_DATA_DIR=... ...'"
+      ansible.builtin.shell: |
+        echo "=== METODO 3: Con HOME y GOVC_DATA_DIR ==="
+        echo "Comando: sudo -u zabbix bash -c 'export HOME=... GOVC_DATA_DIR=... ...'"
+        echo ""
+
+        # Apagar primero
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+        export GOVC_DATA_DIR=/tmp/govc-test
+        mkdir -p /tmp/govc-test
+        govc vm.power -off "/ha-datacenter/vm/vm-web01" 2>/dev/null
+        sleep 2
+
+        # Ejecutar
+        sudo -u zabbix bash -c 'export HOME=/var/lib/zabbix; export GOVC_DATA_DIR=/tmp/govc; mkdir -p /tmp/govc; /usr/local/bin/vm-poweron.sh vm-web01' 2>&1
+        echo "EXIT: $?"
+      changed_when: false
+      register: method3
+
+    - name: "RESULT 3"
+      ansible.builtin.debug:
+        msg: "{{ method3.stdout_lines }}"
+
+    # =========================================================================
+    # METODO 4: Con heredoc EOF
+    # =========================================================================
+    - name: "METODO 4 — sudo -u zabbix bash << 'EOF'"
+      ansible.builtin.shell: |
+        echo "=== METODO 4: Con heredoc EOF ==="
+        echo "Comando: sudo -u zabbix bash << 'EOF'"
+        echo ""
+
+        # Apagar primero
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+        export GOVC_DATA_DIR=/tmp/govc-test
+        mkdir -p /tmp/govc-test
+        govc vm.power -off "/ha-datacenter/vm/vm-web01" 2>/dev/null
+        sleep 2
+
+        # Ejecutar
+        sudo -u zabbix bash << 'INNEREOF'
+export HOME=/var/lib/zabbix
+mkdir -p /tmp/govc
+/usr/local/bin/vm-poweron.sh vm-web01
+INNEREOF
+        echo "EXIT: $?"
+      changed_when: false
+      register: method4
+
+    - name: "RESULT 4"
+      ansible.builtin.debug:
+        msg: "{{ method4.stdout_lines }}"
+
+    # =========================================================================
+    # RESUMEN
+    # =========================================================================
+    - name: "RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "RESUMEN — Cual metodo funciono?"
+          - "============================================"
+          - "METODO 1: {{ 'FUNCIONO' if method1.rc == 0 and 'permission denied' not in method1.stdout else 'FALLO' }}"
+          - "METODO 2: {{ 'FUNCIONO' if method2.rc == 0 and 'permission denied' not in method2.stdout else 'FALLO' }}"
+          - "METODO 3: {{ 'FUNCIONO' if method3.rc == 0 and 'permission denied' not in method3.stdout else 'FALLO' }}"
+          - "METODO 4: {{ 'FUNCIONO' if method4.rc == 0 and 'permission denied' not in method4.stdout else 'FALLO' }}"
+          - ""
+          - "============================================"
