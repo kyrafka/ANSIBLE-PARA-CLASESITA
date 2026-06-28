@@ -63,6 +63,7 @@
       community.postgresql.postgresql_user:
         name: "{{ postgresql_user }}"
         password: "{{ postgresql_pass }}"
+        db: "{{ postgresql_db }}"
         state: present
         priv: "{{ postgresql_db }}:ALL"
 
