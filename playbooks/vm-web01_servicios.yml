@@ -39,10 +39,10 @@
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: "APT — Detectar versión de PHP disponible"
+- name: "APT — Detectar versión de PHP"
       ansible.builtin.shell: |
         for version in 8.3 8.2 8.1 8.0 7.4; do
-          if apt-cache show php${version}-fpm &>/dev/null; then
+          if dpkg -l php${version}-fpm 2>/dev/null | grep -q "^ii"; then
             echo "php${version}"
             exit 0
           fi
@@ -51,35 +51,34 @@
       changed_when: false
       register: php_version_check
 
-    - name: "APT — Agregar PPA de PHP si no está disponible"
+    - name: "APT — Agregar PPA de PHP si es necesario"
       ansible.builtin.shell: |
-        if ! grep -q "ondrej/php" /etc/apt/sources.list.d/*.list 2>/dev/null; then
-          apt-get install -y software-properties-common
-          add-apt-repository -y ppa:ondrej/php
-          apt-get update -qq
-        fi
+        add-apt-repository -y ppa:ondrej/php
+        apt-get update -qq
         echo "PPA_AGREGADO"
       changed_when: false
       register: php_ppa_added
-      when: "'PHP_NONE' in php_version_check.stdout"
+      when: "php_version_check.stdout == 'PHP_NONE'"
 
-    - name: "APT — Detectar PHP disponible (después de agregar PPA)"
+    - name: "APT — Detectar PHP después del PPA"
       ansible.builtin.shell: |
+        apt-get update -qq 2>/dev/null
         for version in 8.3 8.2 8.1 8.0 7.4; do
-          if apt-cache show php${version}-fpm &>/dev/null 2>&1; then
+          if dpkg -l php${version}-fpm 2>/dev/null | grep -q "^ii"; then
             echo "php${version}"
             exit 0
           fi
         done
+        echo "PHP_NONE"
       changed_when: false
       register: php_version_detected
       when: "php_version_check.stdout == 'PHP_NONE'"
 
     - name: "Set PHP version fact"
       ansible.builtin.set_fact:
-        php_version: "{{ php_version_check.stdout if php_version_check.stdout != 'PHP_NONE' else (php_version_detected.stdout if php_version_detected is defined and php_version_detected.stdout is defined and 'php' in php_version_detected.stdout else 'php8.1') }}"
+        php_version: "{{ (php_version_check.stdout if php_version_check.stdout != 'PHP_NONE' else (php_version_detected.stdout | default('php8.1')) | trim) if (php_version_check.stdout != 'PHP_NONE' or (php_version_detected is defined and php_version_detected.stdout is defined and php_version_detected.stdout != 'PHP_NONE' and 'php' in php_version_detected.stdout)) else 'php8.1' }}"
 
-    - name: "APT — Instalar dependencias PHP + MySQL client"
+    - name: "APT — Instalar PHP y dependencias"
       ansible.builtin.shell: |
         PHP_VER="{{ php_version }}"
         PHP_PKG="${PHP_VER}-fpm ${PHP_VER}-mysql ${PHP_VER}-curl ${PHP_VER}-gd ${PHP_VER}-mbstring ${PHP_VER}-xml ${PHP_VER}-zip ${PHP_VER}-intl ${PHP_VER}-cli mysql-client nginx wget unzip"
