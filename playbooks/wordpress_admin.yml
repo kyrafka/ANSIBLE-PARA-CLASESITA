@@ -11,31 +11,31 @@
     wp_admin_display_name: "Administrador AXIOM"
 
   tasks:
-    - name: "1. Verificar wp-config.php existe"
+    - name: "1. Verificar wp-config.php"
       ansible.builtin.shell: |
         echo "=== wp-config.php ==="
         ls -la /var/www/axiom/wp-config.php 2>/dev/null || echo "NO EXISTE"
-        grep -E "DB_NAME|DB_HOST|DB_USER|DB_PASSWORD" /var/www/axiom/wp-config.php 2>/dev/null | head -5
+        grep -E "DB_NAME|DB_HOST" /var/www/axiom/wp-config.php 2>/dev/null
       register: wp_config_check
 
     - name: "Mostrar wp-config"
       ansible.builtin.debug:
         msg: "{{ wp_config_check.stdout_lines }}"
 
-    - name: "2. Verificar conexión a MySQL remoto"
+    - name: "2. Verificar conexión MySQL"
       ansible.builtin.shell: |
-        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' -e "SELECT 'MySQL CONECTADO' as status, DATABASE() as db;" 2>&1
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' -e "SELECT 'MySQL OK' as status;" 2>&1
       register: mysql_test
 
-    - name: "Mostrar test MySQL"
+    - name: "Mostrar MySQL"
       ansible.builtin.debug:
         msg: "{{ mysql_test.stdout }}"
 
-    - name: "3. Verificar si WordPress tables existen"
+    - name: "3. Contar tablas WordPress"
       ansible.builtin.shell: |
-        TABLE_COUNT=$(mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | wc -l)
-        echo "Tablas existentes: $TABLE_COUNT"
-        if [ "$TABLE_COUNT" -lt 5 ]; then
+        COUNT=$(mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | wc -l)
+        echo "Tablas: $COUNT"
+        if [ "$COUNT" -lt 5 ]; then
           echo "SIN_TABLAS"
         else
           echo "CON_TABLAS"
@@ -46,44 +46,7 @@
       ansible.builtin.debug:
         msg: "{{ tables_check.stdout }}"
 
-    - name: "4. Descargar WordPress core si falta"
-      ansible.builtin.shell: |
-        cd /var/www/axiom
-        if [ ! -f wp-load.php ]; then
-          echo "Descargando WordPress core..."
-          rm -rf /tmp/wordpress /tmp/latest.tar.gz 2>/dev/null
-          wget -q https://wordpress.org/latest.tar.gz -O /tmp/latest.tar.gz
-          tar -xzf /tmp/latest.tar.gz -C /tmp/
-          cp -r /tmp/wordpress/* /var/www/axiom/
-          chown -R www-data:www-data /var/www/axiom
-          echo "WORDPRESS_DESCARGADO"
-        else
-          echo "WORDPRESS_Y_EXISTE"
-        fi
-      register: wp_download
-
-    - name: "Mostrar descarga"
-      ansible.builtin.debug:
-        msg: "{{ wp_download.stdout }}"
-
-    - name: "5. Instalar WordPress core (crea tablas)"
-      ansible.builtin.shell: |
-        cd /var/www/axiom
-        wp --allow-root core install \
-          --url="http://192.168.11.11" \
-          --title="AXIOM TECH" \
-          --admin_user="admin" \
-          --admin_password="AxiomAdmin123!" \
-          --admin_email="admin@axiom.tech" \
-          --skip-email 2>&1
-      register: wp_install
-      when: "tables_check.stdout is search('SIN_TABLAS')"
-
-    - name: "Mostrar instalación WordPress"
-      ansible.builtin.debug:
-        msg: "{{ wp_install.stdout_lines if wp_install is defined else 'N/A' }}"
-
-    - name: "5. Instalar WP-CLI si no existe"
+    - name: "4. Instalar WP-CLI"
       ansible.builtin.shell: |
         if ! command -v wp &>/dev/null; then
           curl -sO https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
@@ -93,14 +56,24 @@
         else
           echo "WP-CLI ya existe"
         fi
-        wp --allow-root --version
-      register: wp_cli_check
+      register: wp_cli_install
 
-    - name: "Mostrar WP-CLI"
-      ansible.builtin.debug:
-        msg: "{{ wp_cli_check.stdout }}"
+    - name: "5. Descargar WordPress core si falta"
+      ansible.builtin.shell: |
+        if [ ! -f /var/www/axiom/wp-load.php ]; then
+          echo "Descargando WordPress..."
+          rm -rf /tmp/wordpress /tmp/latest.tar.gz 2>/dev/null
+          wget -q https://wordpress.org/latest.tar.gz -O /tmp/latest.tar.gz
+          tar -xzf /tmp/latest.tar.gz -C /tmp/
+          cp -r /tmp/wordpress/* /var/www/axiom/
+          chown -R www-data:www-data /var/www/axiom
+          echo "WordPress descargado"
+        else
+          echo "WordPress ya existe"
+        fi
+      register: wp_download
 
-    - name: "6. Instalar WordPress core (crea tablas)"
+    - name: "6. Instalar WordPress (crear tablas y admin)"
       ansible.builtin.shell: |
         cd /var/www/axiom
         wp --allow-root core install \
@@ -113,62 +86,26 @@
       register: wp_install
       when: "tables_check.stdout is search('SIN_TABLAS')"
 
-    - name: "Mostrar instalación WordPress"
+    - name: "Mostrar instalación"
       ansible.builtin.debug:
         msg: "{{ wp_install.stdout_lines if wp_install is defined else 'N/A' }}"
 
-    - name: "7. Crear usuario admin en WordPress"
+    - name: "7. Verificar tables creadas"
       ansible.builtin.shell: |
-        cd /var/www/axiom
-        wp --allow-root user list 2>/dev/null || echo "NO HAY_USUARIOS"
-        wp --allow-root user create {{ wp_admin_user }} {{ wp_admin_email }} \
-          --user_pass='{{ wp_admin_password }}' \
-          --display_name='{{ wp_admin_display_name }}' \
-          --role=administrator 2>/dev/null && echo "USUARIO CREADO" || echo "USUARIO YA_EXISTE"
-      register: wp_user_create
-      ignore_errors: true
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | head -10
+      register: tables_verify
 
-    - name: "Mostrar creación de usuario"
+    - name: "Mostrar tablas finales"
       ansible.builtin.debug:
-        msg: "{{ wp_user_create.stdout_lines }}"
+        msg: "{{ tables_verify.stdout_lines }}"
 
-    - name: "8. Si usuario ya existe, actualizar password"
-      ansible.builtin.shell: |
-        cd /var/www/axiom
-        wp --allow-root user update admin --user_pass='{{ wp_admin_password }}' 2>&1 && echo "PASSWORD ACTUALIZADO" || echo "NO SE ACTUALIZO"
-      register: wp_user_update
-      when: "tables_check.stdout is search('CON_TABLAS')"
-      ignore_errors: true
-
-    - name: "Mostrar update usuario"
-      ansible.builtin.debug:
-        msg: "{{ wp_user_update.stdout if wp_user_update.stdout is defined else 'N/A' }}"
-
-    - name: "8. Verificar PHP-FPM conecta a MySQL"
-      ansible.builtin.shell: |
-        echo "=== Test PHP conectando a MySQL ==="
-        php -r "
-        \$mysqli = new mysqli('192.168.13.11', 'axiom_web', 'Ax1omWeb!2024', 'axiom_web');
-        if (\$mysqli->connect_error) {
-            echo 'ERROR: ' . \$mysqli->connect_error;
-        } else {
-            echo 'PHP-MySQL: OK';
-            \$mysqli->close();
-        }
-        " 2>&1
-      register: php_mysql_test
-
-    - name: "Mostrar test PHP-MySQL"
-      ansible.builtin.debug:
-        msg: "{{ php_mysql_test.stdout }}"
-
-    - name: "9. Resultado final"
+    - name: "8. Resultado"
       ansible.builtin.debug:
         msg:
           - "=========================================="
           - "WORDPRESS LOGIN"
           - "=========================================="
-          - "URL Admin: http://192.168.11.11/wp-admin"
-          - "Usuario: {{ wp_admin_user }}"
-          - "Password: {{ wp_admin_password }}"
+          - "URL: http://192.168.11.11/wp-admin"
+          - "Usuario: admin"
+          - "Password: AxiomAdmin123!"
           - "=========================================="
