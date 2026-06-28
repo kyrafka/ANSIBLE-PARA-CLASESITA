@@ -318,6 +318,9 @@
         dest: /usr/local/bin/vm-poweron.sh
         content: |
           #!/bin/bash
+          export HOME=/var/lib/zabbix
+          mkdir -p $HOME 2>/dev/null
+
           VM_NAME="$1"
           ESXI_HOST="172.17.25.12"
           ESXI_PORT="443"
