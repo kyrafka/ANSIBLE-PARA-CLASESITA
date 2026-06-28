@@ -1,0 +1,160 @@
+---
+- name: "FIX — Triggers nodata"
+  hosts: localhost
+  connection: local
+  become: false
+
+  tasks:
+    - name: "Login"
+      shell: |
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])" > /tmp/zbx_token
+
+    - name: "1. Obtener hosts"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
+          > /tmp/zbx_hosts.json
+        python3 -c "import json; d=json.load(open('/tmp/zbx_hosts.json')); [print(h['hostid'],h['name']) for h in d['result']]"
+      register: hosts
+
+    - name: "2. Limpiar y crear triggers"
+      copy:
+        dest: /tmp/fix_triggers.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+
+          API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+          TOKEN = open("/tmp/zbx_token").read().strip()
+
+          def api(method, params, tid):
+              payload = {"jsonrpc":"2.0","method":method,"params":params,"auth":TOKEN,"id":tid}
+              data = json.dumps(payload).encode()
+              req = urllib.request.Request(API, data, {"Content-Type":"application/json-rpc"})
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          with open("/tmp/zbx_hosts.json") as f:
+              hosts = json.load(f)["result"]
+
+          print(f"Hosts: {len(hosts)}")
+
+          for h in hosts:
+              hname = h["name"]
+              hid = h["hostid"]
+
+              # Skip Zabbix server
+              if hname == "Zabbix server":
+                  continue
+
+              tname = f"{hname}: Agent no responde — PowerOn ESXi"
+
+              # Buscar y eliminar triggers existentes con esta description
+              existing = api("trigger.get", {
+                  "output": ["triggerid", "description"],
+                  "search": {"description": "Agent no responde"},
+                  "searchByAny": True
+              }, 10)
+
+              deleted = 0
+              for t in existing.get("result", []):
+                  if "Agent no responde" in t["description"]:
+                      try:
+                          api("trigger.delete", [t["triggerid"]], 11)
+                          deleted += 1
+                          print(f"  Eliminada: {t['description']}")
+                      except:
+                          pass
+
+              if deleted:
+                  print(f"  {hname}: {deleted} triggers eliminadas")
+
+          print("\n=== CREAR NUEVAS TRIGGERS ===")
+
+          # Obtener items de agent.ping para cada host
+          for h in hosts:
+              hname = h["name"]
+              hid = h["hostid"]
+
+              if hname == "Zabbix server":
+                  continue
+
+              print(f"Procesando: {hname}")
+
+              # Obtener item agent.ping del host
+              items = api("item.get", {
+                  "output": ["itemid", "key_", "name"],
+                  "hostids": [hid],
+                  "search": {"key_": "agent.ping"}
+              }, 20)
+
+              if not items.get("result"):
+                  print(f"  ERROR: No hay item agent.ping para {hname}")
+                  continue
+
+              item = items["result"][0]
+              iid = item["itemid"]
+              print(f"  Item agent.ping: {iid}")
+
+              # Crear trigger
+              tname = f"{hname}: Agent no responde — PowerOn ESXi"
+              expr = f"nodata(zabbix Agent:agent.ping,60s)=1"
+
+              try:
+                  r = api("trigger.create", {
+                      "description": tname,
+                      "expression": expr,
+                      "priority": "4",
+                      "manual_close": "1",
+                      "tags": [
+                          {"tag": "scope", "value": "availability"},
+                          {"tag": "auto_recovery", "value": "poweron"}
+                      ]
+                  }, 21)
+                  print(f"  CREADA: {r['result']['triggerids'][0]}")
+              except Exception as e:
+                  print(f"  ERROR: {e}")
+
+          print("\n=== FIN ===")
+
+    - name: "2b. Ejecutar fix"
+      shell: |
+        python3 /tmp/fix_triggers.py
+      register: result
+
+    - debug:
+        var: result.stdout_lines
+
+    - name: "3. Verificar"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=== TRIGGERS NODATA ==="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\"],\"search\":{\"description\":\"Agent no responde\"}},\"auth\":\"$TOKEN\",\"id\":30}" \
+          | python3 -c "import sys,json; [print(t['description']) for t in json.load(sys.stdin).get('result',[])]" || echo "NO HAY"
+
+      register: verify
+
+    - debug:
+        var: verify.stdout_lines
+
+    - name: "4. Verificar agent.ping values"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=== AGENT.PING VALUES ==="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"hostid\",\"lastvalue\",\"state\"],\"search\":{\"key_\":\"agent.ping\"}},\"auth\":\"$TOKEN\",\"id\":31}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('HostID:',t['hostid'],'Val:',t.get('lastvalue','?'),'State:',t.get('state','?')) for t in d.get('result',[])]" || echo "NO HAY"
+
+      register: ping_values
+
+    - debug:
+        var: ping_values.stdout_lines
