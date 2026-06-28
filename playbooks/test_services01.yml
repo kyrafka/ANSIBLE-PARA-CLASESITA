@@ -65,6 +65,10 @@
       ansible.builtin.debug:
         msg: "{{ ports.stdout if ports.stdout else 'Sin datos' }}"
 
+    - name: "Verificar MySQL escucha en 0.0.0.0:3306"
+      ansible.builtin.shell: |
+        ss -tlnp | grep ':3306' | grep -v '127.0.0.1' || echo "MySQL no escucha en interface externa"
+
     - name: "6. Probar configuracion de email"
       ansible.builtin.shell: |
         echo "=== Hosts de邮件 ==="
@@ -75,3 +79,15 @@
     - name: "Mostrar config email"
       ansible.builtin.debug:
         msg: "{{ email_config.stdout_lines }}"
+
+    - name: "7. Probar conectividad MySQL desde vm-web01"
+      ansible.builtin.shell: |
+        echo "=== Test conexion MySQL desde vm-web01 ==="
+        ssh ubuntu@192.168.11.11 "mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' -e \"SELECT 'CONEXION_OK' as test;\" 2>&1"
+      register: mysql_web_test
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Mostrar resultado test MySQL desde web"
+      ansible.builtin.debug:
+        msg: "{{ mysql_web_test.stdout if mysql_web_test.stdout else mysql_web_test.stderr }}"
