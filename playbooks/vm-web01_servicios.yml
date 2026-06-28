@@ -39,53 +39,9 @@
         update_cache: yes
         cache_valid_time: 3600
 
-- name: "APT — Detectar versión de PHP"
+- name: "APT — Instalar PHP 8.3 y dependencias"
       ansible.builtin.shell: |
-        for version in 8.3 8.2 8.1 8.0 7.4; do
-          if dpkg -l php${version}-fpm 2>/dev/null | grep -q "^ii"; then
-            echo "php${version}"
-            exit 0
-          fi
-        done
-        echo "PHP_NONE"
-      changed_when: false
-      register: php_version_check
-
-    - name: "APT — Agregar PPA de PHP si es necesario"
-      ansible.builtin.shell: |
-        add-apt-repository -y ppa:ondrej/php
-        apt-get update -qq
-        echo "PPA_AGREGADO"
-      changed_when: false
-      register: php_ppa_added
-      when: "php_version_check.stdout == 'PHP_NONE'"
-
-    - name: "APT — Detectar PHP después del PPA"
-      ansible.builtin.shell: |
-        apt-get update -qq 2>/dev/null
-        for version in 8.3 8.2 8.1 8.0 7.4; do
-          if dpkg -l php${version}-fpm 2>/dev/null | grep -q "^ii"; then
-            echo "php${version}"
-            exit 0
-          fi
-        done
-        echo "PHP_NONE"
-      changed_when: false
-      register: php_version_detected
-      when: "php_version_check.stdout == 'PHP_NONE'"
-
-    - name: "Set PHP version fact"
-      ansible.builtin.set_fact:
-        php_version: >
-          {%- if php_version_check.stdout == 'PHP_NONE' -%}
-          {{ php_version_detected.stdout | default('php8.1') | trim }}
-          {%- else -%}
-          {{ php_version_check.stdout | trim }}
-          {%- endif %}
-
-    - name: "APT — Instalar PHP y dependencias"
-      ansible.builtin.shell: |
-        PHP_VER="{{ php_version }}"
+        PHP_VER="php8.3"
         PHP_PKG="${PHP_VER}-fpm ${PHP_VER}-mysql ${PHP_VER}-curl ${PHP_VER}-gd ${PHP_VER}-mbstring ${PHP_VER}-xml ${PHP_VER}-zip ${PHP_VER}-intl ${PHP_VER}-cli mysql-client nginx wget unzip"
         apt-get install -y $PHP_PKG
       changed_when: false
@@ -248,7 +204,7 @@
 
               location ~ \.php$ {
                   include snippets/fastcgi-php.conf;
-                  fastcgi_pass unix:/run/php/{{ php_version }}-fpm.sock;
+                  fastcgi_pass unix:/run/php/php8.3-fpm.sock;
                   fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
                   include fastcgi_params;
               }
@@ -275,7 +231,7 @@
 
     - name: "PHP-FPM — Iniciar servicio"
       ansible.builtin.systemd:
-        name: "{{ php_version }}-fpm"
+        name: php8.3-fpm
         state: started
         enabled: yes
 
@@ -732,7 +688,7 @@
         echo ""
         echo "=== ESTADO DE SERVICIOS ==="
         echo "Nginx:    $(systemctl is-active nginx 2>/dev/null || echo 'INACTIVE')"
-        echo "PHP-FPM:  $(systemctl is-active {{ php_version }}-fpm 2>/dev/null || echo 'INACTIVE')"
+        echo "PHP-FPM:  $(systemctl is-active php8.3-fpm 2>/dev/null || echo 'INACTIVE')"
         echo "MariaDB:  $(systemctl is-active mariadb 2>/dev/null || echo 'INACTIVE')"
         echo ""
         echo "=== PUERTOS ==="
