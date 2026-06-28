@@ -41,28 +41,13 @@
 
     - name: "APT — Detectar versión de PHP disponible"
       ansible.builtin.shell: |
-        PHP_VERSION=""
         for version in 8.3 8.2 8.1 8.0 7.4; do
           if apt-cache show php${version}-fpm &>/dev/null; then
-            PHP_VERSION="${version}"
-            break
+            echo "php${version}"
+            exit 0
           fi
         done
-        if [ -z "$PHP_VERSION" ]; then
-          echo "Buscando en PPA..."
-          apt-get update -qq 2>/dev/null
-          for version in 8.3 8.2 8.1 8.0 7.4; do
-            if apt-cache show php${version}-fpm &>/dev/null; then
-              PHP_VERSION="${version}"
-              break
-            fi
-          done
-        fi
-        if [ -z "$PHP_VERSION" ]; then
-          echo "PHP_NONE"
-        else
-          echo "php${PHP_VERSION}"
-        fi
+        echo "PHP_NONE"
       changed_when: false
       register: php_version_check
 
@@ -81,9 +66,9 @@
     - name: "APT — Detectar PHP disponible (después de agregar PPA)"
       ansible.builtin.shell: |
         for version in 8.3 8.2 8.1 8.0 7.4; do
-          if apt-cache show php${version}-fpm &>/dev/null; then
+          if apt-cache show php${version}-fpm &>/dev/null 2>&1; then
             echo "php${version}"
-            break
+            exit 0
           fi
         done
       changed_when: false
