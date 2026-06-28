@@ -1,0 +1,132 @@
+---
+# ============================================================================
+# fix_nodata_triggers.yml — Crear triggers de Agent Down en todas las VMs
+# ============================================================================
+
+- name: "FIX — Crear triggers nodata"
+  hosts: localhost
+  connection: local
+  become: false
+
+  vars:
+    zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
+
+  tasks:
+    - name: "1. Login y obtener hosts"
+      shell: |
+        set -e
+        echo "=== LOGIN ==="
+        TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])")
+        echo "Token: ${TOKEN:0:15}..."
+        echo "$TOKEN" > /tmp/zbx_token
+
+        echo ""
+        echo "=== OBTENER HOSTS ==="
+        curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
+          > /tmp/zbx_hosts.json
+        python3 -c "
+import json
+with open('/tmp/zbx_hosts.json') as f:
+    d = json.load(f)
+for h in d.get('result',[]):
+    print(h['hostid'], h['name'])
+"
+      register: step1
+
+    - debug:
+        var: step1.stdout_lines
+
+    - name: "2. Crear trigger nodata para cada host"
+      shell: |
+        set -e
+        TOKEN=$(cat /tmp/zbx_token)
+
+        echo "=== CREAR TRIGGERS NODATA ==="
+
+        python3 << 'PYEOF'
+import json
+import subprocess
+import sys
+
+API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+TOKEN = open("/tmp/zbx_token").read().strip()
+
+def api(method, params, tid):
+    payload = {"jsonrpc":"2.0","method":method,"params":params,"auth":TOKEN,"id":tid}
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(API, data, {"Content-Type":"application/json-rpc"})
+    with urllib.request.urlopen(req) as r:
+        return json.loads(r.read())
+
+import urllib.request
+
+with open("/tmp/zbx_hosts.json") as f:
+    hosts = json.load(f)["result"]
+
+print(f"Hosts encontrados: {len(hosts)}")
+
+for h in hosts:
+    hname = h["name"]
+    hid = h["hostid"]
+    tname = f"{hname}: Agent no responde — PowerOn ESXi"
+    expr = f"nodata(/{hname}/agent.ping,60s)=1"
+
+    print(f"")
+    print(f"--- {hname} ---")
+
+    # Buscar si ya existe
+    existing = api("trigger.get", {"filter":{"description":[tname]}, "hostids":[hid]}, 10)
+
+    if existing.get("result"):
+        print(f"  YA EXISTE: {tname}")
+        tid = existing["result"][0]["triggerid"]
+        # Eliminar
+        api("trigger.delete", [tid], 11)
+        print(f"  Eliminada para recrear")
+
+    # Crear
+    try:
+        r = api("trigger.create", {
+            "description": tname,
+            "expression": expr,
+            "priority": "4",
+            "manual_close": "1",
+            "tags": [{"tag":"scope","value":"availability"},{"tag":"auto_recovery","value":"poweron"}]
+        }, 12)
+        print(f"  CREADA: {tname}")
+        print(f"  ID: {r['result']['triggerids'][0]}")
+    except Exception as e:
+        print(f"  ERROR: {e}")
+
+print("")
+print("=== FIN ===")
+PYEOF
+      register: step2
+
+    - debug:
+        var: step2.stdout_lines
+
+    - name: "3. Verificar triggers creadas"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        echo "=== VERIFICAR TRIGGERS ==="
+        curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"priority\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":20}" \
+          | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+triggers = d.get('result',[])
+print(f'Total triggers nodata: {len(triggers)}')
+for t in triggers:
+    print(f'  [{t[\"priority\"]}] {t[\"description\"][:60]}')
+"
+      register: step3
+
+    - debug:
+        var: step3.stdout_lines
