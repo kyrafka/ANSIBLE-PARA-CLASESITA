@@ -39,7 +39,7 @@
         update_cache: yes
         cache_valid_time: 3600
 
-- name: "APT — Instalar PHP 8.3 y dependencias"
+    - name: "APT — Instalar PHP 8.3 y dependencias"
       ansible.builtin.shell: |
         PHP_VER="php8.3"
         PHP_PKG="${PHP_VER}-fpm ${PHP_VER}-mysql ${PHP_VER}-curl ${PHP_VER}-gd ${PHP_VER}-mbstring ${PHP_VER}-xml ${PHP_VER}-zip ${PHP_VER}-intl ${PHP_VER}-cli mysql-client nginx wget unzip"
