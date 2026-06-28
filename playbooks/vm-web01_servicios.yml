@@ -177,7 +177,6 @@
         owner: www-data
         group: www-data
         mode: "0644"
-      force: yes
 
     - name: "WP — Generar salts de seguridad"
       ansible.builtin.shell: |
