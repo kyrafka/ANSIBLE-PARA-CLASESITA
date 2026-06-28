@@ -1,70 +1,87 @@
 ---
-- name: "CHECK Zabbix Full"
+- name: "CHECK Zabbix"
   hosts: localhost
   connection: local
   become: false
 
   tasks:
-    - name: "Full Check"
+    - name: "Login y obtener token"
       shell: |
-        echo "============================================"
-        echo "ZABBIX FULL CHECK"
-        echo "============================================"
-        echo ""
-
-        # Login
         TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
-          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
-        echo "Token: ${TOKEN:0:15}..."
-        echo ""
+          | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+        echo "TOKEN=$TOKEN"
+        echo "$TOKEN" > /tmp/zabbix_token.txt
+      register: login
 
-        # Hosts
+    - debug:
+        msg: "{{ login.stdout }}"
+
+    - name: "Hosts"
+      shell: |
+        TOKEN=$(cat /tmp/zabbix_token.txt)
         echo "=== HOSTS ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"status\",\"available\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f\"{a['available']} {a['name']}\") for a in d.get('result',[])]"
+          > /tmp/zabbix_hosts.json
+        python3 -c "
+import json
+with open('/tmp/zabbix_hosts.json') as f:
+    d = json.load(f)
+for h in d.get('result',[]):
+    print(h['available'], h['name'])
+"
 
-        echo ""
+    - name: "Actions"
+      shell: |
+        TOKEN=$(cat /tmp/zabbix_token.txt)
         echo "=== ACTIONS ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"name\",\"status\"],\"filter\":{\"eventsource\":[\"0\"]}},\"auth\":\"$TOKEN\",\"id\":3}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('[ON]' if a['status']=='0' else '[OFF]',a['name']) for a in d.get('result',[])]"
+          > /tmp/zabbix_actions.json
+        python3 -c "
+import json
+with open('/tmp/zabbix_actions.json') as f:
+    d = json.load(f)
+for a in d.get('result',[]):
+    s = 'ON' if a['status']=='0' else 'OFF'
+    print('[' + s + ']', a['name'])
+"
 
-        echo ""
-        echo "=== TRIGGERS con 'no responde' ==="
+    - name: "Triggers"
+      shell: |
+        TOKEN=$(cat /tmp/zabbix_token.txt)
+        echo "=== TRIGGERS (todas) ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"expression\",\"priority\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":4}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['description'][:60]) for t in d.get('result',[])]"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"expression\",\"priority\"],\"limit\":30},\"auth\":\"$TOKEN\",\"id\":4}" \
+          > /tmp/zabbix_triggers.json
+        python3 -c "
+import json
+with open('/tmp/zabbix_triggers.json') as f:
+    d = json.load(f)
+for t in d.get('result',[]):
+    print('[' + str(t['priority']) + ']', t['description'][:60])
+"
 
-        echo ""
-        echo "=== TRIGGERS con 'PowerOn' ==="
-        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"expression\"],\"search\":{\"description\":\"PowerOn\"}},\"auth\":\"$TOKEN\",\"id\":5}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['description'][:60]) for t in d.get('result',[])]"
-
-        echo ""
-        echo "=== ITEMS agent.ping por host ==="
-        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"hostid\",\"key_\",\"delay\"],\"search\":{\"key_\":\"agent.ping\"}},\"auth\":\"$TOKEN\",\"id\":6}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f\"HostID:{t['hostid']} Key:{t['key_']} Delay:{t.get('delay','?')}\") for t in d.get('result',[])]"
-
-        echo ""
+    - name: "Problemas activos"
+      shell: |
+        TOKEN=$(cat /tmp/zabbix_token.txt)
         echo "=== PROBLEMAS ACTIVOS ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":[\"name\",\"severity\",\"hostname\"],\"limit\":15},\"auth\":\"$TOKEN\",\"id\":7}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f\"[{p.get('severity','?')}] {p.get('name','?')[:50]} - {p.get('hostname','?')}\") for p in d.get('result',[])]"
-
-        echo ""
-        echo "============================================"
-      register: result
-
-    - debug:
-        msg: "{{ result.stdout_lines }}"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":[\"name\",\"severity\",\"hostname\"],\"limit\":20},\"auth\":\"$TOKEN\",\"id\":5}" \
+          > /tmp/zabbix_problems.json
+        python3 -c "
+import json
+with open('/tmp/zabbix_problems.json') as f:
+    d = json.load(f)
+for p in d.get('result',[]):
+    name = p.get('name', '?')[:50]
+    sev = p.get('severity', '?')
+    host = p.get('hostname', p.get('host', '?'))
+    print('[' + str(sev) + ']', name, '-', host)
+"
