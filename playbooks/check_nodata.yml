@@ -1,0 +1,25 @@
+---
+- name: "CHECK — Triggers nodata"
+  hosts: localhost
+  connection: local
+  become: false
+
+  tasks:
+    - name: "Login"
+      shell: |
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])" > /tmp/zbx_token
+
+    - name: "Triggers"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"triggerid\",\"description\",\"priority\",\"state\"],\"search\":{\"description\":\"Agent no responde\"}},\"auth\":\"$TOKEN\",\"id\":2}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('['+str(t['priority'])+']',t['triggerid'],t['description']) for t in d.get('result',[])]" || echo "NO HAY"
+      register: triggers
+
+    - debug:
+        var: triggers.stdout_lines
