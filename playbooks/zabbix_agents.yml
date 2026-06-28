@@ -63,6 +63,21 @@
         name: sshpass
         state: present
 
+    - name: "AGN — Instalar govc (para auto-recovery)"
+      ansible.builtin.shell: |
+        if command -v govc &>/dev/null; then
+          echo "govc ya instalado"
+        else
+          curl -sSL https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin govc
+          chmod +x /usr/local/bin/govc
+          echo "govc instalado"
+        fi
+        govc version 2>/dev/null || echo "govc OK"
+      changed_when: false
+      register: govc_install
+      failed_when: false
+
     - name: "AGN — LIMPIEZA: Remover instalaciones anteriores de Zabbix"
       ansible.builtin.shell: |
         echo "=== LIMPIEZA DE ZABBIX ANTERIOR ==="
@@ -304,8 +319,8 @@
         content: |
           #!/bin/bash
           VM_NAME="$1"
-          ESXI_HOST="168.121.48.254"
-          ESXI_PORT="10112"
+          ESXI_HOST="172.17.25.12"
+          ESXI_PORT="443"
           ESXI_USER="root"
           ESXI_PASS="qwe123$"
 
@@ -314,25 +329,27 @@
               exit 1
           fi
 
-          echo "AUTO-POWERON: Encendiendo '$VM_NAME' en $ESXI_HOST:$ESXI_PORT"
+          echo "[$(date)] AUTO-POWERON: Encendiendo '$VM_NAME' en $ESXI_HOST:$ESXI_PORT"
 
-          VM_INFO=$(sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/getallvms" 2>/dev/null)
+          export GOVC_URL="https://${ESXI_USER}:${ESXI_PASS}@${ESXI_HOST}:${ESXI_PORT}"
+          export GOVC_INSECURE=1
 
-          VM_LINE=$(echo "$VM_INFO" | grep -i "$VM_NAME" | head -1)
+          POWER=$(govc vm.info "/ha-datacenter/vm/$VM_NAME" 2>/dev/null | grep "Power state" | awk '{print $3}')
+          echo "Estado actual: ${POWER:-desconocido}"
 
-          if [ -z "$VM_LINE" ]; then
-              echo "ERROR: VM '$VM_NAME' no encontrada"
-              exit 1
+          if [ "$POWER" = "poweredOn" ]; then
+            echo "VM ya esta encendida"
+            exit 0
           fi
 
-          VM_ID=$(echo "$VM_LINE" | awk '{print $1}')
-          echo "Encontrada VM ID: $VM_ID"
-
-          sshpass -p "$ESXI_PASS" ssh -p "$ESXI_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            "$ESXI_USER@$ESXI_HOST" "vim-cmd vmsvc/power.on $VM_ID"
-
-          echo "OK - VM debería encenderse en ~30 segundos"
+          echo "Encendiendo VM..."
+          govc vm.power -on "/ha-datacenter/vm/$VM_NAME"
+          if [ $? -eq 0 ]; then
+            echo "[$(date)] OK — $VM_NAME encendida"
+          else
+            echo "ERROR: fallo encendiendo $VM_NAME"
+            exit 1
+          fi
         mode: "0755"
         owner: zabbix
         group: zabbix

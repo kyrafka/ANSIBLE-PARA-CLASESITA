@@ -1,0 +1,84 @@
+---
+# ============================================================================
+# test_connectivity.yml — Test rapido de conectividad
+# ============================================================================
+
+- name: "TEST — Conectividad rapida"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    esxi_host: "172.17.25.12"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+    vms:
+      - { name: vm-dc01, ip: 192.168.16.10 }
+      - { name: vm-services01, ip: 192.168.13.11 }
+      - { name: vm-web01, ip: 192.168.11.11 }
+      - { name: vm-voip01, ip: 192.168.15.11 }
+      - { name: vm-storage01, ip: 192.168.14.11 }
+      - { name: vm-docker01, ip: 192.168.13.12 }
+      - { name: vm-monitor01, ip: 192.168.17.11 }
+
+  tasks:
+    - name: "1. GOVC funciona?"
+      ansible.builtin.shell: |
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:443"
+        export GOVC_INSECURE=1
+        govc about -json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('OK: ' + d['FullName'])" 2>/dev/null || echo "FAIL: govc no conecta"
+      changed_when: false
+      register: govc_check
+
+    - name: "GOVC"
+      ansible.builtin.debug:
+        msg: "{{ govc_check.stdout_lines }}"
+
+    - name: "2. Estado VMs"
+      ansible.builtin.shell: |
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:443"
+        export GOVC_INSECURE=1
+        echo "=== ESTADO VMs ==="
+        for vm in vm-dc01 vm-services01 vm-web01 vm-voip01 vm-storage01 vm-docker01 vm-monitor01; do
+          state=$(govc vm.info "/ha-datacenter/vm/$vm" 2>/dev/null | grep "Power state" | awk '{print $3}')
+          echo "$vm: ${state:-UNKN}"
+        done
+      changed_when: false
+      register: vm_state
+
+    - name: "VMs"
+      ansible.builtin.debug:
+        msg: "{{ vm_state.stdout_lines }}"
+
+    - name: "3. SSH a cada VM (puerto 22)"
+      ansible.builtin.shell: |
+        echo "=== SSH (puerto 22) ==="
+        for vm_info in "vm-dc01:192.168.16.10" "vm-services01:192.168.13.11" "vm-web01:192.168.11.11" "vm-voip01:192.168.15.11" "vm-storage01:192.168.14.11" "vm-docker01:192.168.13.12" "vm-monitor01:192.168.17.11"; do
+          vm=$(echo $vm_info | cut -d: -f1)
+          ip=$(echo $vm_info | cut -d: -f2)
+          result=$(timeout 3 bash -c "echo > /dev/tcp/$ip/22" 2>&1 && echo "UP" || echo "DOWN")
+          echo "$vm ($ip): $result"
+        done
+      changed_when: false
+      register: ssh_check
+
+    - name: "SSH"
+      ansible.builtin.debug:
+        msg: "{{ ssh_check.stdout_lines }}"
+
+    - name: "4. RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "RESUMEN"
+          - "============================================"
+          - "GOVC: {{ 'OK' if 'OK:' in govc_check.stdout else 'FAIL' }}"
+          - ""
+          - "VMs prendidas pero sin SSH:"
+          - "  - Si vm-web01 dice UP pero SSH falla = SO aun booting"
+          - "  - Esperar 30s y probar de nuevo"
+          - ""
+          - "VMs completamente DOWN:"
+          - "  - No contestan ni SSH ni ping"
+          - "  - Zabbix auto-recovery debe encenderlas"
+          - "============================================"
