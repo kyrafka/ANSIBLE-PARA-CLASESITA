@@ -76,7 +76,12 @@
 
     - name: "Set PHP version fact"
       ansible.builtin.set_fact:
-        php_version: "{{ (php_version_check.stdout if php_version_check.stdout != 'PHP_NONE' else (php_version_detected.stdout | default('php8.1')) | trim) if (php_version_check.stdout != 'PHP_NONE' or (php_version_detected is defined and php_version_detected.stdout is defined and php_version_detected.stdout != 'PHP_NONE' and 'php' in php_version_detected.stdout)) else 'php8.1' }}"
+        php_version: >
+          {%- if php_version_check.stdout == 'PHP_NONE' -%}
+          {{ php_version_detected.stdout | default('php8.1') | trim }}
+          {%- else -%}
+          {{ php_version_check.stdout | trim }}
+          {%- endif %}
 
     - name: "APT — Instalar PHP y dependencias"
       ansible.builtin.shell: |
