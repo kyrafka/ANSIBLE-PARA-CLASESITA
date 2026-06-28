@@ -63,9 +63,16 @@
       community.postgresql.postgresql_user:
         name: "{{ postgresql_user }}"
         password: "{{ postgresql_pass }}"
-        db: "{{ postgresql_db }}"
         state: present
-        priv: "{{ postgresql_db }}:ALL"
+
+    - name: "WEB — Otorgar privilegios al usuario sobre la base de datos"
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        db: "{{ postgresql_db }}"
+        type: database
+        role: "{{ postgresql_user }}"
+        privs: ALL
 
     - name: "WEB — Configurar pg_hba.conf para conexiones locales"
       ansible.builtin.lineinfile:
