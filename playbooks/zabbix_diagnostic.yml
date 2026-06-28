@@ -17,7 +17,6 @@
 
   vars:
     zabbix_server: "192.168.17.11"
-    zabbix_api: "http://192.168.17.11/zabbix/api_jsonrpc.php"
 
   tasks:
     # =========================================================================
@@ -34,9 +33,9 @@
         echo "System hostname: $REAL_HOSTNAME"
         echo "Agent configured: ${CONFIG_HOSTNAME:-NO CONFIG}"
         if [ "$REAL_HOSTNAME" = "$CONFIG_HOSTNAME" ]; then
-          echo "STATUS: ✅ MATCH"
+          echo "STATUS: MATCH"
         else
-          echo "STATUS: ❌ MISMATCH"
+          echo "STATUS: MISMATCH"
         fi
       changed_when: false
       register: hostname_check
@@ -53,10 +52,10 @@
         echo "=========================================="
         echo "AGENTE ZABBIX"
         echo "=========================================="
-        systemctl is-active zabbix-agent 2>/dev/null && echo "Service: ✅ ACTIVE" || echo "Service: ❌ INACTIVE"
-        systemctl is-enabled zabbix-agent 2>/dev/null && echo "Enabled: ✅ YES" || echo "Enabled: ❌ NO"
+        systemctl is-active zabbix-agent 2>/dev/null && echo "Service: ACTIVE" || echo "Service: INACTIVE"
+        systemctl is-enabled zabbix-agent 2>/dev/null && echo "Enabled: YES" || echo "Enabled: NO"
         echo "Port 10050:"
-        ss -tlnp 2>/dev/null | grep 10050 && echo "STATUS: ✅ LISTENING" || echo "STATUS: ❌ NOT LISTENING"
+        ss -tlnp 2>/dev/null | grep 10050 && echo "STATUS: LISTENING" || echo "STATUS: NOT LISTENING"
       changed_when: false
       register: agent_status
 
@@ -74,9 +73,9 @@
         echo "=========================================="
         echo "Zabbix Server: {{ zabbix_server }}"
         echo -n "Port 10051: "
-        timeout 2 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>&1 && echo "✅ OPEN" || echo "❌ CLOSED"
+        timeout 2 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>&1 && echo "OPEN" || echo "CLOSED"
         echo -n "Port 10050: "
-        timeout 2 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10050" 2>&1 && echo "✅ OPEN" || echo "❌ CLOSED"
+        timeout 2 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10050" 2>&1 && echo "OPEN" || echo "CLOSED"
       changed_when: false
       register: connectivity
 
@@ -85,7 +84,7 @@
         msg: "{{ connectivity.stdout_lines }}"
 
     # =========================================================================
-    # 4. ZABBIX_GET TESTS (que items realmente responden)
+    # 4. ZABBIX_GET TESTS
     # =========================================================================
     - name: "4. ZABBIX_GET TESTS"
       ansible.builtin.shell: |
@@ -93,45 +92,27 @@
         echo "ZABBIX_GET TESTS"
         echo "=========================================="
         if ! command -v zabbix_get &>/dev/null; then
-          echo "zabbix_get: ❌ NOT INSTALLED"
+          echo "zabbix_get: NOT INSTALLED"
         else
-          echo "zabbix_get: ✅ AVAILABLE"
-
-          # Test agent.ping
+          echo "zabbix_get: AVAILABLE"
           echo -n "agent.ping: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k agent.ping 2>/dev/null && echo " ✅ OK" || echo " ❌ FAIL"
-
-          # Test system.hostname
+          timeout 5 zabbix_get -s 127.0.0.1 -k agent.ping 2>/dev/null && echo " OK" || echo " FAIL"
           echo -n "system.hostname: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k system.hostname 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL"
-
-          # Test proc.num[dockerd]
+          timeout 5 zabbix_get -s 127.0.0.1 -k system.hostname 2>/dev/null || echo "FAIL"
           echo -n "proc.num[dockerd]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[dockerd] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
-
-          # Test proc.num[nfsd]
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[dockerd] 2>/dev/null || echo "FAIL (not running or wrong name)"
           echo -n "proc.num[nfsd]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[nfsd] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
-
-          # Test proc.num[nginx]
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[nfsd] 2>/dev/null || echo "FAIL (not running or wrong name)"
           echo -n "proc.num[nginx]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[nginx] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
-
-          # Test proc.num[mariadb]
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[nginx] 2>/dev/null || echo "FAIL (not running or wrong name)"
           echo -n "proc.num[mariadb]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[mariadb] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
-
-          # Test proc.num[mysql]
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[mariadb] 2>/dev/null || echo "FAIL (not running or wrong name)"
           echo -n "proc.num[mysql]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[mysql] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
-
-          # Test proc.num[postfix]
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[mysql] 2>/dev/null || echo "FAIL (not running or wrong name)"
           echo -n "proc.num[postfix]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[postfix] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
-
-          # Test proc.num[dovecot]
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[postfix] 2>/dev/null || echo "FAIL (not running or wrong name)"
           echo -n "proc.num[dovecot]: "
-          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[dovecot] 2>/dev/null && echo "" | head -1 || echo " ❌ FAIL (process not running or wrong name)"
+          timeout 5 zabbix_get -s 127.0.0.1 -k proc.num[dovecot] 2>/dev/null || echo "FAIL (not running or wrong name)"
         fi
       changed_when: false
       register: zabbix_get_tests
@@ -166,31 +147,8 @@
       ansible.builtin.debug:
         msg: "{{ real_processes.stdout_lines }}"
 
-    # =========================================================================
-    # 6. RESUMEN HOST
-    # =========================================================================
-    - name: "6. RESUMEN HOST"
-      ansible.builtin.shell: |
-        echo "=========================================="
-        echo "RESUMEN: {{ inventory_hostname }}"
-        echo "=========================================="
-        echo "✅ AGENT CONFIGURED"
-        echo "   - Hostname matches: $(grep -q \"^Hostname={{ inventory_hostname }}\" /etc/zabbix/zabbix_agentd.conf 2>/dev/null && echo YES || echo NO)"
-        echo "   - Service active: $(systemctl is-active zabbix-agent 2>/dev/null && echo YES || echo NO)"
-        echo "   - Port listening: $(ss -tlnp 2>/dev/null | grep -q 10050 && echo YES || echo NO)"
-        echo ""
-        echo "❌ AGENT ISSUES:"
-        echo "   - Hostname mismatch causes 'host [ubuntu] not found'"
-        echo "   - Interface unavailable if agent down or firewall"
-      changed_when: false
-      register: host_summary
-
-    - name: "HOST SUMMARY"
-      ansible.builtin.debug:
-        msg: "{{ host_summary.stdout_lines }}"
-
 # ============================================================================
-# PLAY 2: Verificar en ZABBIX SERVER (solo si es monitor01 o localhost)
+# PLAY 2: Verificar en ZABBIX SERVER (solo localhost)
 # ============================================================================
 - name: "DIAGNOSTIC — Zabbix Server-side check"
   hosts: localhost
@@ -203,20 +161,21 @@
 
   tasks:
     # =========================================================================
-    # 7. ZABBIX UI — HOSTS y STATUS
+    # 6. ZABBIX UI — HOSTS y STATUS
     # =========================================================================
-    - name: "7. ZABBIX UI — HOSTS STATUS"
+    - name: "6. ZABBIX UI — HOSTS STATUS"
       ansible.builtin.shell: |
         echo "=========================================="
         echo "ZABBIX UI — HOST STATUS"
         echo "=========================================="
+
         TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
 
         if [ -z "$TOKEN" ]; then
-          echo "❌ ERROR: No se pudo obtener token Zabbix"
+          echo "ERROR: No se pudo obtener token Zabbix"
           exit 1
         fi
         echo "Token: ${TOKEN:0:15}..."
@@ -225,37 +184,33 @@
         echo "=== HOSTS REGISTRADOS ==="
         curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"status\",\"available\",\"ip\"],\"selectInterfaces\":[\"ip\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
-          | python3 -c "
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"status\",\"available\"],\"selectInterfaces\":[\"ip\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
+          | python3 << 'PYEOF'
 import sys,json
-try:
-    d=json.load(sys.stdin)
-    for h in d.get('result',[]):
-        ip = h.get('interfaces',[{}])[0].get('ip','N/A') if h.get('interfaces') else 'N/A'
-        status = '✅ ENABLED' if h['status']=='0' else '❌ DISABLED'
-        avail = '🟢 GREEN' if h['available']=='1' else '⚪ GRAY' if h['available']=='0' else '🟡 UNKNOWN'
-        print(f'{avail} {h[\"name\"]:20} IP:{ip} - {status}')
-except Exception as e:
-    print(f'Error: {e}')
-"
+d=json.load(sys.stdin)
+for h in d.get('result',[]):
+    ip = h.get('interfaces',[{}])[0].get('ip','N/A') if h.get('interfaces') else 'N/A'
+    status = 'ENABLED' if h['status']=='0' else 'DISABLED'
+    avail = 'GREEN' if h['available']=='1' else 'GRAY' if h['available']=='0' else 'UNKNOWN'
+    print(f'[{avail}] {h["name"]:20} IP:{ip} - {status}')
+PYEOF
 
         echo ""
         echo "=== PROBLEMAS ACTIVOS ==="
         curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":\"extend\",\"sortfield\":\"clock\",\"sortorder\":\"DESC\",\"limit\":20},\"auth\":\"$TOKEN\",\"id\":3}" \
-          | python3 -c "
+          | python3 << 'PYEOF'
 import sys,json
-try:
-    d=json.load(sys.stdin)
-    if not d.get('result'):
-        print('Sin problemas activos')
-    for p in d.get('result',[]):
-        sev = {'0':'OK','1':'INFO','2':'WARN','3':'AVG','4':'HIGH','5':'DIS'}.get(p.get('severity','0'), p.get('severity','0'))
-        print(f'  [{sev}] {p.get(\"name\",\"?\")[:60]} - {p.get(\"hostname\",\"?\")}')
-except Exception as e:
-    print(f'Error: {e}')
-"
+d=json.load(sys.stdin)
+if not d.get('result'):
+    print('Sin problemas activos')
+for p in d.get('result',[]):
+    sev = {'0':'OK','1':'INFO','2':'WARN','3':'AVG','4':'HIGH','5':'DIS'}.get(p.get('severity','0'), p.get('severity','0'))
+    name = p.get('name','?')[:60]
+    host = p.get('hostname','?') or p.get('host','?')
+    print(f'[{sev}] {name} - {host}')
+PYEOF
       changed_when: false
       register: zabbix_ui_hosts
 
@@ -264,46 +219,45 @@ except Exception as e:
         msg: "{{ zabbix_ui_hosts.stdout_lines }}"
 
     # =========================================================================
-    # 8. ZABBIX — ITEMS CONFIGURADOS vs AGARRA
+    # 7. ZABBIX — ITEMS CONFIGURADOS vs AGARRA
     # =========================================================================
-    - name: "8. ZABBIX — ITEMS CONFIGURADOS"
+    - name: "7. ZABBIX — ITEMS CON ERRORES"
       ansible.builtin.shell: |
         echo "=========================================="
-        echo "ZABBIX — ITEMS CONFIGURADOS POR HOST"
+        echo "ZABBIX — ITEMS CONFIGURADOS"
         echo "=========================================="
+
         TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
 
         echo ""
-        echo "=== ITEMS con problemas ==="
+        echo "=== ITEMS con errores (state=1) ==="
         curl -s -X POST "{{ zabbix_api }}" \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"itemid\",\"name\",\"key_\",\"state\",\"status\",\"lastclock\"],\"filter\":{\"state\":\"1\"},\"limit\":20},\"auth\":\"$TOKEN\",\"id\":4}" \
-          | python3 -c "
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"itemid\",\"name\",\"key_\",\"state\"],\"filter\":{\"state\":\"1\"},\"limit\":20},\"auth\":\"$TOKEN\",\"id\":4}" \
+          | python3 << 'PYEOF'
 import sys,json
-try:
-    d=json.load(sys.stdin)
-    if not d.get('result'):
-        print('Sin items con errores')
-    for i in d.get('result',[]):
-        print(f'  ❌ {i[\"name\"]} (key: {i[\"key_\"]})')
-except Exception as e:
-    print(f'Error: {e}')
-"
+d=json.load(sys.stdin)
+items = d.get('result',[])
+if not items:
+    print('Sin items con errores')
+for i in items:
+    print(f'ERROR: {i["name"]} (key: {i["key_"]})')
+PYEOF
 
         echo ""
-        echo "=== Ultimo valor recibido por host ==="
+        echo "=== Ultimo agent.ping por host ==="
         for host in vm-dc01 vm-services01 vm-web01 vm-voip01 vm-storage01 vm-docker01 vm-monitor01 core1 core2; do
           VALUE=$(curl -s -X POST "{{ zabbix_api }}" \
             -H "Content-Type: application/json-rpc" \
             -d "{\"jsonrpc\":\"2.0\",\"method\":\"item.get\",\"params\":{\"output\":[\"lastvalue\"],\"host\":\"$host\",\"search\":{\"key_\":\"agent.ping\"},\"limit\":1},\"auth\":\"$TOKEN\",\"id\":5}" \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('result',[{}])[0].get('lastvalue','NO DATA') if d.get('result') else 'NOT FOUND')" 2>/dev/null)
           if [ "$VALUE" != "NOT FOUND" ] && [ "$VALUE" != "NO DATA" ]; then
-            echo "  ✅ $host: agent.ping = $VALUE"
+            echo "  OK: $host agent.ping = $VALUE"
           else
-            echo "  ❌ $host: NO DATA"
+            echo "  NO DATA: $host"
           fi
         done
       changed_when: false
@@ -314,20 +268,18 @@ except Exception as e:
         msg: "{{ zabbix_items.stdout_lines }}"
 
     # =========================================================================
-    # 9. LOG ERRORS desde Zabbix Server
+    # 8. LOG ERRORS desde Zabbix Server
     # =========================================================================
-    - name: "9. ZABBIX SERVER LOG ERRORS"
+    - name: "8. ZABBIX SERVER LOG ERRORS"
       ansible.builtin.shell: |
         echo "=========================================="
-        echo "ZABBIX SERVER LOG — ERRORES RECIENTES"
+        echo "ZABBIX SERVER LOG — ULTIMOS ERRORES"
         echo "=========================================="
         if [ -f /var/log/zabbix/zabbix_server.log ]; then
-          echo "Errors in last 100 lines:"
-          grep -i "error\|fail\|cannot\|not found\|unavailable" /var/log/zabbix/zabbix_server.log | tail -30 | while read line; do
-            echo "  $line"
-          done
+          echo "Errores en ultimas 100 lineas:"
+          grep -i "error\|fail\|cannot\|not found\|unavailable" /var/log/zabbix/zabbix_server.log 2>/dev/null | tail -30 | head -20
         else
-          echo "Log file not found at /var/log/zabbix/zabbix_server.log"
+          echo "Log no encontrado en /var/log/zabbix/zabbix_server.log"
         fi
       changed_when: false
       register: zabbix_errors
@@ -335,6 +287,43 @@ except Exception as e:
     - name: "ZABBIX ERRORS RESULT"
       ansible.builtin.debug:
         msg: "{{ zabbix_errors.stdout_lines }}"
+
+    # =========================================================================
+    # 9. TRIGGERS CONFIGURADOS
+    # =========================================================================
+    - name: "9. ZABBIX — TRIGGERS CONFIGURADOS"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "ZABBIX — TRIGGERS"
+        echo "=========================================="
+
+        TOKEN=$(curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin).get('result',''))")
+
+        echo ""
+        echo "=== Triggers de auto-recovery ==="
+        curl -s -X POST "{{ zabbix_api }}" \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"triggerid\",\"description\",\"status\",\"state\"],\"search\":{\"description\":\"power\"},\"limit\":20},\"auth\":\"$TOKEN\",\"id\":6}" \
+          | python3 << 'PYEOF'
+import sys,json
+d=json.load(sys.stdin)
+triggers = d.get('result',[])
+if not triggers:
+    print('No hay triggers con power en el nombre')
+for t in triggers:
+    state = 'OK' if t.get('state','0')=='0' else 'UNKNOWN'
+    status = 'ENABLED' if t['status']=='0' else 'DISABLED'
+    print(f'[{status}] {t["description"]}')
+PYEOF
+      changed_when: false
+      register: zabbix_triggers
+
+    - name: "ZABBIX TRIGGERS RESULT"
+      ansible.builtin.debug:
+        msg: "{{ zabbix_triggers.stdout_lines }}"
 
     # =========================================================================
     # 10. RESUMEN FINAL
@@ -347,22 +336,22 @@ except Exception as e:
           - "=========================================="
           - ""
           - "PROBLEMAS CONOCIDOS:"
-          - "  ❌ core1/core2: host [ubuntu] not found"
-          - "     - Causa: Hostname en agent no coincide"
-          - "     - Fix: Editar /etc/zabbix/zabbix_agentd.conf"
+          - "  - core1/core2: host [ubuntu] not found"
+          - "    Causa: Hostname en agent no coincide"
+          - "    Fix: grep Hostname /etc/zabbix/zabbix_agentd.conf"
           - ""
-          - "  ❌ Varias VMs: interface unavailable"
-          - "     - Causa: Agente down o firewall"
-          - "     - Fix: systemctl restart zabbix-agent"
+          - "  - Varias VMs: interface unavailable"
+          - "    Causa: Agente down o firewall"
+          - "    Fix: systemctl restart zabbix-agent"
           - ""
-          - "  ❌ Items con nombres wrong:"
-          - "     - proc.num[nfs-server] -> debe ser nfsd"
-          - "     - proc.num[docker] -> debe ser dockerd"
+          - "  - Items con nombres wrong:"
+          - "    - proc.num[nfs-server] -> debe ser nfsd"
+          - "    - proc.num[docker] -> debe ser dockerd"
           - ""
           - "QUE AGARRA BIEN:"
-          - "  ✅ agent.ping si hostname coincide"
-          - "  ✅ system.hostname"
-          - "  ✅ CPU/disk/net si agente activo"
+          - "  - agent.ping si hostname coincide"
+          - "  - system.hostname"
+          - "  - CPU/disk/net si agente activo"
           - ""
           - "COMANDOS UTILES:"
           - "  ansible-playbook zabbix_diagnostic.yml -i inventario/hosts.yml --limit vm-web01"
