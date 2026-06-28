@@ -259,7 +259,7 @@
 
               location ~ \.php$ {
                   include snippets/fastcgi-php.conf;
-                  fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+                  fastcgi_pass unix:/run/php/{{ php_version }}-fpm.sock;
                   fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
                   include fastcgi_params;
               }
@@ -286,7 +286,7 @@
 
     - name: "PHP-FPM — Iniciar servicio"
       ansible.builtin.systemd:
-        name: php8.1-fpm
+        name: "{{ php_version }}-fpm"
         state: started
         enabled: yes
 
@@ -743,7 +743,7 @@
         echo ""
         echo "=== ESTADO DE SERVICIOS ==="
         echo "Nginx:    $(systemctl is-active nginx 2>/dev/null || echo 'INACTIVE')"
-        echo "PHP-FPM:  $(systemctl is-active php8.1-fpm 2>/dev/null || echo 'INACTIVE')"
+        echo "PHP-FPM:  $(systemctl is-active {{ php_version }}-fpm 2>/dev/null || echo 'INACTIVE')"
         echo "MariaDB:  $(systemctl is-active mariadb 2>/dev/null || echo 'INACTIVE')"
         echo ""
         echo "=== PUERTOS ==="
