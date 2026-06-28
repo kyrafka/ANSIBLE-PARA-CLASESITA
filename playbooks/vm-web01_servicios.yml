@@ -92,7 +92,7 @@
 
     - name: "Set PHP version fact"
       ansible.builtin.set_fact:
-        php_version: "{{ php_version_check.stdout if 'php' in php_version_check.stdout else php_version_detected.stdout }}"
+        php_version: "{{ php_version_check.stdout if php_version_check.stdout != 'PHP_NONE' else (php_version_detected.stdout if php_version_detected is defined and php_version_detected.stdout is defined and 'php' in php_version_detected.stdout else 'php8.1') }}"
 
     - name: "APT — Instalar dependencias PHP + MySQL client"
       ansible.builtin.shell: |
