@@ -1,0 +1,67 @@
+---
+- name: "Test WordPress - vm-web01"
+  hosts: vm-web01
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "1. Test HTTP acceso web"
+      ansible.builtin.shell: |
+        echo "=== / (pagina principal) ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/
+        echo "=== /index.html (estatica) ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/index.html
+        echo "=== /wp-admin ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/wp-admin/
+        echo "=== Contenido /wp-admin ==="
+        curl -s http://localhost/wp-admin/ | head -10
+      register: http_tests
+
+    - name: "Mostrar HTTP tests"
+      ansible.builtin.debug:
+        msg: "{{ http_tests.stdout_lines }}"
+
+    - name: "2. Verificar WordPress tables en DB"
+      ansible.builtin.shell: |
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | wc -l | tr -d ' '
+      register: table_count
+
+    - name: "Mostrar cantidad de tablas"
+      ansible.builtin.debug:
+        msg: "Tablas en axiom_web: {{ table_count.stdout }}"
+
+    - name: "3. Ver usuarios WordPress"
+      ansible.builtin.shell: |
+        if [ -f /usr/local/bin/wp ]; then
+          wp --allow-root user list 2>/dev/null
+        else
+          echo "WP-CLI no instalado, verificando por DB:"
+          mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SELECT user_login,user_email,display_name FROM axm_users LIMIT 5;" 2>/dev/null || echo "Tabla users no existe"
+        fi
+      register: wp_users
+
+    - name: "Mostrar usuarios WP"
+      ansible.builtin.debug:
+        msg: "{{ wp_users.stdout_lines }}"
+
+    - name: "4. Test PHP-FPM"
+      ansible.builtin.shell: |
+        echo "=== PHP Version ==="
+        php -v | head -1
+        echo "=== PHP-FPM Status ==="
+        systemctl is-active php8.3-fpm
+      register: php_status
+
+    - name: "Mostrar PHP status"
+      ansible.builtin.debug:
+        msg: "{{ php_status.stdout_lines }}"
+
+    - name: "5. Nginx error log"
+      ansible.builtin.shell: |
+        tail -5 /var/log/nginx/error.log 2>/dev/null || echo "No hay errores recientes"
+      register: nginx_errors
+      ignore_errors: true
+
+    - name: "Mostrar Nginx errors"
+      ansible.builtin.debug:
+        msg: "{{ nginx_errors.stdout }}"

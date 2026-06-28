@@ -1,0 +1,139 @@
+---
+- name: "Setup WordPress Admin User - vm-web01"
+  hosts: vm-web01
+  become: true
+  gather_facts: false
+
+  vars:
+    wp_admin_user: admin
+    wp_admin_email: admin@axiom.tech
+    wp_admin_password: "AxiomAdmin123!"
+    wp_admin_display_name: "Administrador AXIOM"
+
+  tasks:
+    - name: "1. Verificar wp-config.php existe"
+      ansible.builtin.shell: |
+        echo "=== wp-config.php ==="
+        ls -la /var/www/axiom/wp-config.php 2>/dev/null || echo "NO EXISTE"
+        grep -E "DB_NAME|DB_HOST|DB_USER|DB_PASSWORD" /var/www/axiom/wp-config.php 2>/dev/null | head -5
+      register: wp_config_check
+
+    - name: "Mostrar wp-config"
+      ansible.builtin.debug:
+        msg: "{{ wp_config_check.stdout_lines }}"
+
+    - name: "2. Verificar conexión a MySQL remoto"
+      ansible.builtin.shell: |
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' -e "SELECT 'MySQL CONECTADO' as status, DATABASE() as db;" 2>&1
+      register: mysql_test
+
+    - name: "Mostrar test MySQL"
+      ansible.builtin.debug:
+        msg: "{{ mysql_test.stdout }}"
+
+    - name: "3. Verificar si WordPress tables existen"
+      ansible.builtin.shell: |
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | head -20 || echo "NO HAY TABLAS"
+      register: tables_check
+
+    - name: "Mostrar tablas"
+      ansible.builtin.debug:
+        msg: "{{ tables_check.stdout_lines }}"
+
+    - name: "4. Crear tabla wp_options si no existe (WordPress básico)"
+      ansible.builtin.shell: |
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web << 'EOF'
+CREATE TABLE IF NOT EXISTS axm_options (
+  option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  option_name varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  option_value longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (option_id),
+  UNIQUE KEY option_name (option_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO axm_options (option_name, option_value) VALUES
+('siteurl', 'http://192.168.11.11'),
+('home', 'http://192.168.11.11'),
+('blogname', 'AXIOM TECH'),
+('blogdescription', 'Infraestructura Inteligente para America Latina');
+EOF
+        echo "Tablas básicas creadas"
+      register: create_tables
+
+    - name: "Mostrar creación de tablas"
+      ansible.builtin.debug:
+        msg: "{{ create_tables.stdout }}"
+
+    - name: "5. Instalar WP-CLI si no existe"
+      ansible.builtin.shell: |
+        if ! command -v wp &>/dev/null; then
+          curl -sO https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+          chmod +x wp-cli.phar
+          mv wp-cli.phar /usr/local/bin/wp
+          echo "WP-CLI instalado"
+        else
+          echo "WP-CLI ya existe"
+        fi
+        wp --allow-root --version
+      register: wp_cli_check
+
+    - name: "Mostrar WP-CLI"
+      ansible.builtin.debug:
+        msg: "{{ wp_cli_check.stdout }}"
+
+    - name: "6. Crear usuario admin en WordPress"
+      ansible.builtin.shell: |
+        cd /var/www/axiom
+        wp --allow-root user list 2>/dev/null || echo "NO HAY USUARIOS"
+        wp --allow-root user create {{ wp_admin_user }} {{ wp_admin_email }} \
+          --user_pass='{{ wp_admin_password }}' \
+          --display_name='{{ wp_admin_display_name }}' \
+          --role=administrator 2>/dev/null || echo "USUARIO YA EXISTE O ERROR"
+      register: wp_user_create
+      ignore_errors: true
+
+    - name: "Mostrar creación de usuario"
+      ansible.builtin.debug:
+        msg: "{{ wp_user_create.stdout_lines }}"
+
+    - name: "7. Si usuario ya existe, actualizar password"
+      ansible.builtin.shell: |
+        cd /var/www/axiom
+        wp --allow-root user update {{ wp_admin_user }} \
+          --user_pass='{{ wp_admin_password }}' 2>/dev/null || echo "No se pudo actualizar"
+      register: wp_user_update
+      when: "'USUARIO YA EXISTE' in wp_user_create.stdout"
+      ignore_errors: true
+
+    - name: "Mostrar update usuario"
+      ansible.builtin.debug:
+        msg: "{{ wp_user_update.stdout if wp_user_update.stdout is defined else 'N/A' }}"
+
+    - name: "8. Verificar PHP-FPM conecta a MySQL"
+      ansible.builtin.shell: |
+        echo "=== Test PHP conectando a MySQL ==="
+        php -r "
+        \$mysqli = new mysqli('192.168.13.11', 'axiom_web', 'Ax1omWeb!2024', 'axiom_web');
+        if (\$mysqli->connect_error) {
+            echo 'ERROR: ' . \$mysqli->connect_error;
+        } else {
+            echo 'PHP-MySQL: OK';
+            \$mysqli->close();
+        }
+        " 2>&1
+      register: php_mysql_test
+
+    - name: "Mostrar test PHP-MySQL"
+      ansible.builtin.debug:
+        msg: "{{ php_mysql_test.stdout }}"
+
+    - name: "9. Resultado final"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "WORDPRESS LOGIN"
+          - "=========================================="
+          - "URL Admin: http://192.168.11.11/wp-admin"
+          - "Usuario: {{ wp_admin_user }}"
+          - "Password: {{ wp_admin_password }}"
+          - "=========================================="
