@@ -38,3 +38,7 @@
           -H "Content-Type: application/json-rpc" \
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":[\"name\",\"severity\"],\"limit\":20},\"auth\":\"$TOKEN\",\"id\":4}" \
           | python3 -c "import sys,json; d=json.load(sys.stdin); [print('['+str(p['severity'])+']',p['name'][:60]) for p in d.get('result',[])]"
+      register: problems
+
+    - debug:
+        var: problems.stdout_lines
