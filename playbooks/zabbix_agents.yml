@@ -333,6 +333,8 @@
 
           export GOVC_URL="https://${ESXI_USER}:${ESXI_PASS}@${ESXI_HOST}:${ESXI_PORT}"
           export GOVC_INSECURE=1
+          export GOVC_DATA_DIR=/tmp/govc
+          mkdir -p "$GOVC_DATA_DIR"
 
           POWER=$(govc vm.info "/ha-datacenter/vm/$VM_NAME" 2>/dev/null | grep "Power state" | awk '{print $3}')
           echo "Estado actual: ${POWER:-desconocido}"
