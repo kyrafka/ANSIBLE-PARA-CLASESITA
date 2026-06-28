@@ -5,7 +5,7 @@
   become: false
 
   tasks:
-    - name: "Show all Zabbix info"
+    - name: "Show all"
       shell: |
         set -e
         TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
@@ -18,8 +18,8 @@
         echo "=========================================="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"name\",\"available\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(h['available'],h['name']) for h in d.get('result',[])]"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"host.get\",\"params\":{\"output\":[\"hostid\",\"name\",\"status\"]},\"auth\":\"$TOKEN\",\"id\":2}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('ID:',h['hostid'],'Name:',h['name']) for h in d.get('result',[])]"
 
         echo ""
         echo "=========================================="
@@ -32,21 +32,21 @@
 
         echo ""
         echo "=========================================="
-        echo "TRIGGERS con 'no responde'"
+        echo "TRIGGERS con 'no responde' (nodata)"
         echo "=========================================="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"priority\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":4}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['priority'],t['description'][:55]) for t in d.get('result',[])]" || echo "NO HAY"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"priority\",\"state\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":4}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['priority'],t['description'][:55]) for t in d.get('result',[])]" || echo "NO HAY TRIGGERS"
 
         echo ""
         echo "=========================================="
-        echo "TRIGGERS con 'PowerOn'"
+        echo "ALL TRIGGERS"
         echo "=========================================="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\"],\"search\":{\"description\":\"PowerOn\"}},\"auth\":\"$TOKEN\",\"id\":5}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['description'][:55]) for t in d.get('result',[])]" || echo "NO HAY"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\",\"priority\"],\"limit\":50},\"auth\":\"$TOKEN\",\"id\":5}" \
+          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['priority'],t['description'][:55]) for t in d.get('result',[])]"
 
         echo ""
         echo "=========================================="
@@ -57,8 +57,6 @@
           -d "{\"jsonrpc\":\"2.0\",\"method\":\"problem.get\",\"params\":{\"output\":[\"name\",\"severity\"],\"limit\":20},\"auth\":\"$TOKEN\",\"id\":6}" \
           | python3 -c "import sys,json; d=json.load(sys.stdin); [print(p['severity'],p['name'][:50]) for p in d.get('result',[])]" || echo "SIN PROBLEMAS"
 
-        echo ""
-        echo "=========================================="
       changed_when: false
       register: zabbix_info
 
