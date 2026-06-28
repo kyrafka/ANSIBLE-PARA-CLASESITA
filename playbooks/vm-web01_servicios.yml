@@ -690,7 +690,6 @@
         mode: "0644"
         owner: www-data
         group: www-data
-      force: yes
 
     # =========================================================================
     # 10. VERIFICACIÓN FINAL
