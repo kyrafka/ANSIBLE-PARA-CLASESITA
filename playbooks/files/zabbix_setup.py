@@ -250,12 +250,12 @@ print("\n=== TRIGGERS DE SERVICIOS ===")
 # Mapa de servicios por host (según playbooks de cada VM)
 HOST_SERVICES = {
     "vm-web01":      ["nginx", "mariadb"],
-    "vm-services01": ["postfix", "dovecot", "mysql"],
+    "vm-services01": ["postfix", "dovecot", "mysql", "apache2"],
     "vm-voip01":     ["asterisk"],
-    "vm-monitor01":  ["zabbix_server", "grafana-server"],
+    "vm-monitor01":  ["zabbix_server", "grafana-server", "apache2", "mariadb"],
     "vm-storage01":  ["smbd", "nfsd"],
-    "vm-docker01":   ["dockerd", "mysql"],
-    "vm-dc01":       ["smbd", "named"],
+    "vm-docker01":   ["dockerd", "mysql", "nginx"],
+    "vm-dc01":       ["samba-ad-dc", "named", "isc-dhcp-server"],
 }
 
 # Obtener hosts registrados

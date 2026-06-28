@@ -1,9 +1,15 @@
 ---
 # ============================================================================
-# zabbix_agents.yml — Instalación limpia de Zabbix Agent
+# zabbix_agents.yml — Instalacion de Zabbix Agent + Hostname + Sudoers
+# ============================================================================
+# Este playbook:
+# 1. Instala Zabbix Agent
+# 2. Configura hostname del sistema
+# 3. Agrega sudoers para auto-recovery de servicios
+# 4. Crea script vm-poweron.sh
 # ============================================================================
 
-- name: "Instalar Zabbix Agent"
+- name: "Instalar Zabbix Agent + Configurar Hostname"
   hosts: all
   connection: smart
   become: true
@@ -11,8 +17,47 @@
   vars:
     zabbix_server: "192.168.17.11"
     zabbix_version: "7.0-2+ubuntu24.04"
+    hostname_map:
+      vm-dc01: vm-dc01
+      vm-services01: vm-services01
+      vm-web01: vm-web01
+      vm-voip01: vm-voip01
+      vm-storage01: vm-storage01
+      vm-docker01: vm-docker01
+      vm-monitor01: vm-monitor01
+      core1: core1
+      core2: core2
 
   tasks:
+    # =========================================================================
+    # 0. CONFIGURAR HOSTNAME DEL SISTEMA
+    # =========================================================================
+    - name: "AGN — Configurar hostname del sistema"
+      ansible.builtin.shell: |
+        CURRENT_HOSTNAME=$(hostname -s)
+        TARGET_HOSTNAME="{{ hostname_map[inventory_hostname] | default(inventory_hostname) }}"
+        echo "Hostname actual: $CURRENT_HOSTNAME"
+        echo "Hostname objetivo: $TARGET_HOSTNAME"
+        if [ "$CURRENT_HOSTNAME" != "$TARGET_HOSTNAME" ]; then
+          hostnamectl set-hostname "$TARGET_HOSTNAME"
+          echo "$TARGET_HOSTNAME" > /etc/hostname
+          sed -i "/^127.0.1.1/d" /etc/hosts
+          echo "127.0.1.1 $TARGET_HOSTNAME" >> /etc/hosts
+          echo "Hostname cambiado a: $TARGET_HOSTNAME"
+        else
+          echo "Hostname ya correcto"
+        fi
+        hostname -s
+      changed_when: false
+      register: hostname_result
+
+    - name: "AGN — Mostrar resultado hostname"
+      ansible.builtin.debug:
+        msg: "{{ hostname_result.stdout_lines }}"
+
+    # =========================================================================
+    # 1. INSTALAR sshpass
+    # =========================================================================
     - name: "AGN — Instalar sshpass (para vm-poweron.sh)"
       ansible.builtin.apt:
         name: sshpass
@@ -92,20 +137,57 @@
         state: present
       failed_when: false
 
-    - name: "AGN — Agregar zabbix a sudoers sin password"
+    - name: "AGN — Agregar zabbix a sudoers sin password (TODOS los servicios)"
       ansible.builtin.copy:
         dest: /etc/sudoers.d/zabbix
         content: |
+          # Scripts
           zabbix ALL=(ALL) NOPASSWD: /usr/local/bin/vm-poweron.sh
+          zabbix ALL=(ALL) NOPASSWD: /usr/local/bin/service-restart.sh
+
+          # Zabbix Agent
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart zabbix-agent
+
+          # Servicios WEB
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart apache2
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nginx
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart php*-fpm
+
+          # Bases de datos
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart mariadb
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart mysql
+
+          # Correo
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart postfix
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart dovecot
+
+          # VoIP
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart asterisk
+
+          # File Server
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart smbd
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart nfs-server
+
+          # Docker
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart docker
+
+          # AD/DC
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart samba-ad-dc
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart named
+
+          # DHCP
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart isc-dhcp-server
+
+          # Monitoreo
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart zabbix-server
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart grafana-server
+
+          # Red
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart keepalived
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart networking
+          zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart frr
+
+          # Emergencia
           zabbix ALL=(ALL) NOPASSWD: /sbin/reboot
           zabbix ALL=(ALL) NOPASSWD: /sbin/poweroff
           zabbix ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot
@@ -188,26 +270,29 @@
         dest: /etc/zabbix/zabbix_agentd.conf.d/remote_commands.conf
         content: |
           # Comandos permitidos para remote execution via Zabbix
-          # SERVICIOS
           AllowKey=system.run[/usr/bin/systemctl restart apache2]
+          AllowKey=system.run[/usr/bin/systemctl restart nginx]
+          AllowKey=system.run[/usr/bin/systemctl restart php*-fpm]
           AllowKey=system.run[/usr/bin/systemctl restart mariadb]
+          AllowKey=system.run[/usr/bin/systemctl restart mysql]
           AllowKey=system.run[/usr/bin/systemctl restart postfix]
           AllowKey=system.run[/usr/bin/systemctl restart dovecot]
           AllowKey=system.run[/usr/bin/systemctl restart asterisk]
           AllowKey=system.run[/usr/bin/systemctl restart smbd]
           AllowKey=system.run[/usr/bin/systemctl restart nfs-server]
+          AllowKey=system.run[/usr/bin/systemctl restart docker]
+          AllowKey=system.run[/usr/bin/systemctl restart samba-ad-dc]
+          AllowKey=system.run[/usr/bin/systemctl restart named]
+          AllowKey=system.run[/usr/bin/systemctl restart isc-dhcp-server]
           AllowKey=system.run[/usr/bin/systemctl restart zabbix-server]
+          AllowKey=system.run[/usr/bin/systemctl restart grafana-server]
           AllowKey=system.run[/usr/bin/systemctl restart keepalived]
           AllowKey=system.run[/usr/bin/systemctl restart networking]
           AllowKey=system.run[/usr/bin/systemctl restart frr]
-          
-          # EMERGENCIA - REBOOT
           AllowKey=system.run[/sbin/reboot]
           AllowKey=system.run[/sbin/shutdown -r now]
           AllowKey=system.run[/usr/bin/systemctl reboot --force]
           AllowKey=system.run[/bin/systemctl reboot --force]
-          
-          # POWER OFF (si es necesario)
           AllowKey=system.run[/sbin/poweroff]
           AllowKey=system.run[/usr/bin/systemctl poweroff]
         mode: "0644"
