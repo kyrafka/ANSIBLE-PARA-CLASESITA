@@ -39,27 +39,68 @@
         update_cache: yes
         cache_valid_time: 3600
 
+    - name: "APT — Detectar versión de PHP disponible"
+      ansible.builtin.shell: |
+        PHP_VERSION=""
+        for version in 8.3 8.2 8.1 8.0 7.4; do
+          if apt-cache show php${version}-fpm &>/dev/null; then
+            PHP_VERSION="${version}"
+            break
+          fi
+        done
+        if [ -z "$PHP_VERSION" ]; then
+          echo "Buscando en PPA..."
+          apt-get update -qq 2>/dev/null
+          for version in 8.3 8.2 8.1 8.0 7.4; do
+            if apt-cache show php${version}-fpm &>/dev/null; then
+              PHP_VERSION="${version}"
+              break
+            fi
+          done
+        fi
+        if [ -z "$PHP_VERSION" ]; then
+          echo "PHP_NONE"
+        else
+          echo "php${PHP_VERSION}"
+        fi
+      changed_when: false
+      register: php_version_check
+
+    - name: "APT — Agregar PPA de PHP si no está disponible"
+      ansible.builtin.shell: |
+        if ! grep -q "ondrej/php" /etc/apt/sources.list.d/*.list 2>/dev/null; then
+          apt-get install -y software-properties-common
+          add-apt-repository -y ppa:ondrej/php
+          apt-get update -qq
+        fi
+        echo "PPA_AGREGADO"
+      changed_when: false
+      register: php_ppa_added
+      when: "'PHP_NONE' in php_version_check.stdout"
+
+    - name: "APT — Detectar PHP disponible (después de agregar PPA)"
+      ansible.builtin.shell: |
+        for version in 8.3 8.2 8.1 8.0 7.4; do
+          if apt-cache show php${version}-fpm &>/dev/null; then
+            echo "php${version}"
+            break
+          fi
+        done
+      changed_when: false
+      register: php_version_detected
+      when: "'PPA_AGREGADO' in php_ppa_added.stdout"
+
+    - name: "Set PHP version fact"
+      ansible.builtin.set_fact:
+        php_version: "{{ php_version_check.stdout if 'php' in php_version_check.stdout else php_version_detected.stdout }}"
+
     - name: "APT — Instalar dependencias PHP + MySQL client"
-      ansible.builtin.apt:
-        name:
-          - php8.1
-          - php8.1-fpm
-          - php8.1-mysql
-          - php8.1-curl
-          - php8.1-gd
-          - php8.1-mbstring
-          - php8.1-xml
-          - php8.1-xmlrpc
-          - php8.1-zip
-          - php8.1-intl
-          - php8.1-imagick
-          - php8.1-cli
-          - mysql-client
-          - nginx
-          - wget
-          - unzip
-        state: present
-        install_recommends: yes
+      ansible.builtin.shell: |
+        PHP_VER="{{ php_version }}"
+        PHP_PKG="${PHP_VER}-fpm ${PHP_VER}-mysql ${PHP_VER}-curl ${PHP_VER}-gd ${PHP_VER}-mbstring ${PHP_VER}-xml ${PHP_VER}-zip ${PHP_VER}-intl ${PHP_VER}-cli mysql-client nginx wget unzip"
+        apt-get install -y $PHP_PKG
+      changed_when: false
+      register: php_installed
 
     - name: "APT — Instalar servidor MySQL local (fallback)"
       ansible.builtin.apt:
