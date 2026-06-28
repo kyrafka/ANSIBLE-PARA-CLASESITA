@@ -1,0 +1,237 @@
+---
+# ============================================================================
+# test_vm_poweron.yml — Test completo de vm-poweron.sh desde monitor01
+# ============================================================================
+# Uso:
+#   ansible-playbook test_vm_poweron.yml -i inventario/hosts.yml
+#   ansible-playbook test_vm_poweron.yml -i inventario/hosts.yml --limit vm-web01
+# ============================================================================
+
+- name: "TEST — vm-poweron.sh desde monitor01"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    esxi_host: "172.17.25.12"
+    esxi_port: "443"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+    test_vms:
+      - vm-web01
+      - vm-services01
+      - vm-voip01
+      - vm-storage01
+      - vm-docker01
+      - vm-monitor01
+      - vm-dc01
+
+  tasks:
+    # =========================================================================
+    # 1. TEST GOVC — Conectividad a ESXi
+    # =========================================================================
+    - name: "1. TEST GOVC — Conectividad ESXi"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: govc a ESXi {{ esxi_host }}:{{ esxi_port }}"
+        echo "=========================================="
+
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+
+        echo "govc about:"
+        govc about 2>&1 || echo "ERROR: govc no conecta"
+
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: govc_test
+      failed_when: false
+
+    - name: "GOVC RESULT"
+      ansible.builtin.debug:
+        msg: "{{ govc_test.stdout_lines }}"
+
+    # =========================================================================
+    # 2. TEST GOVC — Listar VMs
+    # =========================================================================
+    - name: "2. TEST GOVC — Listar VMs disponibles"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Listar VMs en ESXi"
+        echo "=========================================="
+
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+
+        echo "VMs disponibles:"
+        govc vm.list 2>&1
+
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: vm_list_test
+      failed_when: false
+
+    - name: "VM LIST RESULT"
+      ansible.builtin.debug:
+        msg: "{{ vm_list_test.stdout_lines }}"
+
+    # =========================================================================
+    # 3. TEST GOVC — Estado de cada VM
+    # =========================================================================
+    - name: "3. TEST GOVC — Estado de cada VM"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Estado de VMs"
+        echo "=========================================="
+
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+
+        for vm in {{ test_vms | join(' ') }}; do
+          echo "--- $vm ---"
+          govc vm.info "/ha-datacenter/vm/$vm" 2>&1 | grep -E "Name:|Power state:"
+          echo ""
+        done
+
+        echo "=========================================="
+      changed_when: false
+      register: vm_state_test
+      failed_when: false
+
+    - name: "VM STATE RESULT"
+      ansible.builtin.debug:
+        msg: "{{ vm_state_test.stdout_lines }}"
+
+    # =========================================================================
+    # 4. TEST SCRIPT — vm-poweron.sh existe y permisos
+    # =========================================================================
+    - name: "4. TEST SCRIPT — vm-poweron.sh"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Script vm-poweron.sh"
+        echo "=========================================="
+
+        if [ -f /usr/local/bin/vm-poweron.sh ]; then
+          echo "Script existe: SI"
+          ls -la /usr/local/bin/vm-poweron.sh
+          echo ""
+          echo "Contenido (primeras 20 lineas):"
+          head -20 /usr/local/bin/vm-poweron.sh
+        else
+          echo "Script existe: NO"
+        fi
+
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: script_test
+      failed_when: false
+
+    - name: "SCRIPT RESULT"
+      ansible.builtin.debug:
+        msg: "{{ script_test.stdout_lines }}"
+
+    # =========================================================================
+    # 5. TEST SSH — Conectividad a VMs
+    # =========================================================================
+    - name: "5. TEST SSH — Conectividad a VMs"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: SSH a cada VM"
+        echo "=========================================="
+
+        for vm_info in "vm-dc01:192.168.16.10" "vm-services01:192.168.13.11" "vm-web01:192.168.11.11" "vm-voip01:192.168.15.11" "vm-storage01:192.168.14.11" "vm-docker01:192.168.13.12" "vm-monitor01:192.168.17.11"; do
+          vm_name=$(echo $vm_info | cut -d: -f1)
+          vm_ip=$(echo $vm_info | cut -d: -f2)
+
+          echo "--- $vm_name ($vm_ip) ---"
+          timeout 5 bash -c "echo > /dev/tcp/$vm_ip/22" 2>/dev/null && echo "SSH: OPEN" || echo "SSH: CLOSED/timeout"
+        done
+
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: ssh_test
+      failed_when: false
+
+    - name: "SSH RESULT"
+      ansible.builtin.debug:
+        msg: "{{ ssh_test.stdout_lines }}"
+
+    # =========================================================================
+    # 6. TEST PODER ENCENDER vm-web01 (la que dice que está apagada)
+    # =========================================================================
+    - name: "6. TEST ENCENDER vm-web01"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: Encender vm-web01 via govc"
+        echo "=========================================="
+
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+
+        echo "Estado actual de vm-web01:"
+        govc vm.info "/ha-datacenter/vm/vm-web01" 2>&1 | grep "Power state"
+
+        echo ""
+        echo "Intentando encender..."
+        govc vm.power -on "/ha-datacenter/vm/vm-web01" 2>&1
+
+        echo ""
+        echo "Estado despues de encender:"
+        govc vm.info "/ha-datacenter/vm/vm-web01" 2>&1 | grep "Power state"
+
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: poweron_test
+      failed_when: false
+
+    - name: "POWERON RESULT"
+      ansible.builtin.debug:
+        msg: "{{ poweron_test.stdout_lines }}"
+
+    # =========================================================================
+    # 7. TEST SSH desde monitor01 a vm-web01
+    # =========================================================================
+    - name: "7. TEST SSH — Desde monitor01 a vm-web01"
+      ansible.builtin.shell: |
+        echo "=========================================="
+        echo "TEST: SSH ubuntu@192.168.11.11"
+        echo "=========================================="
+
+        sshpass -p '123' ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 ubuntu@192.168.11.11 "hostname; uptime" 2>&1 || echo "SSH FALLO"
+
+        echo ""
+        echo "=========================================="
+      changed_when: false
+      register: ssh_web_test
+      failed_when: false
+
+    - name: "SSH WEB RESULT"
+      ansible.builtin.debug:
+        msg: "{{ ssh_web_test.stdout_lines }}"
+
+    # =========================================================================
+    # 8. RESUMEN FINAL
+    # =========================================================================
+    - name: "8. RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "RESUMEN TEST vm-poweron.sh"
+          - "=========================================="
+          - ""
+          - "Si GOVC funciona pero vm-web01 no enciende:"
+          - "  1. Verificar que el nombre de VM sea exacto"
+          - "  2. Revisar que govc tenga permisos"
+          - "  3. Ver logs del agente en Zabbix"
+          - ""
+          - "COMANDOS UTILES:"
+          - "  govc vm.power -on /ha-datacenter/vm/vm-web01"
+          - "  govc vm.power -off /ha-datacenter/vm/vm-web01"
+          - "  govc vm.info /ha-datacenter/vm/vm-web01"
+          - "=========================================="
