@@ -1,0 +1,100 @@
+---
+# ============================================================================
+# zabbix_analysis.yml — Analisis rapido de Zabbix en todas las VMs
+# ============================================================================
+# Uso:
+#   ansible-playbook zabbix_analysis.yml -i inventario/hosts.yml
+#   ansible-playbook zabbix_analysis.yml -i inventario/hosts.yml --limit vm-web01
+# ============================================================================
+
+- name: "ANALISIS — Zabbix en todas las VMs"
+  hosts: all
+  connection: smart
+  become: true
+  gather_facts: true
+
+  vars:
+    zabbix_server: "192.168.17.11"
+
+  tasks:
+    - name: "=== ANALISIS: {{ inventory_hostname }} ==="
+      ansible.builtin.shell: |
+        echo "============================================================"
+        echo "VM: {{ inventory_hostname }}"
+        echo "IP: {{ ansible_default_ipv4.address | default('N/A') }}"
+        echo "============================================================"
+
+        echo ""
+        echo "--- HOSTNAME ---"
+        hostname
+        echo "Hostname local: $(hostname -s)"
+
+        echo ""
+        echo "--- ZABBIX AGENT CONFIG ---"
+        if [ -f /etc/zabbix/zabbix_agentd.conf ]; then
+          echo "Config: EXISTS"
+          grep "^Hostname=" /etc/zabbix/zabbix_agentd.conf || echo "Hostname: NOT SET"
+          grep "^Server=" /etc/zabbix/zabbix_agentd.conf || echo "Server: NOT SET"
+        else
+          echo "Config: MISSING"
+        fi
+
+        echo ""
+        echo "--- ZABBIX AGENT SERVICE ---"
+        systemctl is-active zabbix-agent 2>/dev/null && echo "Service: ACTIVE" || echo "Service: INACTIVE"
+        systemctl is-enabled zabbix-agent 2>/dev/null && echo "Enabled: YES" || echo "Enabled: NO"
+        ss -tlnp 2>/dev/null | grep 10050 && echo "Port 10050: LISTENING" || echo "Port 10050: NOT LISTENING"
+
+        echo ""
+        echo "--- PROCESOS CLAVE ---"
+        echo -n "nginx:     " && ps aux | grep -c [n]ginx || echo "0"
+        echo -n "mariadb:   " && ps aux | grep -c [m]ariadb || echo "0"
+        echo -n "mysql:     " && ps aux | grep -c [m]ysqld || echo "0"
+        echo -n "dockerd:   " && ps aux | grep -c [d]ockerd || echo "0"
+        echo -n "nfsd:      " && ps aux | grep -c [n]fsd || echo "0"
+        echo -n "postfix:   " && ps aux | grep -c [p]ostfix || echo "0"
+        echo -n "dovecot:   " && ps aux | grep -c [d]ovecot || echo "0"
+        echo -n "zabbix_ag: " && ps aux | grep -c [z]abbix_agentd || echo "0"
+
+        echo ""
+        echo "--- CONECTIVIDAD A ZABBIX SERVER ({{ zabbix_server }}) ---"
+        timeout 2 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10051" 2>/dev/null && echo "10051: OPEN" || echo "10051: CLOSED"
+        timeout 2 bash -c "echo > /dev/tcp/{{ zabbix_server }}/10050" 2>/dev/null && echo "10050: OPEN" || echo "10050: CLOSED"
+
+        echo ""
+        echo "============================================================"
+      changed_when: false
+
+# ============================================================================
+# PLAY 2: Zabbix Server (vm-monitor01)
+# ============================================================================
+- name: "ANALISIS — Zabbix Server"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "=== ZABBIX SERVER STATUS ==="
+      ansible.builtin.shell: |
+        echo "============================================================"
+        echo "ZABBIX SERVER (vm-monitor01)"
+        echo "============================================================"
+
+        echo ""
+        echo "--- SERVICES ---"
+        systemctl is-active zabbix-server 2>/dev/null && echo "zabbix-server: ACTIVE" || echo "zabbix-server: INACTIVE"
+        systemctl is-active grafana-server 2>/dev/null && echo "grafana-server: ACTIVE" || echo "grafana-server: INACTIVE"
+        systemctl is-active nginx 2>/dev/null && echo "nginx: ACTIVE" || echo "nginx: INACTIVE"
+
+        echo ""
+        echo "--- ULTIMOS ERRORES EN LOG ---"
+        if [ -f /var/log/zabbix/zabbix_server.log ]; then
+          grep -i "error\|fail\|cannot\|not found\|unavailable" /var/log/zabbix/zabbix_server.log 2>/dev/null | tail -20
+        else
+          echo "Log no encontrado"
+        fi
+
+        echo ""
+        echo "============================================================"
+      changed_when: false
