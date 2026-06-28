@@ -1,140 +1,66 @@
 ---
-# ============================================================================
-# fix_auto_recovery.yml — Diagnosticar y arreglar auto-recovery
-# ============================================================================
-
 - name: "FIX Auto Recovery"
   hosts: localhost
   connection: local
   become: true
 
-  vars:
-    esxi_host: "172.17.25.12"
-    esxi_user: "root"
-    esxi_pass: "qwe123$"
-
   tasks:
-    # =========================================================================
-    # 1. VERIFICAR SCRIPT vm-poweron.sh
-    # =========================================================================
-    - name: "1. Ver script vm-poweron.sh"
+    - name: "1. Ver script"
       shell: |
-        echo "=========================================="
-        echo "SCRIPT vm-poweron.sh"
-        echo "=========================================="
-        cat /usr/local/bin/vm-poweron.sh
-
-    - name: "2. Test script directo"
-      shell: |
-        echo "=========================================="
-        echo "TEST: Script directo"
-        echo "=========================================="
+        echo "=== SCRIPT ==="
+        cat /usr/local/bin/vm-poweron.sh | head -10
+        echo ""
+        echo "=== TEST ==="
         sudo -u zabbix /usr/local/bin/vm-poweron.sh vm-web01
-        echo "EXIT: $?"
+      register: r1
 
-    # =========================================================================
-    # 3. VERIFICAR TRIGGERS EN ZABBIX
-    # =========================================================================
-    - name: "3. Triggers de nodata"
+    - debug:
+        var: r1.stdout_lines
+
+    - name: "2. Triggers nodata"
       shell: |
         TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])")
-
-        echo "=========================================="
-        echo "TRIGGERS: Agent no responde"
-        echo "=========================================="
+        echo "=== NODATA TRIGGERS ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"triggerid\",\"description\",\"priority\",\"state\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":2}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print(t['triggerid'],t['description']) for t in d.get('result',[])]" || echo "NO HAY"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":2}" \
+          | python3 -c "import sys,json; [print(t['description']) for t in json.load(sys.stdin).get('result',[])]" || echo "NO HAY"
+      register: r2
 
-    - name: "4. Triggers de servicio caido"
+    - debug:
+        var: r2.stdout_lines
+
+    - name: "3. Actions"
       shell: |
         TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])")
-
-        echo "=========================================="
-        echo "TRIGGERS: vm-web01 (todas)"
-        echo "=========================================="
+        echo "=== ACTIONS ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"triggerid\",\"description\",\"priority\"],\"search\":{\"description\":\"vm-web01\"}},\"auth\":\"$TOKEN\",\"id\":3}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('['+t['priority']+']',t['triggerid'],t['description'][:60]) for t in d.get('result',[])]" || echo "NO HAY"
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"name\",\"status\"],\"filter\":{\"eventsource\":[\"0\"]}},\"auth\":\"$TOKEN\",\"id\":3}" \
+          | python3 -c "import sys,json; [print('ON' if a['status']=='0' else 'OFF', a['name']) for a in json.load(sys.stdin).get('result',[])]"
+      register: r3
 
-    # =========================================================================
-    # 5. VERIFICAR ACTIONS
-    # =========================================================================
-    - name: "5. Actions completas"
+    - debug:
+        var: r3.stdout_lines
+
+    - name: "4. Host IP"
       shell: |
         TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
           -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
           | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])")
-
-        echo "=========================================="
-        echo "ACTIONS"
-        echo "=========================================="
+        echo "=== vm-web01 INTERFACES ==="
         curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
           -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"action.get\",\"params\":{\"output\":[\"actionid\",\"name\",\"status\",\"eventsource\"],\"selectOperations\":\"extend\"},\"filter\":{\"eventsource\":[\"0\"]},\"auth\":\"$TOKEN\",\"id\":4}" \
-          > /tmp/actions.json
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"hostinterface.get\",\"params\":{\"output\":[\"ip\"],\"filter\":{\"host\":[\"vm-web01\"]}},\"auth\":\"$TOKEN\",\"id\":4}" \
+          | python3 -c "import sys,json; [print('IP:',i['ip']) for i in json.load(sys.stdin).get('result',[])]" || echo "NO HAY"
+      register: r4
 
-        python3 -c "
-import json
-with open('/tmp/actions.json') as f:
-    d = json.load(f)
-for a in d.get('result',[]):
-    print('NAME:', a['name'])
-    print('STATUS:', 'ON' if a['status']=='0' else 'OFF')
-    for op in a.get('operations',[]):
-        if 'opcommand' in op:
-            print('  OP: Remote command')
-    print()
-"
-
-    # =========================================================================
-    # 6. VERIFICAR HOST vm-web01 IP
-    # =========================================================================
-    - name: "6. Host vm-web01 IP"
-      shell: |
-        TOKEN=$(curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
-          -H "Content-Type: application/json-rpc" \
-          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
-          | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])")
-
-        echo "=========================================="
-        echo "HOST vm-web01 INTERFACES"
-        echo "=========================================="
-        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
-          -H "Content-Type: application/json-rpc" \
-          -d "{\"jsonrpc\":\"2.0\",\"method\":\"hostinterface.get\",\"params\":{\"output\":[\"interfaceid\",\"ip\",\"dns\"],\"filter\":{\"host\":[\"vm-web01\"]}},\"auth\":\"$TOKEN\",\"id\":5}" \
-          | python3 -c "import sys,json; d=json.load(sys.stdin); [print('IP:',i['ip'],'DNS:',i.get('dns','-')) for i in d.get('result',[])]" || echo "NO HAY INTERFAZ"
-
-    # =========================================================================
-    # 7. RESUMEN
-    # =========================================================================
-    - name: "7. RESUMEN"
-      debug:
-        msg:
-          - "=========================================="
-          - "DIAGNOSTICO"
-          - "=========================================="
-          - ""
-          - "POSIBLES PROBLEMAS:"
-          - "1. Script no funciona o permisos"
-          - "2. Trigger nodata no existe o no se dispara"
-          - "3. Action no tiene operacion correcta"
-          - "4. Host vm-web01 tiene IP incorrecta en Zabbix"
-          - ""
-          - "PARA ARRGLAR IP DE VM-WEB01:"
-          - "  Ir a Zabbix UI > Hosts > vm-web01 > Interfaces"
-          - "  Cambiar IP a 192.168.11.11"
-          - ""
-          - "PARA VER LOGS DE ZABBIX:"
-          - "  journalctl -u zabbix-server -n 50"
-          - "  tail -f /var/log/zabbix/zabbix_server.log"
-          - "=========================================="
+    - debug:
+        var: r4.stdout_lines
