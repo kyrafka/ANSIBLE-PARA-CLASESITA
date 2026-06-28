@@ -1,0 +1,186 @@
+---
+# ============================================================================
+# fix_zabbix_cleanup.yml — Limpiar triggers duplicadas y arreglar IPs de hosts
+# ============================================================================
+
+- name: "FIX — Cleanup Zabbix"
+  hosts: localhost
+  connection: local
+  become: false
+
+  tasks:
+    # =========================================================================
+    # 1. Login
+    # =========================================================================
+    - name: "1. Login"
+      shell: |
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d '{"jsonrpc":"2.0","method":"user.login","params":{"username":"Admin","password":"zabbix"},"id":1}' \
+          | python3 -c "import sys,json; print(json.load(sys.stdin)['result'])" > /tmp/zbx_token
+        echo "Login OK"
+
+    # =========================================================================
+    # 2. Eliminar triggers duplicadas de "no responde"
+    # =========================================================================
+    - name: "2. Limpiar triggers duplicadas"
+      copy:
+        dest: /tmp/cleanup_triggers.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+
+          API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+          TOKEN = open("/tmp/zbx_token").read().strip()
+
+          def api(method, params, tid):
+              payload = {"jsonrpc":"2.0","method":method,"params":params,"auth":TOKEN,"id":tid}
+              data = json.dumps(payload).encode()
+              req = urllib.request.Request(API, data, {"Content-Type":"application/json-rpc"})
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          # Obtener todas las triggers
+          all_triggers = api("trigger.get", {"output":["triggerid","description"]}, 10)
+
+          print(f"Total triggers: {len(all_triggers.get('result',[]))}")
+
+          # Buscar las de "no responde" duplicadas
+          seen = {}
+          to_delete = []
+
+          for t in all_triggers.get('result',[]):
+              desc = t['description']
+              tid = t['triggerid']
+
+              if "no responde" in desc.lower():
+                  # Extraer nombre base (primera parte antes de ":")
+                  base = desc.split(":")[0].strip() if ":" in desc else desc
+
+                  print(f"\nTrigger: {desc}")
+                  print(f"  ID: {tid}")
+
+                  if base in seen:
+                      # Es duplicada
+                      print(f"  DUPLICADA! Ya existe: {seen[base]} - Marcar para eliminar")
+                      to_delete.append(tid)
+                  else:
+                      print(f"  PRIMERA - Guardar")
+                      seen[base] = tid
+
+          print(f"\n=== A ELIMINAR: {len(to_delete)} triggers ===")
+          for tid in to_delete:
+              print(f"  Eliminando: {tid}")
+              api("trigger.delete", [tid], 11)
+
+          print("\n=== LIMPIEZA COMPLETADA ===")
+
+    - name: "2b. Ejecutar cleanup"
+      shell: |
+        python3 /tmp/cleanup_triggers.py
+      register: cleanup_result
+
+    - debug:
+        var: cleanup_result.stdout_lines
+
+    # =========================================================================
+    # 3. Arreglar IPs de vm-web01 - dejar solo 192.168.11.11
+    # =========================================================================
+    - name: "3. Arreglar IPs de vm-web01"
+      copy:
+        dest: /tmp/fix_ip.py
+        content: |
+          #!/usr/bin/env python3
+          import json
+          import urllib.request
+
+          API = "http://192.168.17.11/zabbix/api_jsonrpc.php"
+          TOKEN = open("/tmp/zbx_token").read().strip()
+
+          def api(method, params, tid):
+              payload = {"jsonrpc":"2.0","method":method,"params":params,"auth":TOKEN,"id":tid}
+              data = json.dumps(payload).encode()
+              req = urllib.request.Request(API, data, {"Content-Type":"application/json-rpc"})
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          # Obtener host vm-web01
+          hosts = api("host.get", {"filter":{"host":["vm-web01"]}, "output":["hostid","name"]}, 20)
+          if not hosts.get('result'):
+              print("ERROR: vm-web01 no encontrado")
+              exit(1)
+
+          hid = hosts['result'][0]['hostid']
+          print(f"vm-web01 HostID: {hid}")
+
+          # Obtener interfaces actuales
+          ifaces = api("hostinterface.get", {"hostids":[hid], "output":["interfaceid","ip","type","main"]}, 21)
+          print(f"\nInterfaces actuales: {len(ifaces.get('result',[]))}")
+
+          for i in ifaces.get('result',[]):
+              print(f"  ID:{i['interfaceid']} IP:{i['ip']} Type:{i['type']} Main:{i['main']}")
+
+          # Eliminar todas las interfaces excepto la principal
+          for i in ifaces.get('result',[]):
+              if i['ip'] != '192.168.11.11' or i['main'] != '1':
+                  print(f"  Eliminando interfaz: {i['interfaceid']} ({i['ip']})")
+                  try:
+                      api("hostinterface.delete", [i['interfaceid']], 22)
+                  except Exception as e:
+                      print(f"    Error: {e}")
+
+          # Crear interfaz correcta si no existe
+          current_ips = [i['ip'] for i in ifaces.get('result',[])]
+          if '192.168.11.11' not in current_ips:
+              print("\nCreando interfaz correcta...")
+              try:
+                  api("hostinterface.create", {
+                      "hostid": hid,
+                      "type": 1,
+                      "main": 1,
+                      "ip": "192.168.11.11",
+                      "dns": "",
+                      "port": "10050",
+                      "useip": 1
+                  }, 23)
+                  print("Interfaz creada")
+              except Exception as e:
+                  print(f"Error creando: {e}")
+          else:
+              print("\nInterfaz 192.168.11.11 ya existe")
+
+          print("\n=== IPs DE vm-web01 ARREGLADAS ===")
+
+    - name: "3b. Ejecutar fix IP"
+      shell: |
+        python3 /tmp/fix_ip.py
+      register: fixip_result
+
+    - debug:
+        var: fixip_result.stdout_lines
+
+    # =========================================================================
+    # 4. Verificar resultado
+    # =========================================================================
+    - name: "4. Verificar"
+      shell: |
+        TOKEN=$(cat /tmp/zbx_token)
+
+        echo "=== TRIGGERS DE NODATA ==="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"trigger.get\",\"params\":{\"output\":[\"description\"],\"search\":{\"description\":\"no responde\"}},\"auth\":\"$TOKEN\",\"id\":30}" \
+          | python3 -c "import sys,json; [print(t['description']) for t in json.load(sys.stdin).get('result',[])]" || echo "NO HAY"
+
+        echo ""
+        echo "=== vm-web01 INTERFACES ==="
+        curl -s -X POST http://192.168.17.11/zabbix/api_jsonrpc.php \
+          -H "Content-Type: application/json-rpc" \
+          -d "{\"jsonrpc\":\"2.0\",\"method\":\"hostinterface.get\",\"params\":{\"output\":[\"ip\"],\"filter\":{\"host\":[\"vm-web01\"]}},\"auth\":\"$TOKEN\",\"id\":31}" \
+          | python3 -c "import sys,json; [print('IP:', i['ip']) for i in json.load(sys.stdin).get('result',[])]" || echo "NO HAY"
+
+      register: verify
+
+    - debug:
+        var: verify.stdout_lines
