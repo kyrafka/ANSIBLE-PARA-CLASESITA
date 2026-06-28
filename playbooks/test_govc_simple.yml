@@ -1,0 +1,71 @@
+---
+# ============================================================================
+# test_govc_simple.yml — Test simple de govc y auto-recovery
+# ============================================================================
+
+- name: "TEST GOVC"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    esxi_host: "172.17.25.12"
+    esxi_port: "443"
+    esxi_user: "root"
+    esxi_pass: "qwe123$"
+
+  tasks:
+    - name: "1. govc directo"
+      ansible.builtin.shell: |
+        export GOVC_URL="https://{{ esxi_user }}:{{ esxi_pass | replace('$', '\$') }}@{{ esxi_host }}:{{ esxi_port }}"
+        export GOVC_INSECURE=1
+        export GOVC_DATA_DIR=/tmp/govc-test
+        mkdir -p /tmp/govc-test
+
+        echo "=== Test govc about ==="
+        govc about
+
+        echo ""
+        echo "=== Test VM list ==="
+        govc vm.list
+
+        echo ""
+        echo "=== Test vm-web01 info ==="
+        govc vm.info "/ha-datacenter/vm/vm-web01"
+
+        echo ""
+        echo "=== Test encender vm-web01 ==="
+        govc vm.power -on "/ha-datacenter/vm/vm-web01"
+
+        echo ""
+        echo "=== Verificar estado ==="
+        govc vm.info "/ha-datacenter/vm/vm-web01" | grep "Power state"
+      changed_when: false
+      register: govc_test
+
+    - name: "RESULT"
+      ansible.builtin.debug:
+        msg: "{{ govc_test.stdout_lines }}"
+
+    - name: "2. Script vm-poweron.sh"
+      ansible.builtin.shell: |
+        echo "=== Test script completo ==="
+        sudo -u zabbix /usr/local/bin/vm-poweron.sh vm-web01
+      changed_when: false
+      register: script_test
+
+    - name: "SCRIPT RESULT"
+      ansible.builtin.debug:
+        msg: "{{ script_test.stdout_lines }}"
+
+    - name: "3. RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "RESUMEN"
+          - "============================================"
+          - "Si govc directo funciona pero script no:"
+          - "  - Revisar password en script"
+          - "  - Revisar permisos de archivo"
+          - "  - Revisar GOVC_DATA_DIR"
+          - "============================================"
