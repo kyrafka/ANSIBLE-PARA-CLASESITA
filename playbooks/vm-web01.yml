@@ -64,7 +64,7 @@
         name: "{{ postgresql_user }}"
         password: "{{ postgresql_pass }}"
         state: present
-        priv: "{{ postgresql_db }}.*:ALL"
+        priv: "{{ postgresql_db }}:ALL"
 
     - name: "WEB — Configurar pg_hba.conf para conexiones locales"
       ansible.builtin.lineinfile:
