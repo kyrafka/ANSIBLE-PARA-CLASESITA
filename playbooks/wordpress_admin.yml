@@ -33,34 +33,35 @@
 
     - name: "3. Verificar si WordPress tables existen"
       ansible.builtin.shell: |
-        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | head -20 || echo "NO HAY TABLAS"
+        TABLE_COUNT=$(mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "SHOW TABLES;" 2>/dev/null | wc -l)
+        echo "Tablas existentes: $TABLE_COUNT"
+        if [ "$TABLE_COUNT" -lt 5 ]; then
+          echo "SIN_TABLAS"
+        else
+          echo "CON_TABLAS"
+        fi
       register: tables_check
 
     - name: "Mostrar tablas"
       ansible.builtin.debug:
-        msg: "{{ tables_check.stdout_lines }}"
+        msg: "{{ tables_check.stdout }}"
 
-    - name: "4. Crear tabla wp_options si no existe (WordPress básico)"
+    - name: "4. Instalar WordPress core (crea tablas)"
       ansible.builtin.shell: |
-        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "
-        CREATE TABLE IF NOT EXISTS axm_options (
-          option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-          option_name varchar(191) NOT NULL DEFAULT '',
-          option_value longtext NOT NULL,
-          PRIMARY KEY (option_id),
-          UNIQUE KEY option_name (option_name)
-        );
-        INSERT IGNORE INTO axm_options (option_name, option_value) VALUES
-        ('siteurl', 'http://192.168.11.11'),
-        ('home', 'http://192.168.11.11'),
-        ('blogname', 'AXIOM TECH');
-        "
-        echo "Tablas básicas creadas"
-      register: create_tables
+        cd /var/www/axiom
+        wp --allow-root core install \
+          --url="http://192.168.11.11" \
+          --title="AXIOM TECH" \
+          --admin_user="admin" \
+          --admin_password="AxiomAdmin123!" \
+          --admin_email="admin@axiom.tech" \
+          --skip-email 2>&1
+      register: wp_install
+      when: "tables_check.stdout is search('SIN_TABLAS')"
 
-    - name: "Mostrar creación de tablas"
+    - name: "Mostrar instalación WordPress"
       ansible.builtin.debug:
-        msg: "{{ create_tables.stdout }}"
+        msg: "{{ wp_install.stdout_lines if wp_install is defined else 'N/A' }}"
 
     - name: "5. Instalar WP-CLI si no existe"
       ansible.builtin.shell: |
@@ -79,14 +80,31 @@
       ansible.builtin.debug:
         msg: "{{ wp_cli_check.stdout }}"
 
-    - name: "6. Crear usuario admin en WordPress"
+    - name: "6. Instalar WordPress core (crea tablas)"
       ansible.builtin.shell: |
         cd /var/www/axiom
-        wp --allow-root user list 2>/dev/null || echo "NO HAY USUARIOS"
+        wp --allow-root core install \
+          --url="http://192.168.11.11" \
+          --title="AXIOM TECH" \
+          --admin_user="admin" \
+          --admin_password="AxiomAdmin123!" \
+          --admin_email="admin@axiom.tech" \
+          --skip-email 2>&1
+      register: wp_install
+      when: "tables_check.stdout is search('SIN_TABLAS')"
+
+    - name: "Mostrar instalación WordPress"
+      ansible.builtin.debug:
+        msg: "{{ wp_install.stdout_lines if wp_install is defined else 'N/A' }}"
+
+    - name: "7. Crear usuario admin en WordPress"
+      ansible.builtin.shell: |
+        cd /var/www/axiom
+        wp --allow-root user list 2>/dev/null || echo "NO HAY_USUARIOS"
         wp --allow-root user create {{ wp_admin_user }} {{ wp_admin_email }} \
           --user_pass='{{ wp_admin_password }}' \
           --display_name='{{ wp_admin_display_name }}' \
-          --role=administrator 2>/dev/null || echo "USUARIO YA EXISTE O ERROR"
+          --role=administrator 2>/dev/null && echo "USUARIO CREADO" || echo "USUARIO YA_EXISTE"
       register: wp_user_create
       ignore_errors: true
 
@@ -94,13 +112,12 @@
       ansible.builtin.debug:
         msg: "{{ wp_user_create.stdout_lines }}"
 
-    - name: "7. Si usuario ya existe, actualizar password"
+    - name: "8. Si usuario ya existe, actualizar password"
       ansible.builtin.shell: |
         cd /var/www/axiom
-        wp --allow-root user update {{ wp_admin_user }} \
-          --user_pass='{{ wp_admin_password }}' 2>/dev/null || echo "No se pudo actualizar"
+        wp --allow-root user update admin --user_pass='{{ wp_admin_password }}' 2>&1 && echo "PASSWORD ACTUALIZADO" || echo "NO SE ACTUALIZO"
       register: wp_user_update
-      when: "'USUARIO YA EXISTE' in wp_user_create.stdout"
+      when: "tables_check.stdout is search('CON_TABLAS')"
       ignore_errors: true
 
     - name: "Mostrar update usuario"
