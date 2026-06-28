@@ -42,21 +42,19 @@
 
     - name: "4. Crear tabla wp_options si no existe (WordPress básico)"
       ansible.builtin.shell: |
-        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web << 'EOF'
-CREATE TABLE IF NOT EXISTS axm_options (
-  option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  option_name varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
-  option_value longtext COLLATE utf8mb4_unicode_ci NOT NULL,
-  PRIMARY KEY (option_id),
-  UNIQUE KEY option_name (option_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-INSERT IGNORE INTO axm_options (option_name, option_value) VALUES
-('siteurl', 'http://192.168.11.11'),
-('home', 'http://192.168.11.11'),
-('blogname', 'AXIOM TECH'),
-('blogdescription', 'Infraestructura Inteligente para America Latina');
-EOF
+        mysql -h 192.168.13.11 -u axiom_web -p'Ax1omWeb!2024' axiom_web -e "
+        CREATE TABLE IF NOT EXISTS axm_options (
+          option_id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+          option_name varchar(191) NOT NULL DEFAULT '',
+          option_value longtext NOT NULL,
+          PRIMARY KEY (option_id),
+          UNIQUE KEY option_name (option_name)
+        );
+        INSERT IGNORE INTO axm_options (option_name, option_value) VALUES
+        ('siteurl', 'http://192.168.11.11'),
+        ('home', 'http://192.168.11.11'),
+        ('blogname', 'AXIOM TECH');
+        "
         echo "Tablas básicas creadas"
       register: create_tables
 
