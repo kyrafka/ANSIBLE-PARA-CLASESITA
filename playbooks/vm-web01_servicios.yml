@@ -72,7 +72,7 @@
         echo "Creando base de datos {{ mysql_db }}..."
 
         # Intentar en MySQL remoto primero
-        mysql -h {{ mysql_host }} -u root -p'Admin123!' -e "
+        mysql -h {{ mysql_host }} -u root -p'AdminMail123!' -e "
         CREATE DATABASE IF NOT EXISTS {{ mysql_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
         CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'%' IDENTIFIED BY '{{ mysql_pass }}';
         CREATE USER IF NOT EXISTS '{{ mysql_user }}'@'localhost' IDENTIFIED BY '{{ mysql_pass }}';

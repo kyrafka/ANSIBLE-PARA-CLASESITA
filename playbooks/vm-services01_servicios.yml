@@ -110,7 +110,13 @@
         sleep 3
         mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}';"
         mysql -e "CREATE DATABASE IF NOT EXISTS postfix;"
-        echo "MySQL configurado"
+        mysql -e "CREATE DATABASE IF NOT EXISTS axiom_web CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        mysql -e "CREATE USER IF NOT EXISTS 'axiom_web'@'%' IDENTIFIED BY 'Ax1omWeb!2024';"
+        mysql -e "CREATE USER IF NOT EXISTS 'axiom_web'@'localhost' IDENTIFIED BY 'Ax1omWeb!2024';"
+        mysql -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'%';"
+        mysql -e "GRANT ALL PRIVILEGES ON axiom_web.* TO 'axiom_web'@'localhost';"
+        mysql -e "FLUSH PRIVILEGES;"
+        echo "MySQL configurado con axiom_web"
 
     - name: "MAIL — Configurar Dovecot"
       ansible.builtin.copy:
