@@ -226,7 +226,7 @@
           - ""
           - "  3. Crear config en tu PC (/etc/wireguard/client.conf):"
           - "     [Interface]"
-          - "     Address = {{ wireguard_server_ip | regex_replace('\.1$', '.2') }}/24"
+          - '     Address = {{ wireguard_server_ip | regex_replace("''\.1$''", ''.2'') }}/24'
           - "     PrivateKey = TU_CLIENTE_PRIVATE_KEY"
           - "     DNS = {{ dns_server }}"
           - ""
