@@ -1,0 +1,367 @@
+---
+# ============================================================================
+# vm-storage01_samba.yml — Samba con permisos por IP
+# ============================================================================
+# Crea carpetas compartidas con control de acceso por IP:
+# - Administradores: 192.168.12.10-80 (acceso total)
+# - Usuarios: 192.168.12.81-200 (acceso restringido)
+# ============================================================================
+
+- name: "Configurar Samba Shares en vm-storage01"
+  hosts: vm-storage01
+  become: true
+  gather_facts: true
+
+  vars:
+    # Rangos de IP para acceso
+    admins_range: "192.168.12.10-80"
+    secretaria_range: "192.168.12.81-100"
+    usuarios_range: "192.168.12.101-200"
+    
+    # Usuarios Samba (contraseñas separadas del sistema)
+    samba_users:
+      - name: "jefazo"
+        password: "Jefazo2024!"
+        group: "administradores"
+      - name: "secretaria"
+        password: "Secre2024!"
+        group: "secretaria"
+      - name: "contador"
+        password: "Conta2024!"
+        group: "usuarios"
+
+  tasks:
+    - name: "SMB — Actualizar índice de paquetes"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "SMB — Instalar Samba"
+      ansible.builtin.apt:
+        name:
+          - samba
+          - samba-common-bin
+          - smbclient
+          - winbind
+        state: present
+
+    - name: "SMB — Crear grupos del sistema"
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - administradores
+        - secretaria
+        - usuarios
+
+    - name: "SMB — Crear directorio base /srv/samba"
+      ansible.builtin.file:
+        path: /srv/samba
+        state: directory
+        mode: "0775"
+        owner: root
+        group: root
+
+    - name: "SMB — Crear carpeta Jefatura"
+      ansible.builtin.file:
+        path: /srv/samba/Jefatura
+        state: directory
+        mode: "0770"
+        owner: root
+        group: administradores
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear carpeta Secretaria"
+      ansible.builtin.file:
+        path: /srv/samba/Secretaria
+        state: directory
+        mode: "0775"
+        owner: root
+        group: secretaria
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear carpeta Usuarios"
+      ansible.builtin.file:
+        path: /srv/samba/Usuarios
+        state: directory
+        mode: "0775"
+        owner: root
+        group: usuarios
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear subcarpetas en Jefatura"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0770"
+        owner: root
+        group: administradores
+      loop:
+        - /srv/samba/Jefatura/Proyectos
+        - /srv/samba/Jefatura/Finanzas
+        - /srv/samba/Jefatura/RecursosHumanos
+        - /srv/samba/Jefatura/Legal
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear subcarpetas en Secretaria"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0775"
+        owner: root
+        group: secretaria
+      loop:
+        - /srv/samba/Secretaria/Actas
+        - /srv/samba/Secretaria/Contratos
+        - /srv/samba/Secretaria/Correspondencia
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear subcarpetas en Usuarios"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0775"
+        owner: root
+        group: usuarios
+      loop:
+        - /srv/samba/Usuarios/General
+        - /srv/samba/Usuarios/Documentos
+        - /srv/samba/Usuarios/Templates
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear usuarios del sistema para Samba"
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        password: "{{ item.password | password_hash('sha512') }}"
+        groups: "{{ item.group }}"
+        shell: /bin/false
+        create_home: yes
+        state: present
+      loop: "{{ samba_users }}"
+
+    - name: "SMB — Agregar usuarios a Samba"
+      ansible.builtin.shell: |
+        echo "{{ item.name }}:{{ item.password }}" | chpasswd
+        (echo "{{ item.password }}"; echo "{{ item.password }}") | smbpasswd -a -s {{ item.name }}
+        echo "Usuario Samba {{ item.name }} creado"
+      loop: "{{ samba_users }}"
+      changed_when: true
+
+    - name: "SMB — Configurar smb.conf"
+      ansible.builtin.copy:
+        dest: /etc/samba/smb.conf
+        content: |
+          [global]
+             workgroup = AXIOM
+             server string = File Server AXIOM
+             server role = standalone server
+             log file = /var/log/samba/log.%m
+             max log size = 1000
+             logging = file
+             panic action = /usr/share/samba/panic-action %d
+             
+             # Seguridad
+             map to guest = never
+             dns proxy = no
+             strict locking = no
+             oplocks = yes
+             unix extensions = yes
+             
+             # Charset
+             display charset = UTF8
+             unix charset = UTF8
+             dos charset = CP850
+
+          # ===============================================
+          # COMPARTIR: JEFATURA (solo personal autorizado)
+          # Acceso: 192.168.12.10-80 (total)
+          # ===============================================
+          [ Jefatura]
+             path = /srv/samba/Jefatura
+             browseable = yes
+             read only = no
+             create mask = 0770
+             directory mask = 0770
+             force group = administradores
+             valid users = @administradores
+             
+             # Acceso solo por rango de IP (Jefatura)
+             hosts allow = 192.168.12.10-80
+             hosts deny = 0.0.0.0/0
+             
+             # Auditoría
+             vfs objects = full_audit
+             full_audit:prefix = %u|%I|%m|%S
+             full_audit:success = chown chmod open write close
+             full_audit:failure = none
+             full_audit:facility = local7
+             full_audit:priority = notice
+             
+             comment = Carpeta Compartida - Jefatura (Solo personal autorizado 192.168.12.10-80)
+
+          # ===============================================
+          # COMPARTIR: SECRETARIA (areas especificas)
+          # Acceso: 192.168.12.81-100
+          # ===============================================
+          [Secretaria]
+             path = /srv/samba/Secretaria
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             force group = secretaria
+             valid users = @secretaria
+             
+             # Acceso solo por rango de IP (Secretaria)
+             hosts allow = 192.168.12.81-100
+             hosts deny = 0.0.0.0/0
+             
+             # Auditoría
+             vfs objects = full_audit
+             full_audit:prefix = %u|%I|%m|%S
+             full_audit:success = chown chmod open write close
+             full_audit:failure = none
+             full_audit:facility = local7
+             full_audit:priority = notice
+             
+             comment = Carpeta Compartida - Secretaria (Solo rango 192.168.12.81-100)
+
+          # ===============================================
+          # COMPARTIR: USUARIOS (personal general)
+          # Acceso: 192.168.12.101-200
+          # ===============================================
+          [Usuarios]
+             path = /srv/samba/Usuarios
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             force group = usuarios
+             valid users = @usuarios
+             
+             # Acceso solo por rango de IP (Usuarios)
+             hosts allow = 192.168.12.101-200
+             hosts deny = 0.0.0.0/0
+             
+             # Auditoría
+             vfs objects = full_audit
+             full_audit:prefix = %u|%I|%m|%S
+             full_audit:success = chown chmod open write close
+             full_audit:failure = none
+             full_audit:facility = local7
+             full_audit:priority = notice
+             
+             comment = Carpeta Compartida - Personal (Solo rango 192.168.12.101-200)
+
+          # ===============================================
+          # COMPARTIR: PUBLIC (solo lectura, red local completa)
+          # ===============================================
+          [Publico]
+             path = /srv/samba/Publico
+             browseable = yes
+             read only = yes
+             create mask = 0755
+             directory mask = 0755
+             guest ok = no
+             valid users = @administradores,@secretaria,@usuarios
+             
+             # Toda la red 192.168.x.x puede ver (no escribir)
+             hosts allow = 192.168.0.0/16
+             hosts deny = 0.0.0.0/0
+             
+             comment = Carpeta Publica - Solo lectura
+
+        force: yes
+      notify: "Restart Samba"
+
+    - name: "SMB — Crear carpeta Publico"
+      ansible.builtin.file:
+        path: /srv/samba/Publico
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+      notify: "Restart Samba"
+
+    - name: "SMB — Agregar mensaje de bienvenida en Publico"
+      ansible.builtin.copy:
+        dest: /srv/samba/Publico/LISTEME.txt
+        content: |
+          ================================================
+          BIENVENIDOS A LA RED DE ARCHIVOS AXIOM TECH
+          ================================================
+          
+          Este servidor es parte de la infraestructura de
+          red corporativa de AXIOM TECH.
+          
+          Uso indebido puede resultar en acciones disciplinarias.
+          
+          Para asistencia, contacte a IT:
+          Email: it@axiom.tech
+          
+          ================================================
+          Fecha de creación: {{ ansible_date_time.iso8601 }}
+          ================================================
+        force: yes
+      changed_when: false
+
+    - name: "SMB — Configurar Firewall (UFW)"
+      ansible.builtin.shell: |
+        ufw allow 445/tcp comment 'Samba' 2>/dev/null || true
+        ufw allow 139/tcp comment 'Samba NetBIOS' 2>/dev/null || true
+        echo "Firewall configurado para Samba"
+      changed_when: false
+      ignore_errors: true
+
+    - name: "SMB — Iniciar y habilitar servicios"
+      ansible.builtin.systemd:
+        name: smbd
+        state: restarted
+        enabled: yes
+
+    - name: "SMB — Verificar configuración"
+      ansible.builtin.shell: |
+        echo "=== Test de configuración Samba ==="
+        testparm -s 2>/dev/null && echo "Config OK" || echo "Config ERROR"
+        echo ""
+        echo "=== Usuarios Samba activos ==="
+        pdbedit -L 2>/dev/null | head -10 || echo "No hay usuarios"
+        echo ""
+        echo "=== Shares configurados ==="
+        smbclient -L localhost -N 2>/dev/null | head -15 || echo "No se puede listar"
+
+    - name: "SMB — Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "SAMBA CONFIGURADO"
+          - "=========================================="
+          - ""
+          - "COMPARTIR: Jefatura"
+          - "  IPs permitidas: 192.168.12.10-80"
+          - "  Usuario: jefazo"
+          - "  Password: Jefazo2024!"
+          - ""
+          - "COMPARTIR: Secretaria"
+          - "  IPs permitidas: 192.168.12.81-100"
+          - "  Usuario: secretaria"
+          - "  Password: Secre2024!"
+          - ""
+          - "COMPARTIR: Usuarios"
+          - "  IPs permitidas: 192.168.12.101-200"
+          - "  Usuario: contador"
+          - "  Password: Conta2024!"
+          - ""
+          - "NOTA: Las IPs fuera de los rangos NO pueden acceder"
+          - ""
+          - "ACCESOS DESDE WINDOWS:"
+          - "  1. Abrir Explorador de archivos"
+          - "  2. Escribir: \\\\192.168.14.11\\Jefatura"
+          - "  3. Login con usuario correspondiente"
+          - "=========================================="
+
+  handlers:
+    - name: "Restart Samba"
+      ansible.builtin.systemd:
+        name: smbd
+        state: restarted
