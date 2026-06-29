@@ -1,0 +1,90 @@
+---
+- name: "Fix Roundcube Webmail - vm-services01"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "1. Verificar estado actual"
+      ansible.builtin.shell: |
+        echo "=== Apache Status ==="
+        systemctl is-active apache2
+        echo "=== Roundcube config ==="
+        ls -la /var/lib/roundcube/
+        echo "=== Webmail dir ==="
+        ls -la /var/www/html/webmail/ 2>/dev/null || echo "No existe"
+
+    - name: "2. Eliminar symlink rota y crear correcta"
+      ansible.builtin.shell: |
+        rm -rf /var/www/html/webmail
+        ln -sf /usr/share/roundcube /var/www/html/webmail
+        chown -h www-data:www-data /var/www/html/webmail
+        echo "Symlink creado"
+
+    - name: "3. Corregir permisos Roundcube"
+      ansible.builtin.shell: |
+        chown -R www-data:www-data /var/lib/roundcube
+        chmod -R 755 /var/lib/roundcube
+        chmod 644 /var/lib/roundcube/index.php
+        chmod 644 /var/lib/roundcube/skins/*
+        echo "Permisos corregidos"
+
+    - name: "4. Configurar Apache para Roundcube"
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/roundcube.conf
+        content: |
+          Alias /roundcube /var/lib/roundcube
+          Alias /webmail /var/lib/roundcube
+          Alias /mail /var/lib/roundcube
+
+          <Directory /var/lib/roundcube>
+              Options -FollowSymLinks
+              AllowOverride All
+              Require all granted
+          </Directory>
+        force: yes
+
+    - name: "5. Habilitar sitio y deshabilitar default"
+      ansible.builtin.shell: |
+        a2ensite roundcube.conf
+        a2dissite 000-default.conf
+        a2enmod rewrite
+        apachectl configtest && systemctl restart apache2
+        echo "Apache reconfigurado"
+
+    - name: "6. Crear usuario de prueba para email"
+      ansible.builtin.shell: |
+        if id -u testmail &>/dev/null; then
+          echo "Usuario testmail ya existe"
+        else
+          useradd -m -s /bin/bash testmail
+          echo 'testmail:TestMail123' | chpasswd
+          mkdir -p /var/mail
+          touch /var/mail/testmail
+          chown testmail:mail /var/mail/testmail
+          echo "Usuario testmail creado"
+        fi
+
+    - name: "7. Probar acceso web"
+      ansible.builtin.shell: |
+        echo "=== Test HTTP Roundcube ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/webmail/
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/roundcube/
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/
+      register: http_test
+
+    - name: "Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ http_test.stdout_lines }}"
+
+    - name: "8. Resultado final"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "ROUNDCUBE WEBMAIL"
+          - "=========================================="
+          - "URL: http://192.168.13.11/webmail/"
+          - "Usuario: testmail"
+          - "Password: TestMail123"
+          - "=========================================="
