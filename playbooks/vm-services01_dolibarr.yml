@@ -1,0 +1,213 @@
+---
+# ============================================================================
+# Dolibarr ERP Installation
+# ============================================================================
+# Instala Dolibarr ERP en vm-services01
+# Usa MySQL existente y Apache existente
+# ============================================================================
+
+- name: "Instalar Dolibarr ERP en vm-services01"
+  hosts: vm-services01
+  become: true
+  gather_facts: true
+
+  vars:
+    mysql_root_password: "AdminMail123!"
+    dolibarr_version: "19.0.3"
+    dolibarr_install_dir: "/var/www/dolibarr"
+    dolibarr_web_alias: "erp.axiom.local"
+    dolibarr_db_name: "dolibarr"
+    dolibarr_db_user: "dolibarr_user"
+    dolibarr_db_pass: "Dol1b4rr2024!"
+    dolibarr_admin_user: "admin"
+    dolibarr_admin_pass: "AdminERP123!"
+
+  tasks:
+    - name: "DOLIBARR — Actualizar repositorios"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "DOLIBARR — Instalar dependencias PHP"
+      ansible.builtin.apt:
+        name:
+          - php
+          - php-mysql
+          - php-gd
+          - php-curl
+          - php-zip
+          - php-xml
+          - php-intl
+          - php-ldap
+          - php-mbstring
+          - php-opcache
+          - php-apcu
+        state: present
+
+    - name: "DOLIBARR — Crear base de datos"
+      ansible.builtin.shell: |
+        echo "=== Creando base de datos Dolibarr ==="
+        mysql -u root -p'AdminMail123!' << 'EOSQL'
+        CREATE DATABASE IF NOT EXISTS dolibarr CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        CREATE USER IF NOT EXISTS 'dolibarr_user'@'localhost' IDENTIFIED BY 'Dol1b4rr2024!';
+        CREATE USER IF NOT EXISTS 'dolibarr_user'@'%' IDENTIFIED BY 'Dol1b4rr2024!';
+        GRANT ALL PRIVILEGES ON dolibarr.* TO 'dolibarr_user'@'localhost';
+        GRANT ALL PRIVILEGES ON dolibarr.* TO 'dolibarr_user'@'%';
+        FLUSH PRIVILEGES;
+        SHOW DATABASES;
+        EOSQL
+        echo "Base de datos creada"
+      changed_when: true
+
+    - name: "DOLIBARR — Descargar Dolibarr"
+      ansible.builtin.shell: |
+        echo "=== Descargando Dolibarr v{{ dolibarr_version }} ==="
+        cd /tmp
+        
+        # Descargar versión específica
+        wget -q "https://github.com/Dolibarr/dolibarr/releases/download/{{ dolibarr_version }}/dolibarr-{{ dolibarr_version }}.zip" -O dolibarr.zip 2>/dev/null || \
+        wget -q "https://sourceforge.net/projects/dolibarr/files/Dolibarr%20ERP-CRM/{{ dolibarr_version }}/dolibarr-{{ dolibarr_version }}.zip/download" -O dolibarr.zip 2>/dev/null || \
+        wget -q "https://www.dolibarr.org/downloads/dolibarr-{{ dolibarr_version }}.zip" -O dolibarr.zip 2>/dev/null
+        
+        # Si no descarga, usar latest
+        if [ ! -s dolibarr.zip ] || ! unzip -t dolibarr.zip &>/dev/null; then
+          echo "Descargando version latest..."
+          wget -q https://github.com/Dolibarr/dolibarr/releases/latest/download/dolibarr.zip -O dolibarr.zip
+        fi
+        
+        echo "Archivo descargado: $(ls -lh dolibarr.zip 2>/dev/null | awk '{print $5}')"
+        unzip -o dolibarr.zip -d /var/www/
+        mv /var/www/dolibarr* /var/www/dolibarr 2>/dev/null || true
+        echo "Dolibarr instalado en /var/www/dolibarr"
+        rm -f /tmp/dolibarr.zip
+      changed_when: true
+      register: dolibarr_download
+
+    - name: "DOLIBARR — Configurar permisos"
+      ansible.builtin.shell: |
+        echo "=== Configurando permisos ==="
+        chown -R www-data:www-data /var/www/dolibarr
+        chmod -R 755 /var/www/dolibarr
+        chmod -R 770 /var/www/dolibarr/conf
+        
+        # Crear documentohtaccess
+        touch /var/www/dolibarr/conf/conf.php
+        chown www-data:www-data /var/www/dolibarr/conf/conf.php
+        chmod 660 /var/www/dolibarr/conf/conf.php
+        
+        echo "Permisos configurados"
+
+    - name: "DOLIBARR — Crear virtual host Apache"
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/dolibarr.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName erp.axiom.local
+              ServerAlias erp.axiom.local
+              DocumentRoot /var/www/dolibarr/htdocs
+              
+              <Directory /var/www/dolibarr/htdocs>
+                  Options -FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              
+              <Directory /var/www/dolibarr/htdocs/install>
+                  <IfModule mod_php.c>
+                      php_value max_execution_time 300
+                      php_value upload_max_filesize 50M
+                      php_value post_max_size 50M
+                  </IfModule>
+              </Directory>
+              
+              ErrorLog ${APACHE_LOG_DIR}/dolibarr_error.log
+              CustomLog ${APACHE_LOG_DIR}/dolibarr_access.log combined
+              
+              # Redirigir erp.axiom.local si有人在访问
+              RewriteEngine On
+              RewriteCond %{HTTP_HOST} ^erp\.axiom\.local$ [NC]
+              RewriteRule ^(.*)$ http://%{HTTP_HOST}/htdocs/$1 [L,R=301]
+          </VirtualHost>
+          
+          # Alias para acceso directo por IP
+          <VirtualHost *:80>
+              ServerAdmin admin@axiom.tech
+              DocumentRoot /var/www/dolibarr/htdocs
+              
+              <Directory /var/www/dolibarr/htdocs>
+                  Options -FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              
+              ErrorLog ${APACHE_LOG_DIR}/dolibarr_error.log
+              CustomLog ${APACHE_LOG_DIR}/dolibarr_access.log combined
+          </VirtualHost>
+        force: yes
+
+    - name: "DOLIBARR — Habilitar sitio y reiniciar Apache"
+      ansible.builtin.shell: |
+        a2ensite dolibarr.conf
+        a2enmod rewrite php
+        apachectl configtest && systemctl restart apache2
+        echo "Apache configurado"
+
+    - name: "DOLIBARR — Configurar archivo de instalación"
+      ansible.builtin.copy:
+        dest: /var/www/dolibarr/htdocs/install/install.locked
+        content: ""
+        force: no
+      ignore_errors: true
+      changed_when: false
+
+    - name: "DOLIBARR — Verificar instalación"
+      ansible.builtin.shell: |
+        echo "=== Archivos de Dolibarr ==="
+        ls -la /var/www/dolibarr/htdocs/ | head -10
+        echo ""
+        echo "=== Configuración PHP ==="
+        php -v | head -1
+        echo "PHP modules:"
+        php -m | grep -iE "mysql|gd|curl|zip|xml|intl|mbstring" || echo "Verificar modulos PHP"
+        echo ""
+        echo "=== Acceso ==="
+        echo "URL: http://192.168.13.11/dolibarr/htdocs"
+        echo "o: http://erp.axiom.local (requiere DNS)"
+        echo ""
+        echo "=== Primer paso ==="
+        echo "1. Abrir navegador a: http://192.168.13.11/dolibarr/htdocs/install"
+        echo "2. Seguir wizard de instalacion"
+        echo "3. Base de datos: {{ dolibarr_db_name }}"
+        echo "   Usuario: {{ dolibarr_db_user }}"
+        echo "   Password: {{ dolibarr_db_pass }}"
+        echo "4. Admin login: {{ dolibarr_admin_user }}"
+        echo "   Admin password: {{ dolibarr_admin_pass }}"
+      changed_when: false
+
+    - name: "DOLIBARR — Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "DOLIBARR ERP INSTALADO"
+          - "=========================================="
+          - ""
+          - "URL de acceso:"
+          - "  http://192.168.13.11/dolibarr/htdocs"
+          - ""
+          - "Primera configuración (wizard):"
+          - "  Database: {{ dolibarr_db_name }}"
+          - "  User: {{ dolibarr_db_user }}"
+          - "  Pass: {{ dolibarr_db_pass }}"
+          - "  Admin: {{ dolibarr_admin_user }}"
+          - "  Pass: {{ dolibarr_admin_pass }}"
+          - ""
+          - "PASOS:"
+          - "  1. Abrir http://192.168.13.11/dolibarr/htdocs/install"
+          - "  2. Seguir wizard de instalación"
+          - "  3. Crear tablas (Install App)"
+          - "  4. Login con admin / AdminERP123!"
+          - ""
+          - "NOTA: Si wizard no funciona, ejecutar:"
+          - "  chmod 777 /var/www/dolibarr/htdocs/install"
+          - "  chmod 777 /var/www/dolibarr/conf"
+          - "=========================================="
