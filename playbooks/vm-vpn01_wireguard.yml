@@ -49,25 +49,23 @@
         create: true
         mode: "0644"
 
-    - name: "VPN — Configurar netplan (eth0 DHCP, eth1 trunk)"
+    - name: "VPN — Configurar netplan (ens34 DHCP, ens37 trunk VLAN 20)"
       ansible.builtin.copy:
-        dest: /etc/netplan/01-netcfg.yaml
+        dest: /etc/netplan/01-network-manager-all.yaml
         content: |
           network:
             version: 2
             renderer: networkd
             ethernets:
-              eth0:
+              ens34:
                 dhcp4: true
                 nameservers:
                   addresses:
                     - {{ dns_server }}
                     - 8.8.8.8
-              eth1:
+              ens37:
                 dhcp4: true
-                dhcp4-overrides:
-                  route-delete: true
-        mode: "0644"
+        mode: "0600"
 
     - name: "VPN — Aplicar netplan"
       ansible.builtin.shell: |
@@ -120,8 +118,8 @@
           Address = {{ wireguard_server_ip }}/24
           ListenPort = {{ wireguard_listen_port }}
           PrivateKey = SERVER_PRIVATE_KEY_PLACEHOLDER
-          PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-          PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+          PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ens34 -j MASQUERADE
+          PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ens34 -j MASQUERADE
           SaveConfig = false
 
           # Cliente Diego
@@ -153,7 +151,7 @@
       ansible.builtin.shell: |
         iptables -A FORWARD -i wg0 -j ACCEPT
         iptables -A FORWARD -o wg0 -j ACCEPT
-        iptables -t nat -A POSTROUTING -s {{ wireguard_network }} -o eth0 -j MASQUERADE
+        iptables -t nat -A POSTROUTING -s {{ wireguard_network }} -o ens34 -j MASQUERADE
         echo "Firewall configurado"
         iptables -L FORWARD -n
         iptables -t nat -L POSTROUTING -n
@@ -192,7 +190,7 @@
     - name: "VPN — Verificar IPs y conectividad"
       ansible.builtin.shell: |
         echo "=== Interfaces de red ==="
-        ip a | grep -E "(eth|inet)"
+        ip a | grep -E "(ens|inet)"
         echo ""
         echo "=== Rutas ==="
         ip route | grep -E "(default|192)"

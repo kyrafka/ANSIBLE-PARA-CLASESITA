@@ -1,0 +1,181 @@
+---
+# ============================================================================
+# vm-dc01_fix_dns.yml — Arreglar DNS para AXIOM.LOCAL
+# ============================================================================
+
+- name: "Fix DNS zones en vm-dc01"
+  hosts: vm-dc01
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AXIOM.local"
+    realm: "AXIOM.LOCAL"
+    netbios_name: "AXIOM"
+    server_ip: "192.168.16.10"
+
+  tasks:
+    - name: "DNS — Detener systemd-resolved"
+      systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "DNS — Crear resolv.conf"
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 127.0.0.1
+          nameserver 192.168.16.1
+          search {{ domain_name }}
+          options ndots:0
+        mode: "0644"
+
+    - name: "DNS — Crear directorio de zonas"
+      file:
+        path: /var/lib/bind/zones
+        state: directory
+        owner: bind
+        group: bind
+        mode: "0755"
+
+    - name: "DNS — Crear zona {{ domain_name }}"
+      copy:
+        dest: /var/lib/bind/zones/db.{{ domain_name }}
+        content: |
+          ; Zona directa {{ domain_name }}
+          $TTL    604800
+          @       IN      SOA     vm-dc01.{{ domain_name }}. admin.{{ domain_name }}. (
+                                  2         ; Serial
+                                  604800    ; Refresh
+                                  86400     ; Retry
+                                  2419200   ; Expire
+                                  604800 )  ; Negative Cache TTL
+
+          @       IN      NS      vm-dc01.{{ domain_name }}.
+          @       IN      A        {{ server_ip }}
+
+          ; Domain Controller
+          vm-dc01         IN      A       {{ server_ip }}
+
+          ; Servicios
+          pfsense         IN      A       192.168.16.1
+          core1           IN      A       192.168.10.20
+          core2           IN      A       192.168.10.30
+
+          ; Web
+          vm-web01        IN      A       192.168.11.11
+          www             IN      CNAME   vm-web01
+
+          ; Mail
+          mail            IN      A       192.168.13.11
+          smtp            IN      CNAME   mail
+          imap            IN      CNAME   mail
+          webmail         IN      CNAME   mail
+
+          ; Storage
+          storage         IN      A       192.168.14.11
+          archivos        IN      CNAME   storage
+
+          ; Monitor
+          monitor         IN      A       192.168.17.11
+          zabbix          IN      CNAME   monitor
+
+          ; ERP
+          erp             IN      A       192.168.13.11
+          dolibarr        IN      CNAME   mail
+      owner: bind
+      group: bind
+      mode: "0644"
+
+    - name: "DNS — Crear zona reversa 192.168.16.0/27"
+      copy:
+        dest: /var/lib/bind/zones/db.192.168.16
+        content: |
+          $TTL    604800
+          @       IN      SOA     vm-dc01.{{ domain_name }}. admin.{{ domain_name }}. (
+                                  2         ; Serial
+                                  604800    ; Refresh
+                                  86400     ; Retry
+                                  2419200   ; Expire
+                                  604800 )
+
+          @       IN      NS      vm-dc01.{{ domain_name }}.
+
+          ; PTR records
+          10      IN      PTR     vm-dc01.{{ domain_name }}.
+          1       IN      PTR     pfsense.{{ domain_name }}.
+      owner: bind
+      group: bind
+      mode: "0644"
+
+    - name: "DNS — Actualizar named.conf.local"
+      copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          # Zona {{ domain_name }}
+          zone "{{ domain_name }}" {
+              type master;
+              file "/var/lib/bind/zones/db.{{ domain_name }}";
+              allow-transfer { any; };
+          };
+
+          # Zona reversa 192.168.16.0/27
+          zone "16.168.192.in-addr.arpa" {
+              type master;
+              file "/var/lib/bind/zones/db.192.168.16";
+              allow-transfer { any; };
+          };
+      mode: "0644"
+
+    - name: "DNS — Incluir DLZ de Samba si existe"
+      lineinfile:
+        path: /etc/bind/named.conf
+        line: 'include "/var/lib/samba/bind-dns/named.conf";'
+        state: present
+      when: ansible_user_uid == 0
+      ignore_errors: true
+
+    - name: "DNS — Verificar sintaxis"
+      shell: |
+        named-checkzone {{ domain_name }} /var/lib/bind/zones/db.{{ domain_name }}
+        named-checkzone 16.168.192.in-addr.arpa /var/lib/bind/zones/db.192.168.16
+        named-checkconf
+      changed_when: false
+
+    - name: "DNS — Reiniciar named"
+      systemd:
+        name: named
+        state: restarted
+        enabled: yes
+
+    - name: "DNS — Probar resolucion"
+      shell: |
+        sleep 1
+        echo "=== Test DNS local ==="
+        nslookup vm-dc01.{{ domain_name }} 127.0.0.1
+        nslookup www.{{ domain_name }} 127.0.0.1
+        nslookup mail.{{ domain_name }} 127.0.0.1
+        echo ""
+        echo "=== Test desde otra IP ==="
+        nslookup vm-dc01.{{ domain_name }} {{ server_ip }}
+      changed_when: false
+
+    - name: "DNS — Estado final"
+      debug:
+        msg:
+          - "=========================================="
+          - "DNS CONFIGURADO PARA {{ domain_name }}"
+          - "=========================================="
+          - "Servidor: {{ server_ip }}"
+          - "Zona directa: /var/lib/bind/zones/db.{{ domain_name }}"
+          - "Zona reversa: /var/lib/bind/zones/db.192.168.16"
+          - ""
+          - "Registros creados:"
+          - "  - vm-dc01.AXIOM.local = {{ server_ip }}"
+          - "  - vm-web01.AXIOM.local = 192.168.11.11"
+          - "  - mail.AXIOM.local = 192.168.13.11"
+          - "  - storage.AXIOM.local = 192.168.14.11"
+          - "  - monitor.AXIOM.local = 192.168.17.11"
+          - "=========================================="
