@@ -197,9 +197,29 @@
           </VirtualHost>
         force: yes
 
+    - name: "MAIL — Configurar Roundcube URL base"
+      ansible.builtin.shell: |
+        CONFIG="/etc/roundcube/config.inc.php"
+        if [ -f "$CONFIG" ]; then
+          if ! grep -q "url_base" "$CONFIG"; then
+            echo "\$config['url_base'] = 'http://192.168.13.11/webmail/';" >> "$CONFIG"
+          fi
+          if ! grep -q "default_host" "$CONFIG"; then
+            echo "\$config['default_host'] = 'localhost';" >> "$CONFIG"
+          fi
+          if ! grep -q "smtp_server" "$CONFIG"; then
+            echo "\$config['smtp_server'] = 'localhost';" >> "$CONFIG"
+          fi
+          echo "Roundcube config actualizada"
+        else
+          echo "Roundcube config no existe"
+        fi
+      changed_when: false
+
     - name: "MAIL — Habilitar Apache y Restart"
       ansible.builtin.shell: |
         a2dissite 000-default.conf 2>/dev/null || true
+        a2dissite mail.conf 2>/dev/null || true
         a2ensite roundcube.conf
         a2enmod rewrite
         apachectl configtest && systemctl restart apache2

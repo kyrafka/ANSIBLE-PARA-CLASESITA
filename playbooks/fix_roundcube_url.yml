@@ -1,0 +1,86 @@
+---
+- name: "Fix Roundcube URL Base"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "1. Ver configuración actual de Roundcube"
+      ansible.builtin.shell: |
+        echo "=== Roundcube config files ==="
+        ls -la /etc/roundcube/
+        echo "=== Config content ==="
+        cat /etc/roundcube/config.inc.php | grep -E "url|host|cookie" | head -20
+      register: current_config
+
+    - name: "Mostrar config actual"
+      ansible.builtin.debug:
+        msg: "{{ current_config.stdout_lines }}"
+
+    - name: "2. Agregar url_base al config si no existe"
+      ansible.builtin.shell: |
+        CONFIG_FILE="/etc/roundcube/config.inc.php"
+        
+        # Backup
+        cp $CONFIG_FILE ${CONFIG_FILE}.bak
+        
+        # Agregar url_base si no existe
+        if ! grep -q "url_base" $CONFIG_FILE; then
+          echo "" >> $CONFIG_FILE
+          echo "\$config['url_base'] = 'http://192.168.13.11/webmail/';" >> $CONFIG_FILE
+          echo "url_base agregado"
+        else
+          echo "url_base ya existe"
+        fi
+        
+        # Agregar default_host si no existe (para IMAP server)
+        if ! grep -q "default_host" $CONFIG_FILE; then
+          echo "\$config['default_host'] = 'localhost';" >> $CONFIG_FILE
+          echo "default_host agregado"
+        else
+          echo "default_host ya existe"
+        fi
+        
+        # Agregar smtp_server si no existe
+        if ! grep -q "smtp_server" $CONFIG_FILE; then
+          echo "\$config['smtp_server'] = 'localhost';" >> $CONFIG_FILE
+          echo "smtp_server agregado"
+        fi
+        
+        # Configurar prod_url para emails
+        if ! grep -q "prod_url" $CONFIG_FILE; then
+          echo "\$config['prod_url'] = 'http://192.168.13.11/webmail/';" >> $CONFIG_FILE
+        fi
+        
+        echo "=== Nueva config ==="
+        cat $CONFIG_FILE | tail -20
+      register: config_update
+
+    - name: "3. Reiniciar Apache"
+      ansible.builtin.shell: |
+        systemctl restart apache2
+        sleep 2
+        echo "Apache reiniciado"
+
+    - name: "4. Probar acceso"
+      ansible.builtin.shell: |
+        echo "=== Test HTTP ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost/webmail/
+        curl -s http://localhost/webmail/ | grep -o '<title>.*</title>' | head -1
+      register: http_test
+
+    - name: "Mostrar resultado"
+      ansible.builtin.debug:
+        msg: "{{ http_test.stdout_lines }}"
+
+    - name: "5. Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "ROUNDCUBE URL FIX"
+          - "=========================================="
+          - "URL: http://192.168.13.11/webmail/"
+          - "Usuario: testmail"
+          - "Password: TestMail123"
+          - "=========================================="
