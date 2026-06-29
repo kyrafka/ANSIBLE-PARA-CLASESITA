@@ -1,0 +1,241 @@
+---
+# ============================================================================
+# vm-vpn01 — WireGuard VPN Server
+# ============================================================================
+# Instala WireGuard en vm-vpn01 (Lubuntu)
+# eth0: 172.17.25.40/24 (DHCP del hipervisor) — recibe conexiones VPN
+# eth1: trunk (VLAN 4095) — conectado a las LANs via pfSense
+# ============================================================================
+
+- name: "Setup WireGuard VPN en vm-vpn01"
+  hosts: vm-vpn01
+  become: true
+  gather_facts: true
+
+  vars:
+    wireguard_network: "10.8.0.0/24"
+    wireguard_server_ip: "10.8.0.1"
+    wireguard_listen_port: "51820"
+    internal_network: "192.168.12.0/25"
+    hypervisor_gateway: "172.17.25.121"
+    dns_server: "192.168.16.10"
+
+  tasks:
+    - name: "VPN — Actualizar repositorios"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "VPN — Instalar WireGuard y dependencias"
+      ansible.builtin.apt:
+        name:
+          - wireguard
+          - wireguard-tools
+          - vlan
+          - net-tools
+          - iptables
+        state: present
+
+    - name: "VPN — Cargar módulo 8021q"
+      community.general.modprobe:
+        name: 8021q
+        state: present
+      ignore_errors: true
+
+    - name: "VPN — Habilitar módulo 8021q al arranque"
+      ansible.builtin.lineinfile:
+        path: /etc/modules-load.d/vlan.conf
+        line: "8021q"
+        create: true
+        mode: "0644"
+
+    - name: "VPN — Configurar netplan (eth0 DHCP, eth1 trunk)"
+      ansible.builtin.copy:
+        dest: /etc/netplan/01-netcfg.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              eth0:
+                dhcp4: true
+                nameservers:
+                  addresses:
+                    - {{ dns_server }}
+                    - 8.8.8.8
+              eth1:
+                dhcp4: true
+                dhcp4-overrides:
+                  route-delete: true
+        mode: "0644"
+
+    - name: "VPN — Aplicar netplan"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        sleep 3
+        ip a show eth0 | grep inet
+        ip a show eth1 | grep inet
+      register: netplan_apply
+
+    - debug:
+        var: netplan_apply.stdout_lines
+
+    - name: "VPN — Habilitar IP forwarding"
+      ansible.builtin.shell: |
+        echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+        sysctl -p
+        cat /proc/sys/net/ipv4/ip_forward
+
+    - name: "VPN — Generar llaves del servidor"
+      ansible.builtin.shell: |
+        cd /etc/wireguard
+        if [ ! -f server_private.key ]; then
+          wg genkey | tee server_private.key | wg pubkey > server_public.key
+          chmod 600 server_private.key
+          chmod 644 server_public.key
+          echo "Llaves generadas"
+        else
+          echo "Llaves ya existen"
+        fi
+        echo "Server Public Key:"
+        cat server_public.key
+        echo ""
+        echo "Server Private Key (NUNCA compartir):"
+        cat server_private.key
+      register: server_keys
+
+    - debug:
+        msg:
+          - "============================================"
+          - "GUARDAR ESTAS KEYS PARA EL CLIENTE:"
+          - "Server Public Key: {{ server_keys.stdout_lines[2] }}"
+          - "============================================"
+
+    - name: "VPN — Crear configuración WireGuard server"
+      ansible.builtin.copy:
+        dest: /etc/wireguard/wg0.conf
+        content: |
+          [Interface]
+          Address = {{ wireguard_server_ip }}/24
+          ListenPort = {{ wireguard_listen_port }}
+          PrivateKey = SERVER_PRIVATE_KEY_PLACEHOLDER
+          PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+          SaveConfig = false
+
+          # Cliente Diego
+          [Peer]
+          PublicKey = CLIENT_PUBLIC_KEY_PLACEHOLDER
+          AllowedIPs = {{ wireguard_network }}
+        mode: "0600"
+
+    - name: "VPN — Reemplazar PrivateKey en config"
+      ansible.builtin.shell: |
+        PRIVATE_KEY=$(cat /etc/wireguard/server_private.key)
+        sed -i "s|SERVER_PRIVATE_KEY_PLACEHOLDER|$PRIVATE_KEY|" /etc/wireguard/wg0.conf
+        echo "Config actualizada con PrivateKey"
+        cat /etc/wireguard/wg0.conf
+
+    - name: "VPN — Iniciar WireGuard"
+      ansible.builtin.shell: |
+        systemctl enable wg-quick@wg0
+        systemctl restart wg-quick@wg0
+        sleep 2
+        systemctl status wg-quick@wg0 --no-pager | head -10
+        wg show
+      register: wg_status
+
+    - debug:
+        var: wg_status.stdout_lines
+
+    - name: "VPN — Configurar firewall iptables"
+      ansible.builtin.shell: |
+        iptables -A FORWARD -i wg0 -j ACCEPT
+        iptables -A FORWARD -o wg0 -j ACCEPT
+        iptables -t nat -A POSTROUTING -s {{ wireguard_network }} -o eth0 -j MASQUERADE
+        echo "Firewall configurado"
+        iptables -L FORWARD -n
+        iptables -t nat -L POSTROUTING -n
+
+    - name: "VPN — Guardar reglas iptables"
+      ansible.builtin.shell: |
+        mkdir -p /etc/iptables
+        iptables-save > /etc/iptables/rules.v4
+        echo "Reglas guardadas en /etc/iptables/rules.v4"
+
+    - name: "VPN — Hacer reglas persistentes al arranque"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/wg-iptables.service
+        content: |
+          [Unit]
+          Description=Restore iptables rules for WireGuard
+          After=wg-quick@wg0.service
+          WantedBy=multi-user.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/sbin/iptables-restore /etc/iptables/rules.v4
+          ExecStop=/sbin/iptables -F; /sbin/iptables -X
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+        mode: "0644"
+
+    - name: "VPN — Habilitar servicio de firewall"
+      ansible.builtin.shell: |
+        systemctl daemon-reload
+        systemctl enable wg-iptables.service
+        echo "Servicio de firewall habilitado"
+
+    - name: "VPN — Verificar IPs y conectividad"
+      ansible.builtin.shell: |
+        echo "=== Interfaces de red ==="
+        ip a | grep -E "(eth|inet)"
+        echo ""
+        echo "=== Rutas ==="
+        ip route | grep -E "(default|192)"
+        echo ""
+        echo "=== WireGuard status ==="
+        wg show
+        echo ""
+        echo "=== Escuchando puertos ==="
+        ss -tlnp | grep -E "(51820|wg)"
+
+    - name: "VPN — Info final"
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "WIREGUARD VPN INSTALADO"
+          - "============================================"
+          - ""
+          - "Server VPN IP: {{ wireguard_server_ip }}"
+          - "Listen Port: {{ wireguard_listen_port }}"
+          - "Red VPN: {{ wireguard_network }}"
+          - ""
+          - "Server Public Key (para cliente):"
+          - "  {{ server_keys.stdout_lines[2] }}"
+          - ""
+          - "PASOS PARA CONECTAR DESDE TU PC:"
+          - "  1. Generar par de llaves en tu PC:"
+          - "     wg genkey | tee client_private.key | wg pubkey > client_public.key"
+          - ""
+          - "  2. Copiar client_public.key y pegarlo arriba en el [Peer]"
+          - "     Luego ejecutar de nuevo el playbook con la key"
+          - ""
+          - "  3. Crear config en tu PC (/etc/wireguard/client.conf):"
+          - "     [Interface]"
+          - "     Address = {{ wireguard_server_ip | regex_replace('\.1$', '.2') }}/24"
+          - "     PrivateKey = TU_CLIENTE_PRIVATE_KEY"
+          - "     DNS = {{ dns_server }}"
+          - ""
+          - "     [Peer]"
+          - "     PublicKey = {{ server_keys.stdout_lines[2] }}"
+          - "     Endpoint = 172.17.25.40:{{ wireguard_listen_port }}"
+          - "     AllowedIPs = {{ wireguard_network }} , {{ internal_network }}"
+          - "     PersistentKeepalive = 25"
+          - ""
+          - "NOTA: El peer se agrega automaticamente al ejecutar"
+          - "       el playbook con la client_public_key"
+          - "============================================"
