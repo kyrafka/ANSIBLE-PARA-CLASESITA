@@ -1,0 +1,118 @@
+---
+- name: "Diagnosticar y Fix Roundcube Webmail"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    webmail_user: testmail
+    webmail_pass: TestMail123
+
+  tasks:
+    - name: "=== DIAGNOSTICO 1: Apache Status ==="
+      ansible.builtin.shell: |
+        echo "=== Apache running ==="
+        systemctl is-active apache2
+        echo "=== Apache ports ==="
+        ss -tlnp | grep ':80 '
+        echo "=== Apache user ==="
+        grep -E "APACHE_RUN_(USER|GROUP)" /etc/apache2/envvars
+
+    - name: "=== DIAGNOSTICO 2: Roundcube files ==="
+      ansible.builtin.shell: |
+        echo "=== /usr/share/roundcube exists ==="
+        ls -la /usr/share/roundcube/ | head -5
+        echo "=== /var/www/html/webmail exists ==="
+        ls -la /var/www/html/webmail/ | head -5
+        echo "=== Is webmail a symlink? ==="
+        file /var/www/html/webmail
+        echo "=== Roundcube permissions ==="
+        ls -la /usr/share/roundcube/index.php
+
+    - name: "=== DIAGNOSTICO 3: Apache Config ==="
+      ansible.builtin.shell: |
+        echo "=== Sites enabled ==="
+        ls -la /etc/apache2/sites-enabled/
+        echo "=== roundcube.conf ==="
+        cat /etc/apache2/sites-available/roundcube.conf 2>/dev/null || echo "NO EXISTE"
+        echo "=== apache2.conf Directory section ==="
+        grep -A10 "<Directory /var/www>" /etc/apache2/apache2.conf
+
+    - name: "=== DIAGNOSTICO 4: Test from localhost ==="
+      ansible.builtin.shell: |
+        echo "=== Test from localhost ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1/webmail/
+        curl -s http://127.0.0.1/webmail/ | head -3
+        echo "=== Test default ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1/
+        echo "=== Test roundcube alias ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1/roundcube/
+
+    - name: "=== FIX 1: Copy Roundcube to www ==="
+      ansible.builtin.shell: |
+        rm -rf /var/www/html/webmail
+        cp -r /usr/share/roundcube /var/www/html/webmail
+        chown -R www-data:www-data /var/www/html/webmail
+        chmod -R 755 /var/www/html/webmail
+        echo "Roundcube copied to /var/www/html/webmail"
+
+    - name: "=== FIX 2: Create Apache config ==="
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/roundcube.conf
+        content: |
+          <VirtualHost *:80>
+              DocumentRoot /var/www/html/webmail
+
+              <Directory /var/www/html/webmail>
+                  Options -FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+
+              Alias /webmail /var/www/html/webmail
+              Alias /mail /var/www/html/webmail
+          </VirtualHost>
+        force: yes
+
+    - name: "=== FIX 3: Enable site and restart ==="
+      ansible.builtin.shell: |
+        a2dissite 000-default.conf 2>/dev/null || true
+        a2ensite roundcube.conf
+        a2enmod rewrite
+        apachectl configtest
+        systemctl restart apache2
+        sleep 2
+        echo "Apache restarted"
+
+    - name: "=== FIX 4: Test after fix ==="
+      ansible.builtin.shell: |
+        echo "=== Test from localhost ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1/webmail/
+        curl -s http://127.0.0.1/webmail/ | head -3
+        echo "=== Apache error log ==="
+        tail -5 /var/log/apache2/error.log
+
+    - name: "=== FIX 5: Create email user ==="
+      ansible.builtin.shell: |
+        if id -u {{ webmail_user }} &>/dev/null; then
+          echo "User {{ webmail_user }} exists"
+        else
+          useradd -m -s /bin/bash {{ webmail_user }}
+          echo '{{ webmail_user }}:{{ webmail_pass }}' | chpasswd
+          mkdir -p /var/mail
+          touch /var/mail/{{ webmail_user }}
+          chown {{ webmail_user }}:mail /var/mail/{{ webmail_user }}
+          echo "User {{ webmail_user }} created"
+        fi
+
+    - name: "=== RESULTADO ==="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "ROUNDCUBE WEBMAIL - FIX COMPLETO"
+          - "=========================================="
+          - "URL: http://192.168.13.11/webmail/"
+          - "Usuario: {{ webmail_user }}"
+          - "Password: {{ webmail_pass }}"
+          - "=========================================="
