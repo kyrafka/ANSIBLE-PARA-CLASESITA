@@ -1,0 +1,111 @@
+---
+- name: "Fix Dovecot Authentication"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "1. Backup Dovecot config"
+      ansible.builtin.shell: |
+        sudo cp -r /etc/dovecot /etc/dovecot.bak.$(date +%Y%m%d%H%M%S)
+        echo "Backup created"
+
+    - name: "2. Crear usuario mailuser con password simple"
+      ansible.builtin.shell: |
+        # Delete and recreate with simple password
+        sudo userdel -r mailuser 2>/dev/null || true
+        sudo useradd -m -s /bin/bash mailuser
+        echo "mailuser:123" | sudo chpasswd
+        sudo mkdir -p /var/mail
+        sudo touch /var/mail/mailuser
+        sudo chown mailuser:mail /var/mail/mailuser
+        id mailuser
+        echo "Usuario mailuser creado con password 123"
+
+    - name: "3. Configurar Dovecot para usar sistema (PAM)"
+      ansible.builtin.copy:
+        dest: /etc/dovecot/conf.d/10-auth.conf
+        content: |
+          auth_mechanisms = plain login
+          
+          # PAM authentication
+          passdb {
+            driver = pam
+            args = dovecot
+          }
+          
+          # User database - use system users
+          userdb {
+            driver = passwd
+          }
+          
+          # Auth username format
+          auth_username_format = %Ln
+        force: yes
+
+    - name: "4. Crear PAM config para dovecot"
+      ansible.builtin.copy:
+        dest: /etc/pam.d/dovecot
+        content: |
+          auth    required        pam_unix.so nullok
+          account required        pam_unix.so
+          password required        pam_unix.so obscure sha512
+        force: yes
+
+    - name: "5. Configurar dovecot.conf principal"
+      ansible.builtin.copy:
+        dest: /etc/dovecot/dovecot.conf
+        content: |
+          protocols = imap pop3 lmtp
+          listen = *, ::
+          
+          disable_plaintext_auth = no
+          auth_mechanisms = plain login
+          
+          # Logging
+          log_path = /var/log/dovecot.log
+          auth_verbose = yes
+          auth_debug = yes
+          auth_debug_passwords = yes
+          
+          # Mail location
+          mail_location = maildir:/var/mail/%u
+          
+          # PAM
+          passdb {
+            driver = pam
+            args = dovecot
+          }
+          
+          userdb {
+            driver = passwd
+          }
+        force: yes
+
+    - name: "6. Reiniciar servicios"
+      ansible.builtin.shell: |
+        sudo systemctl restart dovecot postfix apache2
+        sleep 2
+        echo "Servicios reiniciados"
+
+    - name: "7. Verificar status"
+      ansible.builtin.shell: |
+        echo "=== Dovecot status ==="
+        systemctl is-active dovecot && echo "DOVECOT: ACTIVO" || echo "DOVECOT: FALLO"
+        echo ""
+        echo "=== Test auth ==="
+        sudo doveadm auth test mailuser 123 2>&1
+        echo ""
+        echo "=== IMAP login test ==="
+        echo -n "mailuser" | base64 | xargs -I{} sh -c "echo -e '1 AUTHENTICATE PLAIN {}\n123\n' | nc localhost 143" 2>&1 | head -5
+
+    - name: "8. Resultado"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "FIX DOVECOT AUTH"
+          - "=========================================="
+          - "Usuario: mailuser"
+          - "Password: 123"
+          - "=========================================="

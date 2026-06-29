@@ -1,0 +1,114 @@
+---
+- name: "Diagnostico Completo - Email (IMAP/SMTP)"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: "=== 1. USUARIOS DEL SISTEMA ==="
+      ansible.builtin.shell: |
+        echo "=== Usuarios con acceso a email ==="
+        cat /etc/passwd | grep -E "/bin/bash|/bin/sh" | grep -v "nologin\|false" | awk -F: '{print $1, $6}'
+        echo ""
+        echo "=== Usuario mailuser ==="
+        id mailuser 2>/dev/null || echo "NO EXISTE"
+        echo ""
+        echo "=== Usuario testmail ==="
+        id testmail 2>/dev/null || echo "NO EXISTE"
+
+    - name: "=== 2. SHADOW PASSWORDS ==="
+      ansible.builtin.shell: |
+        echo "=== mailuser shadow ==="
+        sudo grep mailuser /etc/shadow 2>/dev/null || echo "No se puede leer"
+        echo ""
+        echo "=== testmail shadow ==="
+        sudo grep testmail /etc/shadow 2>/dev/null || echo "No se puede leer"
+        echo ""
+        echo "=== Formato hash ==="
+        sudo grep mailuser /etc/shadow | cut -d: -f2 | grep -o '^\$[a-z]*' | head -1
+
+    - name: "=== 3. DOVECOT CONFIG ==="
+      ansible.builtin.shell: |
+        echo "=== dovecot.conf main ==="
+        cat /etc/dovecot/dovecot.conf | grep -E "disable_plaintext_auth|auth_mechanisms|listen"
+        echo ""
+        echo "=== 10-auth.conf ==="
+        cat /etc/dovecot/conf.d/10-auth.conf | grep -v "^#" | grep -v "^$" | grep -E "passdb|userdb|auth_mechanisms"
+        echo ""
+        echo "=== PAM config ==="
+        ls -la /etc/pam.d/
+        echo ""
+        echo "=== PAM dovecot ==="
+        cat /etc/pam.d/dovecot 2>/dev/null || echo "No existe"
+        echo "=== PAM other ==="
+        cat /etc/pam.d/other 2>/dev/null || echo "No existe"
+
+    - name: "=== 4. DOVECOT AUTH TEST ==="
+      ansible.builtin.shell: |
+        echo "=== Test auth with doveadm ==="
+        sudo doveadm auth test mailuser 123 2>&1 || echo "FALLO"
+        echo ""
+        echo "=== Test auth with testmail ==="
+        sudo doveadm auth test testmail TestMail123 2>&1 || echo "FALLO"
+
+    - name: "=== 5. ROUNDCUBE CONFIG ==="
+      ansible.builtin.shell: |
+        echo "=== Roundcube config ==="
+        sudo cat /etc/roundcube/config.inc.php | grep -v "^//" | grep -E "host|user|pass|imap|smtp|url" | head -20
+        echo ""
+        echo "=== Roundcube IMAP settings ==="
+        sudo grep -r "imap_host\|default_host" /etc/roundcube/ 2>/dev/null
+
+    - name: "=== 6. SERVICIOS ==="
+      ansible.builtin.shell: |
+        echo "=== Dovecot status ==="
+        systemctl is-active dovecot
+        systemctl status dovecot | grep -E "Active:|Main PID"
+        echo ""
+        echo "=== Postfix status ==="
+        systemctl is-active postfix
+        echo ""
+        echo "=== Apache status ==="
+        systemctl is-active apache2
+        echo ""
+        echo "=== MySQL status ==="
+        systemctl is-active mysql
+
+    - name: "=== 7. PUERTOS ==="
+      ansible.builtin.shell: |
+        echo "=== Puertos listening ==="
+        ss -tlnp | grep -E ':25 |:143 |:993 |:995 |:80 |:3306 '
+
+    - name: "=== 8. LOGS RECIENTES ==="
+      ansible.builtin.shell: |
+        echo "=== Dovecot logs (ultimas 10 lineas) ==="
+        journalctl -u dovecot --since "10 minutes ago" 2>/dev/null | grep -i "auth\|error\|fail" | tail -10
+        echo ""
+        echo "=== Roundcube errors (ultimas 10) ==="
+        tail -10 /var/log/roundcube/errors.log 2>/dev/null | grep -i "imap\|auth\|error"
+        echo ""
+        echo "=== Apache errors (ultimas 5) ==="
+        tail -5 /var/log/apache2/error.log 2>/dev/null
+
+    - name: "=== 9. TEST CONECTIVIDAD ==="
+      ansible.builtin.shell: |
+        echo "=== IMAP connect test ==="
+        timeout 3 bash -c "cat < /dev/null > /dev/tcp/localhost/143" 2>&1 && echo "IMAP (143): ABIERTO" || echo "IMAP (143): CERRADO"
+        echo ""
+        echo "=== SMTP connect test ==="
+        timeout 3 bash -c "cat < /dev/null > /dev/tcp/localhost/25" 2>&1 && echo "SMTP (25): ABIERTO" || echo "SMTP (25): CERRADO"
+
+    - name: "=== 10. RESUMEN ==="
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "DIAGNOSTICO COMPLETO"
+          - "=========================================="
+          - "1. Revisa los outputs de arriba"
+          - "2. El problema principal: Dovecot no puede autenticar usuarios"
+          - "3. Soluciones posibles:"
+          - "   a) Configurar PAM correctamente para shadow passwords"
+          - "   b) Usar base de datos SQL para usuarios"
+          - "   c) Configurar auth_username_format en dovecot"
+          - "=========================================="
