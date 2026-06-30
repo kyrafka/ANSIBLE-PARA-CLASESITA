@@ -1,0 +1,225 @@
+---
+# ============================================================================
+# vm-dc01_ad_full.yml — Configurar AD completo con usuarios y DNS
+# ============================================================================
+# Ejecutar en vm-dc01
+# Configura: DNS, usuarios AD, grupos AD, passwords
+# ============================================================================
+
+- name: "Configurar AD completo en vm-dc01"
+  hosts: vm-dc01
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AXIOM.local"
+    realm: "AXIOM.LOCAL"
+    netbios_name: "AXIOM"
+    domain_pass: "admin123!"
+    server_ip: "192.168.16.10"
+
+  tasks:
+    - name: "1. Verificar que Samba AD DC está corriendo"
+      systemd:
+        name: samba-ad-dc
+        state: started
+      register: samba_status
+
+    - name: "2. Configurar DNS - Zona AXIOM.local"
+      copy:
+        dest: /var/lib/bind/zones/db.{{ domain_name }}
+        content: |
+          $TTL    604800
+          @       IN      SOA     vm-dc01.{{ domain_name }}. admin.{{ domain_name }}. (
+                                  4         ; Serial
+                                  604800    ; Refresh
+                                  86400     ; Retry
+                                  2419200   ; Expire
+                                  604800 )
+
+          @       IN      NS      vm-dc01.{{ domain_name }}.
+          @       IN      A        {{ server_ip }}
+
+          ; Domain Controller
+          vm-dc01         IN      A       {{ server_ip }}
+
+          ; Gateways
+          pfsense         IN      A       192.168.16.1
+
+          ; Servers
+          vm-web01        IN      A       192.168.11.11
+          mail            IN      A       192.168.13.11
+          smtp            IN      CNAME   mail
+          imap            IN      CNAME   mail
+          webmail         IN      CNAME   mail
+          storage         IN      A       192.168.14.11
+          monitor         IN      A       192.168.17.11
+
+          ; CNAMEs
+          www             IN      CNAME   vm-web01
+          archivos        IN      CNAME   storage
+
+          ; SRV records
+          _ldap._tcp        IN      SRV     0 100 389 vm-dc01.{{ domain_name }}.
+          _kerberos._tcp    IN      SRV     0 100 88 vm-dc01.{{ domain_name }}.
+          _kerberos._udp    IN      SRV     0 100 88 vm-dc01.{{ domain_name }}.
+        owner: bind
+        group: bind
+        mode: "0644"
+
+    - name: "3. Configurar zona reversa 192.168.16.0/27"
+      copy:
+        dest: /var/lib/bind/zones/db.192.168.16
+        content: |
+          $TTL    604800
+          @       IN      SOA     vm-dc01.{{ domain_name }}. admin.{{ domain_name }}. (
+                                  4         ; Serial
+                                  604800    ; Refresh
+                                  86400     ; Retry
+                                  2419200   ; Expire
+                                  604800 )
+          @       IN      NS      vm-dc01.{{ domain_name }}.
+          10      IN      PTR     vm-dc01.{{ domain_name }}.
+          1       IN      PTR     pfsense.{{ domain_name }}.
+        owner: bind
+        group: bind
+        mode: "0644"
+
+    - name: "4. Actualizar named.conf.local"
+      copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          zone "{{ domain_name }}" {
+              type master;
+              file "/var/lib/bind/zones/db.{{ domain_name }}";
+              allow-transfer { any; };
+          };
+          zone "16.168.192.in-addr.arpa" {
+              type master;
+              file "/var/lib/bind/zones/db.192.168.16";
+              allow-transfer { any; };
+          };
+        mode: "0644"
+
+    - name: "5. Reiniciar BIND9"
+      systemd:
+        name: named
+        state: restarted
+
+    - name: "6. Testear DNS"
+      shell: |
+        sleep 2
+        echo "=== Test DNS local ==="
+        nslookup vm-dc01.{{ domain_name }} 127.0.0.1
+        nslookup storage.{{ domain_name }} 127.0.0.1
+        nslookup mail.{{ domain_name }} 127.0.0.1
+      register: dns_test
+
+    - name: "7. Cambiar password de Administrator"
+      shell: |
+        echo "Estableciendo password de Administrator..."
+        samba-tool user setpassword Administrator --newpassword='{{ domain_pass }}'
+      ignore_errors: true
+
+    - name: "8. Crear usuarios AD si no existen"
+      shell: |
+        echo "=== Creando usuarios AD ==="
+
+        # Jefazo
+        samba-tool user create jefazo "jefazo123!" 2>/dev/null || echo "jefazo ya existe"
+        samba-tool user setpassword jefazo --newpassword='jefazo123!' 2>/dev/null || true
+
+        # Secretaria
+        samba-tool user create secretaria "secre.123" 2>/dev/null || echo "secretaria ya existe"
+        samba-tool user setpassword secretaria --newpassword='secre.123' 2>/dev/null || true
+
+        # Contador
+        samba-tool user create contador "contador123!" 2>/dev/null || echo "contador ya existe"
+        samba-tool user setpassword contador --newpassword='contador123!' 2>/dev/null || true
+
+        echo "=== Usuarios creados ==="
+        samba-tool user list
+      register: users_created
+
+    - name: "9. Crear grupos AD"
+      shell: |
+        echo "=== Creando grupos AD ==="
+
+        # Crear grupos (ignora si ya existen)
+        samba-tool group add "AXIOM-Administradores" 2>/dev/null || echo "AXIOM-Administradores ya existe"
+        samba-tool group add "AXIOM-Secretaria" 2>/dev/null || echo "AXIOM-Secretaria ya existe"
+        samba-tool group add "AXIOM-Usuarios" 2>/dev/null || echo "AXIOM-Usuarios ya existe"
+
+        echo "=== Grupos creados ==="
+        samba-tool group list | grep -i axiom
+      register: groups_created
+
+    - name: "10. Agregar usuarios a grupos"
+      shell: |
+        echo "=== Agregando usuarios a grupos ==="
+
+        # Jefazo -> AXIOM-Administradores
+        samba-tool group addmembers "AXIOM-Administradores" jefazo 2>/dev/null || echo "jefazo ya en grupo"
+
+        # Secretaria -> AXIOM-Secretaria
+        samba-tool group addmembers "AXIOM-Secretaria" secretaria 2>/dev/null || echo "secretaria ya en grupo"
+
+        # Contador -> AXIOM-Usuarios
+        samba-tool group addmembers "AXIOM-Usuarios" contador 2>/dev/null || echo "contador ya en grupo"
+
+        echo "=== Verificacion de grupos ==="
+        echo "AXIOM-Administradores:"
+        samba-tool group listmembers "AXIOM-Administradores"
+        echo "AXIOM-Secretaria:"
+        samba-tool group listmembers "AXIOM-Secretaria"
+        echo "AXIOM-Usuarios:"
+        samba-tool group listmembers "AXIOM-Usuarios"
+      register: members_added
+
+    - name: "11. Verificar estado final"
+      shell: |
+        echo "=========================================="
+        echo "=== VERIFICACION FINAL ==="
+        echo "=========================================="
+        echo ""
+        echo "=== DNS Test ==="
+        nslookup vm-dc01.AXIOM.local 127.0.0.1
+        echo ""
+        echo "=== Usuarios AD ==="
+        samba-tool user list
+        echo ""
+        echo "=== Grupos AD ==="
+        samba-tool group list | grep AXIOM
+        echo ""
+        echo "=== Servicio Samba ==="
+        systemctl status samba-ad-dc --no-pager | head -5
+        echo ""
+        echo "=========================================="
+      register: final_check
+
+    - name: "12. Resumen"
+      debug:
+        msg:
+          - "=========================================="
+          - "AD CONFIGURADO"
+          - "=========================================="
+          - "Dominio: {{ domain_name }}"
+          - "Realm: {{ realm }}"
+          - "NetBIOS: {{ netbios_name }}"
+          - ""
+          - "USUARIOS CREADOS:"
+          - "  - Administrator / {{ domain_pass }}"
+          - "  - jefazo / jefazo123!"
+          - "  - secretaria / secre.123"
+          - "  - contador / contador123!"
+          - ""
+          - "GRUPOS CREADOS:"
+          - "  - AXIOM-Administradores (jefazo)"
+          - "  - AXIOM-Secretaria (secretaria)"
+          - "  - AXIOM-Usuarios (contador)"
+          - ""
+          - "DNS registros:"
+          - "  - vm-dc01.AXIOM.local = {{ server_ip }}"
+          - "  - storage.AXIOM.local = 192.168.14.11"
+          - "  - mail.AXIOM.local = 192.168.13.11"
+          - "=========================================="
