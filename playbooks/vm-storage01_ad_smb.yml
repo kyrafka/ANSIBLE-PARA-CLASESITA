@@ -289,19 +289,19 @@
           - "WORKGROUP: {{ ad_workgroup }}"
           - ""
           - "SHARES DISPONIBLES:"
-          - "  \\192.168.14.11\Jefatura"
+          - '  \\\\192.168.14.11\\Jefatura'
           - "     Rango IP: 192.168.12.10-80"
-          - "     Usuario: AXIOM\jefazo / jefazo123!"
+          - "     Usuario: AXIOM\\jefazo / jefazo123!"
           - ""
-          - "  \\192.168.14.11\Secretaria"
+          - '  \\\\192.168.14.11\\Secretaria'
           - "     Rango IP: 192.168.12.81-100"
-          - "     Usuario: AXIOM\secretaria / secre.123"
+          - "     Usuario: AXIOM\\secretaria / secre.123"
           - ""
-          - "  \\192.168.14.11\Usuarios"
+          - '  \\\\192.168.14.11\\Usuarios'
           - "     Rango IP: 192.168.12.101-200"
-          - "     Usuario: AXIOM\contador / contador123!"
+          - "     Usuario: AXIOM\\contador / contador123!"
           - ""
-          - "  \\192.168.14.11\Publico (solo lectura)"
+          - '  \\\\192.168.14.11\\Publico (solo lectura)'
           - ""
           - "NOTA: Esperar 1-2 minutos despues de ejecutar"
           - "      antes de probar desde Windows"
