@@ -203,7 +203,7 @@
     - name: "14. Testear acceso a share con smbclient"
       shell: |
         echo "=== Test smbclient Secretaria ==="
-        smbclient '//127.0.0.1/Secretaria' -U 'AXIOM\secretaria%secre.123' -c 'ls' 2>&1
+        smbclient '//127.0.0.1/Secretaria' -U 'AXIOM\secretaria%rol.123' -c 'ls' 2>&1
       ignore_errors: true
 
     - name: "15. Resumen final"
@@ -218,9 +218,9 @@
           - "WORKGROUP: {{ ad_workgroup }}"
           - ""
           - "SHARES:"
-          - '  \\192.168.14.11\Jefatura    - AXIOM\jefazo / jefazo123!'
-          - '  \\192.168.14.11\Secretaria  - AXIOM\secretaria / secre.123'
-          - '  \\192.168.14.11\Usuarios    - AXIOM\contador / contador123!'
+          - '  \\192.168.14.11\Jefatura    - AXIOM\jefazo / rol.123'
+          - '  \\192.168.14.11\Secretaria  - AXIOM\secretaria / rol.123'
+          - '  \\192.168.14.11\Usuarios    - AXIOM\contador / rol.123'
           - '  \\192.168.14.11\Publico     - Solo lectura'
           - '  \\192.168.14.11\homes       - Carpeta personal'
           - "=========================================="

@@ -126,16 +126,16 @@
         echo "=== Creando usuarios AD ==="
 
         # Jefazo
-        samba-tool user create jefazo "jefazo123!" 2>/dev/null || echo "jefazo ya existe"
-        samba-tool user setpassword jefazo --newpassword='jefazo123!' 2>/dev/null || true
+        samba-tool user create jefazo "rol.123" 2>/dev/null || echo "jefazo ya existe"
+        samba-tool user setpassword jefazo --newpassword='rol.123' 2>/dev/null || true
 
         # Secretaria
-        samba-tool user create secretaria "secre.123" 2>/dev/null || echo "secretaria ya existe"
-        samba-tool user setpassword secretaria --newpassword='secre.123' 2>/dev/null || true
+        samba-tool user create secretaria "rol.123" 2>/dev/null || echo "secretaria ya existe"
+        samba-tool user setpassword secretaria --newpassword='rol.123' 2>/dev/null || true
 
         # Contador
-        samba-tool user create contador "contador123!" 2>/dev/null || echo "contador ya existe"
-        samba-tool user setpassword contador --newpassword='contador123!' 2>/dev/null || true
+        samba-tool user create contador "rol.123" 2>/dev/null || echo "contador ya existe"
+        samba-tool user setpassword contador --newpassword='rol.123' 2>/dev/null || true
 
         echo "=== Usuarios creados ==="
         samba-tool user list
@@ -209,9 +209,9 @@
           - ""
           - "USUARIOS CREADOS:"
           - "  - Administrator / {{ domain_pass }}"
-          - "  - jefazo / jefazo123!"
-          - "  - secretaria / secre.123"
-          - "  - contador / contador123!"
+          - "  - jefazo / rol.123"
+          - "  - secretaria / rol.123"
+          - "  - contador / rol.123"
           - ""
           - "GRUPOS CREADOS:"
           - "  - AXIOM-Administradores (jefazo)"

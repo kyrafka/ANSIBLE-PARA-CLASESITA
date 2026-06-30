@@ -2,46 +2,34 @@
 # ============================================================================
 # INTEGRACION ACTIVE DIRECTORY - Samba + Dovecot + Roundcube
 # ============================================================================
-# Este playbook integra:
-# - Samba shares con autenticacion via AD
-# - Dovecot IMAP con autenticacion via AD  
-# - Roundcube usa IMAP (funciona automaticamente con Dovecot)
-# ============================================================================
-# REQUISITO: El servidor debe tener acceso a vm-dc01 (192.168.16.10)
+# REQUISITO: vm-storage01 y vm-services01 deben tener acceso a vm-dc01
+# Password de todos los usuarios AD: rol.123
 # ============================================================================
 
-- name: "Integrar servicios con Active Directory"
+- name: "Verificar conexion con AD"
   hosts: vm-storage01,vm-services01
   become: true
   gather_facts: true
 
   vars:
-    # Configuracion AD
     ad_domain: "AXIOM.local"
     ad_realm: "AXIOM.LOCAL"
-    ad_short_domain: "AXIOM"
+    ad_workgroup: "AXIOM"
     ad_server: "192.168.16.10"
-    ad_admin_user: "Administrator"
-    ad_admin_pass: "Admin123!"
-    ad_ou: "OU=Serveis,DC=AXIOM,DC=LOCAL"
+    ad_admin_pass: "admin123!"
+    user_pass: "rol.123"
 
   tasks:
     - name: "Verificar conexion con AD"
-      ansible.builtin.shell: |
+      shell: |
         echo "=== Verificando conectividad con AD ==="
-        nc -zv 192.168.16.10 389 2>&1 && echo "LDAP (389): OK" || echo "LDAP (389): FAIL"
-        nc -zv 192.168.16.10 636 2>&1 && echo "LDAPS (636): OK" || echo "LDAPS (636): FAIL"
-        nc -zv 192.168.16.10 88 2>&1 && echo "KRB (88): OK" || echo "KRB (88): FAIL"
+        nc -zv {{ ad_server }} 389 2>&1 && echo "LDAP (389): OK" || echo "LDAP (389): FAIL"
+        nc -zv {{ ad_server }} 636 2>&1 && echo "LDAPS (636): OK" || echo "LDAPS (636): FAIL"
+        nc -zv {{ ad_server }} 88 2>&1 && echo "KRB (88): OK" || echo "KRB (88): FAIL"
         echo "=== Resolucion DNS ==="
-        nslookup vm-dc01 2>/dev/null | head -3 || echo "DNS: FAIL"
-        host -t SRV _ldap._tcp.AXIOM.local 2>/dev/null | head -2 || echo "SRV record: FAIL"
+        nslookup vm-dc01.{{ ad_domain }} {{ ad_server }} 2>/dev/null | head -4
       changed_when: false
       ignore_errors: true
-
-    - name: "Verificar que este en el grupo correcto"
-      ansible.builtin.debug:
-        msg: "Este playbook se ejecuta en vm-storage01 y vm-services01"
-      when: inventory_hostname == "vm-storage01"
 
 # ============================================================================
 # PARTE 1: SAMBA EN vm-storage01 CON AD
@@ -54,12 +42,14 @@
   vars:
     ad_domain: "AXIOM.local"
     ad_realm: "AXIOM.LOCAL"
-    ad_short_domain: "AXIOM"
+    ad_workgroup: "AXIOM"
     ad_server: "192.168.16.10"
+    ad_admin_pass: "admin123!"
+    user_pass: "rol.123"
 
   tasks:
     - name: "SMB+AD — Instalar dependencias"
-      ansible.builtin.apt:
+      apt:
         name:
           - samba
           - samba-common-bin
@@ -72,163 +62,122 @@
         state: present
 
     - name: "SMB+AD — Configurar krb5.conf"
-      ansible.builtin.copy:
+      copy:
         dest: /etc/krb5.conf
         content: |
           [libdefaults]
-              default_realm = AXIOM.LOCAL
+              default_realm = {{ ad_realm }}
               dns_lookup_realm = false
               dns_lookup_kdc = true
               ticket_lifetime = 24h
               renew_lifetime = 7d
               forwardable = true
               rdns = false
-              
+
           [realms]
-              AXIOM.LOCAL = {
-                  kdc = 192.168.16.10
-                  admin_server = 192.168.16.10
-                  default_domain = AXIOM.local
+              {{ ad_realm }} = {
+                  kdc = {{ ad_server }}
+                  admin_server = {{ ad_server }}
+                  default_domain = {{ ad_domain }}
               }
-              
+
           [domain_realm]
-              .axiom.local = AXIOM.LOCAL
-              axiom.local = AXIOM.LOCAL
-        force: yes
+              .{{ ad_domain | lower }} = {{ ad_realm }}
+              {{ ad_domain | lower }} = {{ ad_realm }}
+
+    - name: "SMB+AD — Detener servicios"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - smbd
+        - nmbd
+        - winbind
+      ignore_errors: true
+
+    - name: "SMB+AD — Limpiar cache Samba"
+      shell: |
+        rm -f /var/lib/samba/*.tdb
+        rm -f /var/lib/samba/private/*.tdb
 
     - name: "SMB+AD — Configurar nsswitch.conf"
-      ansible.builtin.copy:
+      copy:
         dest: /etc/nsswitch.conf
         content: |
           passwd:         files systemd winbind
           group:          files systemd winbind
           shadow:         files
-          gshadow:        files
-          
           hosts:          files dns
           networks:       files
-          
           protocols:      db files
-          services:      db files
-          ethers:        db files
+          services:       db files
+          ethers:         db files
           rpc:            db files
-          
           netgroup:       nis
-        force: yes
 
     - name: "SMB+AD — Configurar smb.conf con AD"
-      ansible.builtin.copy:
+      copy:
         dest: /etc/samba/smb.conf
         content: |
           [global]
-             workgroup = AXIOM
-             realm = AXIOM.LOCAL
-             server string = File Server AXIOM
-             server role = standalone server
+             workgroup = {{ ad_workgroup }}
+             realm = {{ ad_realm }}
+             server string = Storage Server AXIOM
              security = ADS
-             encrypt passwords = yes
-             
-             # Configuracion AD
-             kerberos method = system keytab
-             dedicated keytab file = /etc/krb5.keytab
-             passdb backend = tdbsam
-             
-             # Winbind settings
+
+             idmap config * : backend = tdb
+             idmap config * : range = 2000-9999
+             idmap config {{ ad_workgroup }} : backend = rid
+             idmap config {{ ad_workgroup }} : range = 10000-20000
+
              winbind enum users = yes
              winbind enum groups = yes
              winbind use default domain = yes
-             winbind refresh tickets = yes
              winbind offline logon = no
-             
-             # Separador de usuarios
+
              template shell = /bin/bash
              template homedir = /srv/samba/homes/%U
-             
-             # Logging
+
              log file = /var/log/samba/log.%m
              max log size = 1000
              logging = file
-             
-             # Charset
+
              unix charset = UTF8
              dos charset = CP850
 
-          # ===============================================
-          # COMPARTIR: JEFATURA (solo AD group Administradores)
-          # ===============================================
           [Jefatura]
              path = /srv/samba/Jefatura
              browseable = yes
              read only = no
              create mask = 0770
              directory mask = 0770
-             force group = "AXIOM+Administradores"
-             valid users = "AXIOM+Administradores"
-             admin users = "AXIOM+Administrator"
-             
-             hosts allow = 192.168.12.10-80
-             hosts deny = 0.0.0.0/0
-             
-             vfs objects = full_audit
-             full_audit:prefix = %u|%I|%m|%S
-             full_audit:success = chown chmod open write close
-             full_audit:failure = none
-             full_audit:facility = local7
-             full_audit:priority = notice
-             
-             comment = Jefatura - Solo personal administrativo (AD)
+             force group = axiom-administradores
+             valid users = @axiom-administradores
+             hosts allow = 192.168.0.0/16
+             comment = Jefatura - Solo personal administrativo
 
-          # ===============================================
-          # COMPARTIR: SECRETARIA
-          # ===============================================
           [Secretaria]
              path = /srv/samba/Secretaria
              browseable = yes
              read only = no
              create mask = 0775
              directory mask = 0775
-             force group = "AXIOM+Secretaria"
-             valid users = "AXIOM+Secretaria","AXIOM+Administradores"
-             
-             hosts allow = 192.168.12.81-100
-             hosts deny = 0.0.0.0/0
-             
-             vfs objects = full_audit
-             full_audit:prefix = %u|%I|%m|%S
-             full_audit:success = chown chmod open write close
-             full_audit:failure = none
-             full_audit:facility = local7
-             full_audit:priority = notice
-             
-             comment = Secretaria - Solo personal de secretaria (AD)
+             force group = axiom-secretaria
+             valid users = @axiom-secretaria @axiom-administradores
+             hosts allow = 192.168.0.0/16
+             comment = Secretaria
 
-          # ===============================================
-          # COMPARTIR: USUARIOS
-          # ===============================================
           [Usuarios]
              path = /srv/samba/Usuarios
              browseable = yes
              read only = no
              create mask = 0775
              directory mask = 0775
-             force group = "AXIOM+Usuarios"
-             valid users = "AXIOM+Usuarios","AXIOM+Secretaria","AXIOM+Administradores"
-             
-             hosts allow = 192.168.12.101-200
-             hosts deny = 0.0.0.0/0
-             
-             vfs objects = full_audit
-             full_audit:prefix = %u|%I|%m|%S
-             full_audit:success = chown chmod open write close
-             full_audit:failure = none
-             full_audit:facility = local7
-             full_audit:priority = notice
-             
-             comment = Personal - Acceso general (AD)
+             force group = axiom-usuarios
+             valid users = @axiom-usuarios @axiom-secretaria @axiom-administradores
+             hosts allow = 192.168.0.0/16
+             comment = Acceso general
 
-          # ===============================================
-          # COMPARTIR: HOMES (carpeta personal por usuario)
-          # ===============================================
           [homes]
              path = /srv/samba/homes/%U
              browseable = no
@@ -236,122 +185,101 @@
              create mask = 0700
              directory mask = 0700
              valid users = %S
-             comment = Carpeta personal del usuario
 
-          # ===============================================
-          # COMPARTIR: PUBLICO (solo lectura)
-          # ===============================================
           [Publico]
              path = /srv/samba/Publico
              browseable = yes
              read only = yes
              create mask = 0755
              directory mask = 0755
-             guest ok = no
-             valid users = "AXIOM+Domain Users"
-             
+             valid users = @axiom-usuarios @axiom-secretaria @axiom-administradores
              hosts allow = 192.168.0.0/16
-             hosts deny = 0.0.0.0/0
-             
              comment = Carpeta publica - Solo lectura
 
-        force: yes
+    - name: "SMB+AD — Configurar DNS del AD"
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ ad_server }}
+          search {{ ad_domain }}
 
-    - name: "SMB+AD — Unirse al dominio AD"
-      ansible.builtin.shell: |
-        echo "=== Uniendo al dominio AXIOM.LOCAL ==="
-        
-        # Limpiar cache de Kerberos antiguo
-        rm -f /etc/krb5.keytab 2>/dev/null
-        net ads leave -U Administrator%Admin123! 2>/dev/null || true
-        
-        # Obtener ticket Kerberos
-        echo "Admin123!" | kinit Administrator@AXIOM.LOCAL 2>/dev/null && echo "KDC: OK" || echo "KDC: FAIL"
-        
-        # Unirse al dominio
-        sleep 2
-        net ads join -U Administrator%Admin123! createcomputer="OU=Servidoris,DC=AXIOM,DC=LOCAL" 2>&1 || true
-        
-        # Verificar union
-        net ads testjoin 2>&1 || echo "Join: PENDING"
-        
-        # Iniciar winbind
-        systemctl enable winbind smbd nmbd
-        systemctl restart winbind smbd nmbd
-        
-        # Verificar que winbind funciona
-        sleep 2
-        wbinfo --ping-dc 2>&1 && echo "Winbind: OK" || echo "Winbind: FAIL"
-        wbinfo -u | head -5 || echo "No users found"
-        wbinfo -g | head -5 || echo "No groups found"
-      changed_when: true
+    - name: "SMB+AD — Obtener ticket Kerberos y unirse al dominio"
+      shell: |
+        kdestroy 2>/dev/null || true
+        echo "{{ ad_admin_pass }}" | kinit Administrator@{{ ad_realm }}
+        net ads leave -U Administrator%{{ ad_admin_pass }} 2>/dev/null || true
+        sleep 1
+        net ads join -U Administrator%{{ ad_admin_pass }} -S vm-dc01.{{ ad_domain }}
+        net ads testjoin
+      ignore_errors: true
 
-    - name: "SMB+AD — Verificar grupos AD"
-      ansible.builtin.shell: |
-        echo "=== Grupos en AD ==="
-        wbinfo -g | grep -iE "administradores|secretaria|usuarios" || echo "Grupos no encontrados"
-        echo ""
-        echo "=== Usuarios en AD ==="
-        wbinfo -u | head -10 || echo "Usuarios no encontrados"
-      changed_when: false
+    - name: "SMB+AD — Iniciar winbind primero"
+      systemd:
+        name: winbind
+        state: started
+        enabled: yes
 
-    - name: "SMB+AD — Crear directorios"
-      ansible.builtin.file:
-        path: "{{ item.path }}"
-        state: directory
-        mode: "{{ item.mode }}"
-        owner: root
-        group: "{{ item.group }}"
-      loop:
-        - { path: /srv/samba, mode: "0775", group: "root" }
-        - { path: /srv/samba/Jefatura, mode: "0770", group: "AXIOM+Administradores" }
-        - { path: /srv/samba/Secretaria, mode: "0775", group: "AXIOM+Secretaria" }
-        - { path: /srv/samba/Usuarios, mode: "0775", group: "AXIOM+Usuarios" }
-        - { path: /srv/samba/Publico, mode: "0755", group: "root" }
-        - { path: /srv/samba/homes, mode: "0775", group: "root" }
+    - name: "SMB+AD — Esperar winbind"
+      shell: |
+        sleep 5
+        wbinfo --ping-dc
+        wbinfo -u | head -10
+        wbinfo -g | grep -i axiom
+      ignore_errors: true
 
-    - name: "SMB+AD — Crear subcarpetas"
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0770"
-        owner: root
-      loop:
-        - /srv/samba/Jefatura/Proyectos
-        - /srv/samba/Jefatura/Finanzas
-        - /srv/samba/Secretaria/Actas
-        - /srv/samba/Secretaria/Correspondencia
-
-    - name: "SMB+AD — Iniciar servicios"
-      ansible.builtin.systemd:
+    - name: "SMB+AD — Iniciar smbd y nmbd"
+      systemd:
         name: "{{ item }}"
-        state: restarted
+        state: started
         enabled: yes
       loop:
         - smbd
         - nmbd
-        - winbind
+
+    - name: "SMB+AD — Verificar getent"
+      shell: |
+        echo "=== getent passwd (AD) ==="
+        getent passwd | grep -i axiom
+        echo ""
+        echo "=== getent group (AD) ==="
+        getent group | grep -i axiom
+
+    - name: "SMB+AD — Crear carpetas con permisos correctos"
+      shell: |
+        mkdir -p /srv/samba/{Jefatura,Secretaria,Usuarios,Publico,homes}
+        mkdir -p /srv/samba/Jefatura/{Proyectos,Finanzas}
+        mkdir -p /srv/samba/Secretaria/{Actas,Correspondencia}
+        mkdir -p /srv/samba/Usuarios/General
+        chown root:root /srv/samba
+        chown root:"axiom-administradores" /srv/samba/Jefatura
+        chown root:"axiom-secretaria" /srv/samba/Secretaria
+        chown root:"axiom-usuarios" /srv/samba/Usuarios
+        chown root:root /srv/samba/Publico
+        chown root:root /srv/samba/homes
+        chmod 0770 /srv/samba/Jefatura
+        chmod 0775 /srv/samba/Secretaria
+        chmod 0775 /srv/samba/Usuarios
+        chmod 0755 /srv/samba/Publico
+        chmod 0775 /srv/samba/homes
+
+    - name: "SMB+AD — Test smbclient"
+      shell: |
+        smbclient '//127.0.0.1/Secretaria' -U 'AXIOM\secretaria%{{ user_pass }}' -c 'ls' 2>&1
+      ignore_errors: true
 
     - name: "SMB+AD — Resultado"
-      ansible.builtin.debug:
+      debug:
         msg:
           - "=========================================="
           - "SAMBA CON AD CONFIGURADO"
           - "=========================================="
           - ""
-          - "PARA ACCEDER DESDE WINDOWS:"
-          - "  1. Explorador de archivos: \\\\192.168.14.11\\Jefatura"
-          - "  2. Login con usuario de AD: AXIOM\\usuario"
-          - "     Ejemplo: AXIOM\\jefazo"
-          - "     Password: la del AD"
-          - ""
-          - "GRUPOS AD DISPONIBLES:"
-          - "  - AXIOM+Administradores (rango IP 10-80)"
-          - "  - AXIOM+Secretaria (rango IP 81-100)"
-          - "  - AXIOM+Usuarios (rango IP 101-200)"
-          - "  - AXIOM+Domain Users (Publico)"
-          - ""
-          - "NOTA: Los usuarios deben existir en AD"
+          - "SHARES:"
+          - '  \\192.168.14.11\Jefatura    - AXIOM\jefazo / {{ user_pass }}'
+          - '  \\192.168.14.11\Secretaria  - AXIOM\secretaria / {{ user_pass }}'
+          - '  \\192.168.14.11\Usuarios    - AXIOM\contador / {{ user_pass }}'
+          - '  \\192.168.14.11\Publico     - Solo lectura'
+          - '  \\192.168.14.11\homes       - Carpeta personal'
           - "=========================================="
 
 # ============================================================================
@@ -362,32 +290,79 @@
   become: true
   gather_facts: true
 
+  vars:
+    ad_domain: "AXIOM.local"
+    ad_realm: "AXIOM.LOCAL"
+    ad_workgroup: "AXIOM"
+    ad_server: "192.168.16.10"
+    ad_admin_pass: "admin123!"
+
   tasks:
     - name: "DOVECOT+AD — Instalar dependencias"
-      ansible.builtin.apt:
+      apt:
         name:
+          - samba
+          - winbind
+          - krb5-user
           - libpam-winbind
           - libnss-winbind
         state: present
 
-    - name: "DOVECOT+AD — Configurar PAM para winbind"
-      ansible.builtin.copy:
-        dest: /etc/pam.d/dovecot
+    - name: "DOVECOT+AD — Configurar krb5.conf"
+      copy:
+        dest: /etc/krb5.conf
         content: |
-          auth       required     pam_winbind.so nullok
-          account    required     pam_winbind.so use_first_pass
-          password   required     pam_winbind.so nullok
-          session    required     pam_winbind.so
-        force: yes
+          [libdefaults]
+              default_realm = {{ ad_realm }}
+              dns_lookup_realm = false
+              dns_lookup_kdc = true
+              ticket_lifetime = 24h
+              renew_lifetime = 7d
+              forwardable = true
+              rdns = false
+
+          [realms]
+              {{ ad_realm }} = {
+                  kdc = {{ ad_server }}
+                  admin_server = {{ ad_server }}
+              }
+
+          [domain_realm]
+              .{{ ad_domain | lower }} = {{ ad_realm }}
+              {{ ad_domain | lower }} = {{ ad_realm }}
+
+    - name: "DOVECOT+AD — Configurar smb.conf minimo para AD"
+      copy:
+        dest: /etc/samba/smb.conf
+        content: |
+          [global]
+             workgroup = {{ ad_workgroup }}
+             realm = {{ ad_realm }}
+             security = ADS
+
+             idmap config * : backend = tdb
+             idmap config * : range = 2000-9999
+             idmap config {{ ad_workgroup }} : backend = rid
+             idmap config {{ ad_workgroup }} : range = 10000-20000
+
+             winbind enum users = yes
+             winbind enum groups = yes
+             winbind use default domain = yes
+             winbind offline logon = no
+
+             template shell = /bin/bash
+             template homedir = /home/%U
+
+             log file = /var/log/samba/log.%m
+             max log size = 1000
 
     - name: "DOVECOT+AD — Configurar nsswitch"
-      ansible.builtin.copy:
+      copy:
         dest: /etc/nsswitch.conf
         content: |
           passwd:         files systemd winbind
           group:          files systemd winbind
           shadow:         files
-          gshadow:        files
           hosts:          files dns
           networks:       files
           protocols:      db files
@@ -395,21 +370,63 @@
           ethers:         db files
           rpc:            db files
           netgroup:       nis
-        force: yes
 
-    - name: "DOVECOT+AD — Unir al AD (temporal para auth)"
-      ansible.builtin.shell: |
-        echo "=== Configurando Kerberos para Dovecot ==="
-        echo "admin" | kinit administrator 2>/dev/null && echo "Kerberos: OK" || echo "Kerberos: ya tiene ticket"
-        net ads join -U administrator%admin 2>/dev/null || echo "Ya esta en dominio"
-        systemctl restart winbind
-        sleep 2
-        wbinfo --ping-dc 2>&1 && echo "Winbind: OK" || echo "Winbind: FAIL"
-      changed_when: true
+    - name: "DOVECOT+AD — Configurar resolv.conf"
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ ad_server }}
+          search {{ ad_domain }}
+
+    - name: "DOVECOT+AD — Detener servicios"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - smbd
+        - winbind
       ignore_errors: true
 
+    - name: "DOVECOT+AD — Limpiar cache"
+      shell: |
+        rm -f /var/lib/samba/*.tdb
+        rm -f /var/lib/samba/private/*.tdb
+
+    - name: "DOVECOT+AD — Join al dominio AD"
+      shell: |
+        kdestroy 2>/dev/null || true
+        echo "{{ ad_admin_pass }}" | kinit Administrator@{{ ad_realm }}
+        net ads leave -U Administrator%{{ ad_admin_pass }} 2>/dev/null || true
+        sleep 1
+        net ads join -U Administrator%{{ ad_admin_pass }} -S vm-dc01.{{ ad_domain }}
+        net ads testjoin
+      ignore_errors: true
+
+    - name: "DOVECOT+AD — Iniciar winbind"
+      systemd:
+        name: winbind
+        state: started
+        enabled: yes
+
+    - name: "DOVECOT+AD — Verificar winbind"
+      shell: |
+        sleep 5
+        wbinfo --ping-dc
+        wbinfo -u | head -5
+        getent passwd | grep -i axiom | head -3
+      ignore_errors: true
+
+    - name: "DOVECOT+AD — Configurar PAM para winbind"
+      copy:
+        dest: /etc/pam.d/dovecot
+        content: |
+          auth       required     pam_winbind.so nullok
+          account    required     pam_winbind.so use_first_pass
+          password   required     pam_winbind.so nullok
+          session    required     pam_winbind.so
+
     - name: "DOVECOT+AD — Reiniciar servicios"
-      ansible.builtin.systemd:
+      systemd:
         name: "{{ item }}"
         state: restarted
         enabled: yes
@@ -418,28 +435,16 @@
         - postfix
         - winbind
 
-    - name: "DOVECOT+AD — Probar autenticacion AD"
-      ansible.builtin.shell: |
-        echo "=== Verificando usuarios AD en sistema ==="
-        getent passwd | grep -i winbind | head -5 || echo "No hay usuarios winbind"
-        echo ""
-        echo "=== Verificando grupos AD ==="
-        getent group | grep -i AXIOM | head -5 || echo "No hay grupos"
-      changed_when: false
-
     - name: "DOVECOT+AD — Resultado"
-      ansible.builtin.debug:
+      debug:
         msg:
           - "=========================================="
           - "DOVECOT CON AD CONFIGURADO"
           - "=========================================="
           - ""
-          - "Roundcube (webmail) ahora usa IMAP/Dovecot"
-          - "Dovecot autentica via PAM/winbind contra AD"
+          - "Webmail auth contra AD via PAM/winbind"
+          - "Usuarios: jefazo, secretaria, contador"
+          - "Password: rol.123"
           - ""
-          - "USUARIOS DE AD PARA WEBMAIL:"
-          - "  - usuario@axiom.local"
-          - "  - Password del AD"
-          - ""
-          - "NOTA: Los usuarios deben existir en AD"
+          - "Webmail: http://192.168.13.11/webmail/"
           - "=========================================="
