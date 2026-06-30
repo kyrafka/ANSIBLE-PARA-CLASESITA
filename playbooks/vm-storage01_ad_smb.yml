@@ -1,0 +1,308 @@
+---
+# ============================================================================
+# vm-storage01_ad_smb.yml — Joinear storage al AD y configurar Samba shares
+# ============================================================================
+# Ejecutar en vm-storage01
+# Configura: nsswitch, smb.conf con idmap, join AD, permisos shares
+# ============================================================================
+
+- name: "Configurar vm-storage01 con AD y SMB shares"
+  hosts: vm-storage01
+  become: true
+  gather_facts: true
+
+  vars:
+    ad_domain: "AXIOM.local"
+    ad_realm: "AXIOM.LOCAL"
+    ad_workgroup: "AXIOM"
+    ad_server: "192.168.16.10"
+    ad_admin_pass: "admin123!"
+
+  tasks:
+    - name: "1. Detener servicios Samba"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - smbd
+        - nmbd
+        - winbind
+      ignore_errors: true
+
+    - name: "2. Limpiar cache Samba"
+      shell: |
+        rm -f /var/lib/samba/*.tdb
+        rm -f /var/lib/samba/private/*.tdb
+        echo "Cache limpiado"
+
+    - name: "3. Configurar nsswitch.conf con winbind"
+      copy:
+        dest: /etc/nsswitch.conf
+        content: |
+          passwd:         files systemd winbind
+          group:          files systemd winbind
+          shadow:         files
+          hosts:          files dns
+          networks:       files
+          protocols:      db files
+          services:       db files
+          ethers:         db files
+          rpc:            db files
+          netgroup:       nis
+        mode: "0644"
+
+    - name: "4. Configurar smb.conf completo"
+      copy:
+        dest: /etc/samba/smb.conf
+        content: |
+          [global]
+             workgroup = {{ ad_workgroup }}
+             realm = {{ ad_realm }}
+             server string = Storage Server AXIOM
+             server role = standalone server
+             security = ADS
+             encrypt passwords = yes
+
+             # IDMAP - Mapeo SID a UID
+             idmap config * : backend = tdb
+             idmap config * : range = 10000-20000
+             idmap config {{ ad_workgroup }} : backend = rid
+             idmap config {{ ad_workgroup }} : range = 10000-20000
+
+             # Winbind settings
+             winbind enum users = yes
+             winbind enum groups = yes
+             winbind use default domain = yes
+             winbind offline logon = no
+
+             # Shell y home
+             template shell = /bin/bash
+             template homedir = /srv/samba/homes/%U
+
+             # Logging
+             log file = /var/log/samba/log.%m
+             max log size = 1000
+             logging = file
+
+             # Charset
+             unix charset = UTF8
+             dos charset = CP850
+
+          ;===============================
+          ; JEFATURA - Solo grupo Administradores
+          ;===============================
+          [Jefatura]
+             path = /srv/samba/Jefatura
+             browseable = yes
+             read only = no
+             create mask = 0770
+             directory mask = 0770
+             force group = AXIOM-Administradores
+             valid users = @AXIOM-Administradores
+             hosts allow = 192.168.12.10-80
+             hosts deny = 0.0.0.0/0
+             comment = Jefatura - Solo personal administrativo
+
+          ;===============================
+          ; SECRETARIA
+          ;===============================
+          [Secretaria]
+             path = /srv/samba/Secretaria
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             force group = AXIOM-Secretaria
+             valid users = @AXIOM-Secretaria @AXIOM-Administradores
+             hosts allow = 192.168.12.81-100
+             hosts deny = 0.0.0.0/0
+             comment = Secretaria
+
+          ;===============================
+          ; USUARIOS
+          ;===============================
+          [Usuarios]
+             path = /srv/samba/Usuarios
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             force group = AXIOM-Usuarios
+             valid users = @AXIOM-Usuarios @AXIOM-Secretaria @AXIOM-Administradores
+             hosts allow = 192.168.12.101-200
+             hosts deny = 0.0.0.0/0
+             comment = Acceso general
+
+          ;===============================
+          ; HOMES - Carpeta personal
+          ;===============================
+          [homes]
+             path = /srv/samba/homes/%U
+             browseable = no
+             read only = no
+             create mask = 0700
+             directory mask = 0700
+             valid users = %S
+
+          ;===============================
+          ; PUBLICO - Solo lectura
+          ;===============================
+          [Publico]
+             path = /srv/samba/Publico
+             browseable = yes
+             read only = yes
+             create mask = 0755
+             directory mask = 0755
+             valid users = @AXIOM-Usuarios
+             hosts allow = 192.168.0.0/16
+             hosts deny = 0.0.0.0/0
+             comment = Carpeta publica - Solo lectura
+        mode: "0644"
+
+    - name: "5. Configurar DNS del AD"
+      copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ ad_server }}
+          search {{ ad_domain }}
+        mode: "0644"
+
+    - name: "6. Hacer uname -n para verificar hostname"
+      shell: hostname
+
+    - name: "7. Limpiar Kerberos cache"
+      shell: kdestroy 2>/dev/null || true
+
+    - name: "8. Obtener ticket Kerberos"
+      shell: |
+        echo "{{ ad_admin_pass }}" | kinit Administrator@{{ ad_realm }}
+        klist
+      ignore_errors: true
+      register: kinit_result
+
+    - name: "9. Join al dominio AD"
+      shell: |
+        echo "=== Haciendo join al dominio {{ ad_realm }} ==="
+        net ads leave -U Administrator%{{ ad_admin_pass }} 2>/dev/null || true
+        sleep 1
+        net ads join -U Administrator%{{ ad_admin_pass }} -S vm-dc01.{{ ad_domain }}
+        net ads testjoin
+      ignore_errors: true
+      register: join_result
+
+    - name: "10. Iniciar servicios (winbind primero!)"
+      systemd:
+        name: winbind
+        state: started
+        enabled: yes
+      register: winbind_start
+
+    - name: "11. Esperar y verificar winbind"
+      shell: |
+        sleep 5
+        echo "=== Verificando winbind ==="
+        wbinfo --ping-dc
+        wbinfo -u | head -10
+        wbinfo -g | grep -i axiom
+      register: winbind_check
+
+    - name: "12. Iniciar smbd y nmbd"
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - smbd
+        - nmbd
+
+    - name: "13. Verificar getent"
+      shell: |
+        echo "=== getent passwd (usuarios AD) ==="
+        getent passwd | grep -i axiom
+        echo ""
+        echo "=== getent group (grupos AD) ==="
+        getent group | grep -i axiom
+
+    - name: "14. Crear grupos locales para permisos"
+      group:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - axiom-administradores
+        - axiom-secretaria
+        - axiom-usuarios
+      ignore_errors: true
+
+    - name: "15. Crear carpetas de shares"
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+        owner: root
+        group: "{{ item.group }}"
+      loop:
+        - { path: /srv/samba, mode: "0775", group: "root" }
+        - { path: /srv/samba/Jefatura, mode: "0770", group: "axiom-administradores" }
+        - { path: /srv/samba/Secretaria, mode: "0775", group: "axiom-secretaria" }
+        - { path: /srv/samba/Usuarios, mode: "0775", group: "axiom-usuarios" }
+        - { path: /srv/samba/Publico, mode: "0755", group: "root" }
+        - { path: /srv/samba/homes, mode: "0775", group: "root" }
+
+    - name: "16. Crear subcarpetas"
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0770"
+        owner: root
+      loop:
+        - /srv/samba/Jefatura/Proyectos
+        - /srv/samba/Jefatura/Finanzas
+        - /srv/samba/Secretaria/Actas
+        - /srv/samba/Secretaria/Correspondencia
+        - /srv/samba/Usuarios/General
+
+    - name: "17. Verificar servicios"
+      shell: |
+        echo "=== Estado de servicios ==="
+        systemctl status winbind --no-pager | head -5
+        systemctl status smbd --no-pager | head -3
+        echo ""
+        echo "=== Puertos escuchando ==="
+        ss -tlnp | grep -E "445|139"
+
+    - name: "18. Testear acceso a share con smbclient"
+      shell: |
+        echo "=== Test smbclient ==="
+        smbclient -L localhost -U Administrator%{{ ad_admin_pass }} 2>&1 | head -15
+      ignore_errors: true
+
+    - name: "19. Resumen final"
+      debug:
+        msg:
+          - "=========================================="
+          - "STORAGE CONFIGURADO CON AD"
+          - "=========================================="
+          - ""
+          - "SERVIDOR: 192.168.14.11"
+          - "DOMINIO: {{ ad_domain }}"
+          - "WORKGROUP: {{ ad_workgroup }}"
+          - ""
+          - "SHARES DISPONIBLES:"
+          - "  \\192.168.14.11\Jefatura"
+          - "     Rango IP: 192.168.12.10-80"
+          - "     Usuario: AXIOM\jefazo / jefazo123!"
+          - ""
+          - "  \\192.168.14.11\Secretaria"
+          - "     Rango IP: 192.168.12.81-100"
+          - "     Usuario: AXIOM\secretaria / secre.123"
+          - ""
+          - "  \\192.168.14.11\Usuarios"
+          - "     Rango IP: 192.168.12.101-200"
+          - "     Usuario: AXIOM\contador / contador123!"
+          - ""
+          - "  \\192.168.14.11\Publico (solo lectura)"
+          - ""
+          - "NOTA: Esperar 1-2 minutos despues de ejecutar"
+          - "      antes de probar desde Windows"
+          - "=========================================="
