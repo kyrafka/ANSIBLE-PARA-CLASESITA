@@ -321,6 +321,14 @@
         a2ensite voip.conf 2>/dev/null || true
         systemctl restart apache2
 
+    - name: "VOIP — Crear directorio web"
+      file:
+        path: /var/www/html/voip
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
     - name: "VOIP — Crear pagina web del PBX"
       copy:
         dest: /var/www/html/voip/index.html
