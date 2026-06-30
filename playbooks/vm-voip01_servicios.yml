@@ -1,9 +1,10 @@
 ---
 # ============================================================================
-# vm-voip01_servicios.yml — Asterisk VoIP + GUI
+# vm-voip01_servicios.yml — Asterisk VoIP completo
 # ============================================================================
 # IP: 192.168.15.11 (VLAN 50)
-# Extensiones: 100, 101, 102 (secret: 100secret, 101secret, 102secret)
+# Extensiones: 100 (Jefazo), 101 (Secretaria), 102 (Contador)
+# Password: rol.123
 # ============================================================================
 
 - name: "Configurar SERVICIOS vm-voip01 — Asterisk VoIP"
@@ -13,215 +14,62 @@
   gather_facts: true
 
   vars:
-    voip_domain: "voip.AJ.local"
-    admin_password: "Admin123"
+    voip_domain: "voip.AXIOM.local"
+    admin_password: "rol.123"
+    sip_secret: "rol.123"
 
   tasks:
     - name: "VOIP — Verificar espacio en disco"
-      ansible.builtin.shell: |
+      shell: |
         DF=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//')
         echo "Disco usado: ${DF}%"
-        if [ "$DF" -gt 90 ]; then
-          echo "WARNING: Disco casi lleno, intentando expandir..."
-        else
-          echo "Espacio OK"
-        fi
       changed_when: false
-      register: disk_check
 
     - name: "VOIP — Expandir filesystem LVM"
-      ansible.builtin.shell: |
-        set -e
-        echo "=== Antes ==="
-        df -h / | tail -1
-        
-        # Intentar growpart
-        sudo growpart /dev/sda 3 2>/dev/null || echo "growpart no necesario"
-        
-        # Extender PV
-        sudo pvresize /dev/sda3 2>/dev/null || echo "pvresize no necesario"
-        
-        # Ver espacio libre en VG
-        VFREE=$(sudo vgs --noheadings -o v_free --units g ubuntu-vg 2>/dev/null | tr -d ' g\n' || echo 0)
-        echo "VG espacio libre: ${VFREE}"
-        
-        if [ ! -z "$VFREE" ] && [ "$VFREE" != "0" ]; then
-          echo "Expandiendo LV..."
-          sudo lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv 2>/dev/null || echo "lvextend falló"
-          sudo resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv 2>/dev/null || echo "resize2fs falló"
-          echo "LV expandido"
-        else
-          echo "LV ya está expandido o no hay espacio libre"
+      shell: |
+        growpart /dev/sda 3 2>/dev/null || true
+        pvresize /dev/sda3 2>/dev/null || true
+        VFREE=$(vgs --noheadings -o v_free --units g ubuntu-vg 2>/dev/null | tr -d ' g\n' || echo 0)
+        if [ "$VFREE" != "0" ] && [ -n "$VFREE" ]; then
+          lvextend -l +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv 2>/dev/null || true
+          resize2fs /dev/mapper/ubuntu--vg-ubuntu--lv 2>/dev/null || true
         fi
-        
-        echo "=== Despues ==="
         df -h / | tail -1
       changed_when: false
-      register: disk_expand
 
-    - name: "VOIP — Limpiar dpkg e instalar dependencias"
-      ansible.builtin.shell: |
-        set -e
+    - name: "VOIP — Instalar Asterisk y dependencias"
+      shell: |
         export DEBIAN_FRONTEND=noninteractive
-        export APT_LISTCHANGES_FRONTEND=none
-        
-        # Responder preguntas de conffile de asterisk ANTES de instalar
         echo "asterisk-config asterisk-config/replace_files boolean true" | debconf-set-selections
         echo "asterisk asterisk/replace_files boolean true" | debconf-set-selections
-        
         dpkg --configure -a 2>/dev/null || true
-        
-        for pkg in asterisk asterisk-config asteriskk asterisk-modules; do
-          dpkg --remove --force-remove-reinstreq $pkg 2>/dev/null || true
-        done
-        
         apt-get clean
         apt-get autoremove -y 2>/dev/null || true
-        
-        echo "dpkg limpio"
-        
-        # Instalar asterisk-config
-        DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk-config
-        echo "asterisk-config instalado"
-        
-        # Instalar asterisk
-        DEBIAN_FRONTEND=noninteractive apt-get install -y asterisk
-        echo "asterisk instalado"
-        
-        # Arreglar dependencias rotas
-        DEBIAN_FRONTEND=noninteractive apt-get install -f -y
-        
-        # Instalar resto
-        DEBIAN_FRONTEND=noninteractive apt-get install -y \
-          wget gnupg curl apache2 php php-mysql php-gd php-mbstring \
+        apt-get install -y asterisk asterisk-config
+        apt-get install -f -y
+        apt-get install -y \
+          wget curl apache2 php php-mysql php-gd php-mbstring \
           php-xml php-bcmath php-curl libapache2-mod-php \
-          fail2ban htop net-tools iputils-ping socat \
-          ssl-cert
-        
+          fail2ban htop net-tools iputils-ping socat ssl-cert \
+          asterisk-core-sounds-en asterisk-moh-opsound-wav
         echo "Dependencias instaladas"
 
-    - name: "VOIP — Verificar Asterisk instalado"
-      ansible.builtin.shell: |
-        set -e
-        echo "=== Verificando Asterisk ==="
-        which asterisk && echo "asterisk bin: OK" || { echo "ERROR: asterisk no encontrado"; exit 1; }
-        /usr/sbin/asterisk -V 2>&1 || /usr/sbin/asterisk -v 2>&1 || { echo "ERROR: asterisk no corre"; exit 1; }
-        echo "Asterisk instalado OK"
-      changed_when: false
-      register: verif_asterisk
-
-    - name: "VOIP — Crear usuario asterisk"
-      ansible.builtin.group:
-        name: asterisk
-        state: present
-      failed_when: false
-
-    - name: "VOIP — Crear usuario asterisk"
-      ansible.builtin.user:
-        name: asterisk
-        group: asterisk
-        system: yes
-        shell: /usr/sbin/nologin
-        home: /var/lib/asterisk
-        create_home: no
-      failed_when: false
-
-    - name: "VOIP — Iniciar MariaDB (opcional)"
-      ansible.builtin.shell: |
-        systemctl enable mariadb 2>/dev/null || true
-        systemctl restart mariadb 2>/dev/null || true
-        sleep 2
-        echo "MariaDB (opcional) iniciado"
-
     - name: "VOIP — Configurar hostname y DNS"
-      ansible.builtin.shell: |
+      shell: |
         hostnamectl set-hostname vm-voip01 --static
         echo "vm-voip01" > /etc/hostname
-        if ! grep -q "192.168.15.11.*voip.AJ.local" /etc/hosts; then
-          echo "192.168.15.11 voip.AJ.local vm-voip01" >> /etc/hosts
-        fi
-        echo "Hostname: $(hostname)"
-
-    - name: "VOIP — Configurar PHP"
-      ansible.builtin.shell: |
-        PHPINI="/etc/php/8.3/apache2/php.ini"
-        if [ -f "$PHPINI" ]; then
-          sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' "$PHPINI"
-          sed -i 's/max_execution_time = 30/max_execution_time = 300/' "$PHPINI"
-          sed -i 's/memory_limit = -1/memory_limit = 256M/' "$PHPINI"
-          sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 64M/' "$PHPINI"
-          echo "PHP configurado"
-        else
-          echo "WARNING: PHP ini no encontrado"
+        if ! grep -q "192.168.15.11.*voip.AXIOM.local" /etc/hosts; then
+          echo "192.168.15.11 voip.AXIOM.local vm-voip01" >> /etc/hosts
         fi
 
-    - name: "VOIP — Configurar Apache"
-      ansible.builtin.copy:
-        dest: /etc/apache2/sites-available/vitalpbx.conf
-        content: |
-          <VirtualHost *:80>
-              ServerName voip.AJ.local
-              DocumentRoot /var/www/html/vitalpbx
-              <Directory /var/www/html/vitalpbx>
-                  Options -Indexes +FollowSymLinks
-                  AllowOverride All
-                  Require all granted
-              </Directory>
-          </VirtualHost>
-        force: yes
-        mode: "0644"
-
-    - name: "VOIP — Habilitar Apache"
-      ansible.builtin.shell: |
-        a2enmod php8.3 rewrite ssl headers 2>/dev/null || true
-        a2dissite 000-default.conf 2>/dev/null || true
-        a2ensite vitalpbx.conf 2>/dev/null || true
-        if [ ! -f /etc/ssl/certs/ssl-cert-snakeoil.pem ]; then
-          apt-get install -y ssl-cert
-        fi
-        systemctl restart apache2
-        systemctl status apache2 --no-pager | head -5
-        echo "Apache OK"
-
-    - name: "VOIP — Configurar fail2ban"
-      ansible.builtin.copy:
-        dest: /etc/fail2ban/jail.local
-        content: |
-          [DEFAULT]
-          bantime = 3600
-          findtime = 600
-          maxretry = 5
-          
-          [sshd]
-          enabled = true
-          port = 22
-          filter = sshd
-          logpath = /var/log/auth.log
-          
-          [asterisk]
-          enabled = true
-          port = 5060,5061
-          filter = asterisk
-          logpath = /var/log/asterisk/full
-          maxretry = 10
-          bantime = 7200
-        force: yes
-
-    - name: "VOIP — Iniciar fail2ban"
-      ansible.builtin.service:
-        name: fail2ban
-        enabled: yes
-        state: started
-
-    - name: "VOIP — Desactivar UFW (pfSense maneja el firewall)"
-      ansible.builtin.shell: |
+    - name: "VOIP — Desactivar UFW"
+      shell: |
+        ufw disable 2>/dev/null || true
         systemctl stop ufw 2>/dev/null || true
         systemctl disable ufw 2>/dev/null || true
-        ufw disable 2>/dev/null || true
-        echo "UFW desactivado - pfSense maneja el firewall"
 
     - name: "VOIP — Crear directorios Asterisk"
-      ansible.builtin.file:
+      file:
         path: "{{ item }}"
         state: directory
         owner: asterisk
@@ -232,9 +80,10 @@
         - /var/lib/asterisk
         - /var/log/asterisk
         - /var/spool/asterisk
+        - /var/spool/asterisk/voicemail
 
     - name: "VOIP — Configurar sip.conf"
-      ansible.builtin.copy:
+      copy:
         dest: /etc/asterisk/sip.conf
         content: |
           [general]
@@ -243,117 +92,305 @@
           bindaddr=0.0.0.0
           srvlookup=yes
           qualify=yes
-          nat=no
+          nat=force_rport
           directrtpsetup=yes
           disallow=all
           allow=ulaw
           allow=alaw
+          allow=gsm
           alwaysauthreject=yes
           canreinvite=no
+          rtcachefriends=yes
+
+          ; ========== EXTENSIONES INTERNAS ==========
 
           [100]
           type=friend
           host=dynamic
-          secret=100secret
+          secret={{ sip_secret }}
           context=from-internal
-          callerid="Extension 100" <100>
+          callerid="Jefazo" <100>
+          dtmfmode=rfc2833
+          canreinvite=no
+          mailbox=100@voicemail
+          call-limit=2
 
           [101]
           type=friend
           host=dynamic
-          secret=101secret
+          secret={{ sip_secret }}
           context=from-internal
-          callerid="Extension 101" <101>
+          callerid="Secretaria" <101>
+          dtmfmode=rfc2833
+          canreinvite=no
+          mailbox=101@voicemail
+          call-limit=2
 
           [102]
           type=friend
           host=dynamic
-          secret=102secret
+          secret={{ sip_secret }}
           context=from-internal
-          callerid="Extension 102" <102>
+          callerid="Contador" <102>
+          dtmfmode=rfc2833
+          canreinvite=no
+          mailbox=102@voicemail
+          call-limit=2
         force: yes
         mode: "0644"
         owner: asterisk
         group: asterisk
 
-    - name: "VOIP — Configurar extensions.conf"
-      ansible.builtin.copy:
+    - name: "VOIP — Configurar extensions.conf — Dialplan completo"
+      copy:
         dest: /etc/asterisk/extensions.conf
         content: |
+          [globals]
+          RINGTIME=30
+
+          ; ========== LLAMADAS INTERNAS ==========
           [from-internal]
-          exten => 100,1,Answer()
-          same => n,Wait(1)
-          same => n,Playback(hello-world)
+          include => internal-extensions
+          include => features
+          include => conferencia
+          include => estacionamiento
+
+          [internal-extensions]
+          exten => _10[0-2],1,Noop(Llamada de ${CALLERID(all)} a ${EXTEN})
+          same => n,Dial(SIP/${EXTEN},${RINGTIME},tT)
+          same => n,GotoIf($["${DIALSTATUS}" = "BUSY"]?busy)
+          same => n,GotoIf($["${DIALSTATUS}" = "NOANSWER"]?noanswer)
+          same => n,GotoIf($["${DIALSTATUS}" = "CHANUNAVAIL"]?unavail)
           same => n,Hangup()
-          exten => 101,1,Answer()
-          same => n,Wait(1)
-          same => n,Playback(hello-world)
+          same => n(busy),VoiceMail(${EXTEN}@voicemail,ub)
           same => n,Hangup()
-          exten => 102,1,Answer()
-          same => n,Wait(1)
-          same => n,Playback(hello-world)
+          same => n(noanswer),VoiceMail(${EXTEN}@voicemail,u)
           same => n,Hangup()
+          same => n(unavail),VoiceMail(${EXTEN}@voicemail,u)
+          same => n,Hangup()
+
+          ; ========== FEATURES ==========
+          [features]
+          exten => *98,1,Noop(Check Voicemail)
+          same => n,VoiceMailMain(${CALLERID(num)}@voicemail)
+          same => n,Hangup()
+
+          exten => *97,1,Noop(Check all Voicemail)
+          same => n,VoiceMailMain(@voicemail)
+          same => n,Hangup()
+
+          ; ========== CONFERENCIA ==========
+          [conferencia]
+          exten => 300,1,Noop(Sala de conferencia)
+          same => n,Answer()
+          same => n,ConfBridge(300,default_bridge)
+          same => n,Hangup()
+
+          ; ========== ESTACIONAMIENTO ==========
+          [estacionamiento]
+          exten => _700#,1,Noop(Estacionar llamada)
+          same => n,Park()
+          same => n,Hangup()
+
+          ; ========== LLAMADAS EXTERNAS (futuro trunk) ==========
+          [from-external]
+          exten => s,1,Answer()
+          same => n,Wait(1)
+          same => n,Playback(welcome)
+          same => n,Playback(please-spin)
+          same => n,Hangup()
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
+
+    - name: "VOIP — Configurar voicemail.conf"
+      copy:
+        dest: /etc/asterisk/voicemail.conf
+        content: |
+          [general]
+          maxmsg=100
+          maxsecs=300
+          minsecs=3
+          attach=yes
+          format=wav49|gsm|wav
+          serveremail=voip@AXIOM.local
+          fromstring=VoIP AXIOM
+
+          [voicemail]
+          100 => {{ sip_secret }},Jefazo,jefazo@AXIOM.local
+          101 => {{ sip_secret }},Secretaria,secretaria@AXIOM.local
+          102 => {{ sip_secret }},Contador,contador@AXIOM.local
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
+
+    - name: "VOIP — Configurar confbridge.conf"
+      copy:
+        dest: /etc/asterisk/confbridge.conf
+        content: |
+          [default_bridge]
+          type=bridge
+          bridge_type=dtmf
+          bridge_max_members=10
+
+          [default_user]
+          type=user
+          announce_user_count=yes
+          music_on_hold_when_empty=yes
         force: yes
         mode: "0644"
         owner: asterisk
         group: asterisk
 
     - name: "VOIP — Configurar manager.conf"
-      ansible.builtin.copy:
+      copy:
         dest: /etc/asterisk/manager.conf
         content: |
+          [general]
+          enabled = yes
+          port = 5038
+          bindaddr = 0.0.0.0
+          timestampevents = yes
+
           [admin]
-          secret = admin123
-          read = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
-          write = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan
+          secret = {{ admin_password }}
+          deny = 0.0.0.0/0.0.0.0
+          permit = 127.0.0.1/255.255.255.0
+          permit = 192.168.0.0/255.255.0.0
+          read = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan
+          write = system,call,log,verbose,command,agent,user,config,dtmf,reporting,cdr,dialplan
         force: yes
         mode: "0644"
         owner: asterisk
         group: asterisk
 
-    - name: "VOIP — Iniciar Asterisk"
-      ansible.builtin.shell: |
-        systemctl enable asterisk
-        systemctl restart asterisk
-        sleep 5
-        echo "=== Asterisk status ==="
-        systemctl status asterisk --no-pager | head -10
-        echo "=== Asterisk version ==="
-        asterisk -rx "core show version" 2>/dev/null || echo "CLI no responde"
-        echo "Asterisk iniciado"
+    - name: "VOIP — Configurar features.conf"
+      copy:
+        dest: /etc/asterisk/features.conf
+        content: |
+          [general]
+          parkext => 700
+          parkpos => 701-720
+          parktime => 60
+          transferdigittimeout => 3
+          featuredigittimeout => 1000
 
-    - name: "VOIP — Recargar Asterisk"
-      ansible.builtin.shell: |
-        asterisk -rx "sip reload" 2>/dev/null || true
-        asterisk -rx "dialplan reload" 2>/dev/null || true
-        sleep 2
-        echo "Asterisk recargado"
+          [featuremap]
+          blindxfer => #1
+          atxfer => *2
+          automon => *1
+        force: yes
+        mode: "0644"
+        owner: asterisk
+        group: asterisk
 
-    - name: "VOIP — Crear pagina web"
-      ansible.builtin.copy:
-        dest: /var/www/html/vitalpbx/index.html
+    - name: "VOIP — Configurar PHP"
+      shell: |
+        PHPINI="/etc/php/8.3/apache2/php.ini"
+        if [ -f "$PHPINI" ]; then
+          sed -i 's/;date.timezone =/date.timezone = "America\/Lima"/' "$PHPINI"
+          sed -i 's/max_execution_time = 30/max_execution_time = 300/' "$PHPINI"
+          sed -i 's/upload_max_filesize = 2M/upload_max_filesize = 64M/' "$PHPINI"
+          echo "PHP configurado"
+        else
+          echo "WARNING: PHP ini no encontrado"
+        fi
+
+    - name: "VOIP — Configurar Apache"
+      copy:
+        dest: /etc/apache2/sites-available/voip.conf
+        content: |
+          <VirtualHost *:80>
+              ServerName voip.AXIOM.local
+              DocumentRoot /var/www/html/voip
+              <Directory /var/www/html/voip>
+                  Options -Indexes +FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+          </VirtualHost>
+        force: yes
+        mode: "0644"
+
+    - name: "VOIP — Habilitar Apache"
+      shell: |
+        a2enmod php8.3 rewrite 2>/dev/null || true
+        a2dissite 000-default.conf 2>/dev/null || true
+        a2ensite voip.conf 2>/dev/null || true
+        systemctl restart apache2
+
+    - name: "VOIP — Crear pagina web del PBX"
+      copy:
+        dest: /var/www/html/voip/index.html
         content: |
           <!DOCTYPE html>
           <html lang="es">
           <head>
               <meta charset="UTF-8">
-              <title>VoIP - vm-voip01</title>
+              <title>AXIOM - VoIP PBX</title>
               <style>
-                  body { font-family: Arial; background: #1a1a2e; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                  .container { text-align: center; background: #16213e; padding: 40px; border-radius: 10px; }
-                  h1 { color: #e94560; }
-                  .cred { background: #0f3460; padding: 15px; border-radius: 5px; margin-top: 20px; }
+                  * { margin: 0; padding: 0; box-sizing: border-box; }
+                  body { font-family: 'Segoe UI', Arial; background: linear-gradient(135deg, #0f0c29, #302b63, #24243e); color: #fff; min-height: 100vh; display: flex; justify-content: center; align-items: center; }
+                  .container { max-width: 700px; width: 90%; background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); border-radius: 16px; padding: 40px; border: 1px solid rgba(255,255,255,0.1); }
+                  h1 { text-align: center; color: #e94560; font-size: 2em; margin-bottom: 5px; }
+                  .subtitle { text-align: center; color: #aaa; margin-bottom: 30px; }
+                  .ext-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 25px; }
+                  .ext-card { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 15px; text-align: center; }
+                  .ext-num { font-size: 2em; font-weight: bold; color: #e94560; }
+                  .ext-name { color: #ccc; margin: 5px 0; }
+                  .ext-pass { color: #888; font-size: 0.85em; }
+                  .section { background: rgba(255,255,255,0.05); border-radius: 10px; padding: 15px; margin-bottom: 15px; }
+                  .section h3 { color: #e94560; margin-bottom: 10px; }
+                  .row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+                  .row:last-child { border: none; }
+                  .label { color: #aaa; }
+                  .value { color: #fff; font-family: monospace; }
               </style>
           </head>
           <body>
               <div class="container">
-                  <h1>ASTERISK VoIP</h1>
-                  <p>vm-voip01 - VLAN 50</p>
-                  <div class="cred">
-                      <p><strong>Extensiones SIP:</strong></p>
-                      <p>100 / 100secret</p>
-                      <p>101 / 101secret</p>
-                      <p>102 / 102secret</p>
+                  <h1>AXIOM VoIP PBX</h1>
+                  <p class="subtitle">vm-voip01 &mdash; Asterisk &mdash; VLAN 50</p>
+
+                  <div class="ext-grid">
+                      <div class="ext-card">
+                          <div class="ext-num">100</div>
+                          <div class="ext-name">Jefazo</div>
+                      </div>
+                      <div class="ext-card">
+                          <div class="ext-num">101</div>
+                          <div class="ext-name">Secretaria</div>
+                      </div>
+                      <div class="ext-card">
+                          <div class="ext-num">102</div>
+                          <div class="ext-name">Contador</div>
+                      </div>
+                  </div>
+
+                  <div class="section">
+                      <h3>Configuracion SIP</h3>
+                      <div class="row"><span class="label">PBX IP</span><span class="value">192.168.15.11</span></div>
+                      <div class="row"><span class="label">Puerto SIP</span><span class="value">5060</span></div>
+                      <div class="row"><span class="label">Password</span><span class="value">rol.123</span></div>
+                      <div class="row"><span class="label">Codec</span><span class="value">ulaw, alaw, gsm</span></div>
+                  </div>
+
+                  <div class="section">
+                      <h3>Features</h3>
+                      <div class="row"><span class="label">Voicemail</span><span class="value">*98</span></div>
+                      <div class="row"><span class="label">Conferencia</span><span class="value">300</span></div>
+                      <div class="row"><span class="label">Estacionar</span><span class="value">700#</span></div>
+                      <div class="row"><span class="label">Transferencia ciega</span><span class="value">#1</span></div>
+                      <div class="row"><span class="label">Transferencia atendida</span><span class="value">*2</span></div>
+                  </div>
+
+                  <div class="section">
+                      <h3>Manager API</h3>
+                      <div class="row"><span class="label">Puerto</span><span class="value">5038</span></div>
+                      <div class="row"><span class="label">Usuario</span><span class="value">admin</span></div>
+                      <div class="row"><span class="label">Password</span><span class="value">rol.123</span></div>
                   </div>
               </div>
           </body>
@@ -363,25 +400,66 @@
         owner: www-data
         group: www-data
 
+    - name: "VOIP — Configurar fail2ban"
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime = 3600
+          findtime = 600
+          maxretry = 5
+
+          [sshd]
+          enabled = true
+          port = 22
+          filter = sshd
+          logpath = /var/log/auth.log
+
+          [asterisk]
+          enabled = true
+          port = 5060,5061
+          filter = asterisk
+          logpath = /var/log/asterisk/full
+          maxretry = 10
+          bantime = 7200
+        force: yes
+
+    - name: "VOIP — Iniciar servicios"
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - fail2ban
+        - asterisk
+        - apache2
+
+    - name: "VOIP — Recargar configuracion Asterisk"
+      shell: |
+        sleep 3
+        asterisk -rx "sip reload" 2>/dev/null || true
+        asterisk -rx "dialplan reload" 2>/dev/null || true
+        asterisk -rx "voicemail reload" 2>/dev/null || true
+        asterisk -rx "manager reload" 2>/dev/null || true
+
     - name: "VOIP — Verificacion final"
-      ansible.builtin.shell: |
+      shell: |
         echo "=== SERVICIOS ==="
         systemctl is-active asterisk && echo "Asterisk: OK" || echo "Asterisk: FAIL"
         systemctl is-active apache2 && echo "Apache: OK" || echo "Apache: FAIL"
         systemctl is-active fail2ban && echo "Fail2ban: OK" || echo "Fail2ban: FAIL"
         echo ""
         echo "=== PUERTOS ==="
-        ss -tlnp | grep -E '80|:443|5060|10000' || echo "Ninguno"
-        echo ""
-        echo "=== ACCESOS ==="
-        echo "Web: http://192.168.15.11/"
-        echo "Asterisk CLI: sudo asterisk -r"
+        ss -tlnp | grep -E ':80|:5038|:5060' || echo "Ninguno"
         echo ""
         echo "=== EXTENSIONES ==="
         asterisk -rx "sip show peers" 2>/dev/null || echo "No se pudo mostrar peers"
+        echo ""
+        echo "=== DIALPLAN ==="
+        asterisk -rx "dialplan show from-internal" 2>/dev/null || echo "No se pudo mostrar dialplan"
       changed_when: false
       register: verif
 
     - name: "RESULT"
-      ansible.builtin.debug:
+      debug:
         msg: "{{ verif.stdout_lines }}"
