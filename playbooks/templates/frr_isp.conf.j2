@@ -26,16 +26,15 @@ router bgp {{ bgp_local_as }}
  neighbor {{ bgp_neighbor_ip }} remote-as {{ bgp_neighbor_as }}
  neighbor {{ bgp_neighbor_ip }} description "pfSense WAN"
 
- address-family ipv4 unicast
-  ! Redes que anunciamos hacia pfSense
-  network {{ lan_network }}        ! Red LAN del ISP (192.168.x.0/24)
-  redistribute connected           ! Redes conectadas (WAN 172.17.25.x)
-  ! Anunciar default route al pfSense
-  neighbor {{ bgp_neighbor_ip }} default-originate
-  ! Aceptar todo lo que anuncie pfSense
-  neighbor {{ bgp_neighbor_ip }} activate
-  neighbor {{ bgp_neighbor_ip }} soft-reconfiguration inbound
- exit-address-family
+  address-family ipv4 unicast
+   ! Redes que anunciamos hacia pfSense
+   network {{ lan_network }}        ! Red LAN del ISP (192.168.x.0/24)
+   ! Anunciar default route al pfSense
+   neighbor {{ bgp_neighbor_ip }} default-originate
+   ! Aceptar todo lo que anuncie pfSense
+   neighbor {{ bgp_neighbor_ip }} activate
+   neighbor {{ bgp_neighbor_ip }} soft-reconfiguration inbound
+  exit-address-family
 !
 ! ============================================================================
 ! IP Forwarding (si no está por sysctl ya)
