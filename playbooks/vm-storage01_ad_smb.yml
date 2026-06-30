@@ -81,8 +81,8 @@
              read only = no
              create mask = 0770
              directory mask = 0770
-             force group = AXIOM-Administradores
-             valid users = @AXIOM-Administradores
+             force group = axiom-administradores
+             valid users = @axiom-administradores
              hosts allow = 192.168.0.0/16
              comment = Jefatura - Solo personal administrativo
 
@@ -92,8 +92,8 @@
              read only = no
              create mask = 0775
              directory mask = 0775
-             force group = AXIOM-Secretaria
-             valid users = @AXIOM-Secretaria @AXIOM-Administradores
+             force group = axiom-secretaria
+             valid users = @axiom-secretaria @axiom-administradores
              hosts allow = 192.168.0.0/16
              comment = Secretaria
 
@@ -103,8 +103,8 @@
              read only = no
              create mask = 0775
              directory mask = 0775
-             force group = AXIOM-Usuarios
-             valid users = @AXIOM-Usuarios @AXIOM-Secretaria @AXIOM-Administradores
+             force group = axiom-usuarios
+             valid users = @axiom-usuarios @axiom-secretaria @axiom-administradores
              hosts allow = 192.168.0.0/16
              comment = Acceso general
 
@@ -122,7 +122,7 @@
              read only = yes
              create mask = 0755
              directory mask = 0755
-             valid users = @AXIOM-Usuarios @AXIOM-Secretaria @AXIOM-Administradores
+             valid users = @axiom-usuarios @axiom-secretaria @axiom-administradores
              hosts allow = 192.168.0.0/16
              comment = Carpeta publica - Solo lectura
         mode: "0644"
@@ -189,9 +189,9 @@
         mkdir -p /srv/samba/Secretaria/{Actas,Correspondencia}
         mkdir -p /srv/samba/Usuarios/General
         chown root:root /srv/samba
-        chown root:"AXIOM-Administradores" /srv/samba/Jefatura
-        chown root:"AXIOM-Secretaria" /srv/samba/Secretaria
-        chown root:"AXIOM-Usuarios" /srv/samba/Usuarios
+        chown root:"axiom-administradores" /srv/samba/Jefatura
+        chown root:"axiom-secretaria" /srv/samba/Secretaria
+        chown root:"axiom-usuarios" /srv/samba/Usuarios
         chown root:root /srv/samba/Publico
         chown root:root /srv/samba/homes
         chmod 0770 /srv/samba/Jefatura
@@ -203,7 +203,7 @@
     - name: "14. Testear acceso a share con smbclient"
       shell: |
         echo "=== Test smbclient Secretaria ==="
-        smbclient '//127.0.0.1/Secretaria' -U 'AXIOM\secretaria%secre.123' -c 'ls'
+        smbclient '//127.0.0.1/Secretaria' -U 'AXIOM\secretaria%secre.123' -c 'ls' 2>&1
       ignore_errors: true
 
     - name: "15. Resumen final"
