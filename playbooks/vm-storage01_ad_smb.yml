@@ -184,9 +184,15 @@
 
     - name: "13. Crear carpetas de shares con permisos correctos"
       shell: |
-        mkdir -p /srv/samba/{Jefatura,Secretaria,Usuarios,Publico,homes}
-        mkdir -p /srv/samba/Jefatura/{Proyectos,Finanzas}
-        mkdir -p /srv/samba/Secretaria/{Actas,Correspondencia}
+        mkdir -p /srv/samba/Jefatura
+        mkdir -p /srv/samba/Secretaria
+        mkdir -p /srv/samba/Usuarios
+        mkdir -p /srv/samba/Publico
+        mkdir -p /srv/samba/homes
+        mkdir -p /srv/samba/Jefatura/Proyectos
+        mkdir -p /srv/samba/Jefatura/Finanzas
+        mkdir -p /srv/samba/Secretaria/Actas
+        mkdir -p /srv/samba/Secretaria/Correspondencia
         mkdir -p /srv/samba/Usuarios/General
         chown root:root /srv/samba
         chown root:"axiom-administradores" /srv/samba/Jefatura
