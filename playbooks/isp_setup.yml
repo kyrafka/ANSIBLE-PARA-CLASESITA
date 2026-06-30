@@ -1,16 +1,16 @@
 ---
 # ============================================================================
-# isp_setup.yml — Configura ISP_CREATE1 o ISP_CREATE2 completo
+# isp_setup.yml — Configura ISP_CREATE1 o ISP_CREATE2
 # ============================================================================
-# Ejecutar ANTES de isp_bgp.yml
-# Configura: netplan + NAT + persistencia
+# Solo configura: netplan + NAT (sin BGP)
+# Rutas estaticas se manejan en pfSense
 #
 # Uso:
 #   ISP_CREATE1: sudo ansible-playbook playbooks/isp_setup.yml -e "isp_id=1"
 #   ISP_CREATE2: sudo ansible-playbook playbooks/isp_setup.yml -e "isp_id=2"
 # ============================================================================
 
-- name: "Configurar ISP — Netplan + NAT + BGP"
+- name: "Configurar ISP — Netplan + NAT (sin BGP)"
   hosts: localhost
   connection: local
   become: true
@@ -21,72 +21,48 @@
 
     isp_config:
       "1":
-        as: "65001"
         wan_ip: "172.17.25.49/24"
         wan_gw: "172.17.25.121"
         wan_iface: "ens34"
         lan_iface: "ens35"
         lan_ip: "192.168.2.1/24"
-        pf_ip: "192.168.2.2"
-        bgp_neighbor_as: "65000"
       "2":
-        as: "65002"
         wan_ip: "172.17.25.88/24"
         wan_gw: "172.17.25.121"
         wan_iface: "ens34"
         lan_iface: "ens35"
         lan_ip: "192.168.1.1/24"
-        pf_ip: "192.168.1.2"
-        bgp_neighbor_as: "65000"
 
     current_isp: "{{ isp_config[isp_id | string] }}"
 
   tasks:
     - name: "ISP — Extraer parametros"
-      ansible.builtin.set_fact:
-        isp_as: "{{ current_isp.as }}"
+      set_fact:
         isp_wan_iface: "{{ current_isp.wan_iface }}"
         isp_lan_iface: "{{ current_isp.lan_iface }}"
         isp_lan_ip: "{{ current_isp.lan_ip }}"
-        isp_pf_ip: "{{ current_isp.pf_ip }}"
-        isp_bgp_neighbor_as: "{{ current_isp.bgp_neighbor_as }}"
 
-    # =========================================================================
-    # 1. FRR — Instalar PRIMERO para crear usuario frr
-    # =========================================================================
-    - name: "BGP — Instalar FRR"
-      ansible.builtin.apt:
-        name:
-          - frr
-        state: present
-        update_cache: yes
-
-    - name: "BGP — Crear directorio de log FRR"
-      ansible.builtin.file:
-        path: /var/log/frr
-        state: directory
-        mode: "0755"
     - name: "NET — Backup netplan anterior"
-      ansible.builtin.shell: |
+      shell: |
         [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.isp.bak.$(date +%s)
         echo "Backup done"
 
     - name: "NET — Crear netplan para ISP {{ isp_id }}"
-      ansible.builtin.copy:
+      copy:
         dest: "/etc/netplan/50-cloud-init.yaml"
         content: |
           network:
             version: 2
             renderer: networkd
             ethernets:
-              {{ isp_wan_iface }}:
+              {{ current_isp.wan_iface }}:
                 addresses:
                   - {{ current_isp.wan_ip }}
                 gateway4: {{ current_isp.wan_gw }}
                 optional: true
-              {{ isp_lan_iface }}:
+              {{ current_isp.lan_iface }}:
                 addresses:
-                  - {{ isp_lan_ip }}
+                  - {{ current_isp.lan_ip }}
                 optional: true
         owner: root
         group: root
@@ -94,14 +70,14 @@
         force: yes
 
     - name: "NET — Generar y aplicar netplan"
-      ansible.builtin.shell: |
+      shell: |
         netplan generate
         netplan apply
         sleep 3
         echo "Netplan applied"
 
     - name: "NET — Verificar interfaces"
-      ansible.builtin.shell: |
+      shell: |
         echo "=== WAN ({{ isp_wan_iface }}) ==="
         ip addr show {{ isp_wan_iface }} | grep "inet "
         echo "=== LAN ({{ isp_lan_iface }}) ==="
@@ -109,32 +85,28 @@
         echo "=== RUTA DEFAULT ==="
         ip route | grep default
 
-    # =========================================================================
-    # 2. NAT — Habilitar forwarding y MASQUERADE
-    # =========================================================================
     - name: "NAT — Habilitar IP Forwarding"
-      ansible.builtin.shell: |
+      shell: |
         echo 1 > /proc/sys/net/ipv4/ip_forward
         echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-isp-nat.conf
         sysctl -p /etc/sysctl.d/99-isp-nat.conf
-        echo "IP Forwarding enabled"
 
-    - name: "NAT — Aplicar MASQUERADE (wan -> lan)"
-      ansible.builtin.shell: |
-        iptables -t nat -C POSTROUTING -o {{ isp_wan_iface }} -j MASQUERADE 2>/dev/null || \
-        iptables -t nat -A POSTROUTING -o {{ isp_wan_iface }} -j MASQUERADE
-        echo "NAT MASQUERADE applied on {{ isp_wan_iface }}"
+    - name: "NAT — Aplicar MASQUERADE (lan -> wan)"
+      shell: |
+        iptables -t nat -C POSTROUTING -o {{ current_isp.wan_iface }} -j MASQUERADE 2>/dev/null || \
+        iptables -t nat -A POSTROUTING -o {{ current_isp.wan_iface }} -j MASQUERADE
+        echo "NAT MASQUERADE applied on {{ current_isp.wan_iface }}"
 
     - name: "NAT — Permitir forwarding entre interfaces"
-      ansible.builtin.shell: |
-        iptables -C FORWARD -i {{ isp_lan_iface }} -o {{ isp_wan_iface }} -j ACCEPT 2>/dev/null || \
-        iptables -I FORWARD -i {{ isp_lan_iface }} -o {{ isp_wan_iface }} -j ACCEPT
-        iptables -C FORWARD -i {{ isp_wan_iface }} -o {{ isp_lan_iface }} -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
-        iptables -I FORWARD -i {{ isp_wan_iface }} -o {{ isp_lan_iface }} -m state --state RELATED,ESTABLISHED -j ACCEPT
+      shell: |
+        iptables -C FORWARD -i {{ current_isp.lan_iface }} -o {{ current_isp.wan_iface }} -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i {{ current_isp.lan_iface }} -o {{ current_isp.wan_iface }} -j ACCEPT
+        iptables -C FORWARD -i {{ current_isp.wan_iface }} -o {{ current_isp.lan_iface }} -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i {{ current_isp.wan_iface }} -o {{ current_isp.lan_iface }} -m state --state RELATED,ESTABLISHED -j ACCEPT
         echo "Forward rules applied"
 
     - name: "NAT — Guardar reglas persistente"
-      ansible.builtin.apt:
+      apt:
         name:
           - iptables-persistent
           - netfilter-persistent
@@ -142,22 +114,18 @@
         update_cache: yes
 
     - name: "NAT — Guardar reglas iptables"
-      ansible.builtin.shell: |
+      shell: |
         netfilter-persistent save 2>/dev/null || true
-        echo "NAT rules saved"
 
-    # =========================================================================
-    # DNS — Configurar resolv.conf (deshabilitar systemd-resolved)
-    # =========================================================================
     - name: "DNS — Deshabilitar systemd-resolved"
-      ansible.builtin.systemd:
+      systemd:
         name: systemd-resolved
         state: stopped
         enabled: no
       ignore_errors: true
 
-    - name: "DNS — Crear resolv.conf con Google DNS"
-      ansible.builtin.copy:
+    - name: "DNS — Crear resolv.conf"
+      copy:
         dest: /etc/resolv.conf
         content: |
           nameserver 8.8.8.8
@@ -168,90 +136,34 @@
         mode: "0644"
         force: yes
 
-    # =========================================================================
-    # 3. FRR + BGP
-    # =========================================================================
-    - name: "BGP — Pre-calcular red LAN para BGP"
-      ansible.builtin.set_fact:
-        lan_network_bgp: "{{ isp_lan_ip | regex_replace('^(.*)\\.(.*)$', '\\1.0') }}/24"
+    - name: "BGP — Desactivar FRR (no necesitamos BGP)"
+      shell: |
+        systemctl stop frr 2>/dev/null || true
+        systemctl disable frr 2>/dev/null || true
+        echo "FRR/BGP desactivado"
+      ignore_errors: true
 
-    - name: "BGP — Crear frr.conf para ISP {{ isp_id }}"
-      ansible.builtin.template:
-        src: "frr_isp.conf.j2"
-        dest: "/etc/frr/frr.conf"
-        mode: "0640"
-        backup: yes
-      vars:
-        hostname: "ISP-CREATE{{ isp_id }}"
-        router_id: "{{ isp_lan_ip | regex_replace('/.*', '') }}"
-        bgp_local_as: "{{ isp_as }}"
-        bgp_neighbor_ip: "{{ isp_pf_ip }}"
-        bgp_neighbor_as: "{{ isp_bgp_neighbor_as }}"
-        lan_network: "{{ lan_network_bgp }}"
-        wan_network: "{{ current_isp.wan_ip }}"
-      notify: "Restart FRR"
-
-    - name: "BGP — Habilitar bgpd en daemons"
-      ansible.builtin.copy:
-        dest: /etc/frr/daemons
-        content: |
-          # FRR daemons
-          zebra=yes
-          bgpd=yes
-          ospfd=no
-          ripd=no
-          ripngd=no
-          isisd=no
-          pimd=no
-          babeld=no
-          sharpd=no
-          pbrd=no
-          bfdd=no
-          fabricd=no
-          vrrpd=no
-          pathd=no
-        mode: "0640"
-      notify: "Restart FRR"
-
-    - name: "BGP — Asegurar que FRR esta corriendo"
-      ansible.builtin.systemd:
-        name: frr
-        state: started
-        enabled: yes
-        daemon_reload: yes
-
-    # =========================================================================
-    # 4. VERIFICACION
-    # =========================================================================
     - name: "VERIF — Estado final"
-      ansible.builtin.shell: |
+      shell: |
         echo "=============================================="
-        echo "ISP_CREATE{{ isp_id }} - RESUMEN"
+        echo "ISP_CREATE{{ isp_id }} - RESUMEN (Solo NAT)"
         echo "=============================================="
         echo ""
         echo "INTERFACES:"
-        echo "  WAN  ({{ isp_wan_iface }}): $(ip addr show {{ isp_wan_iface }} | grep 'inet ' | awk '{print $2}')"
-        echo "  LAN  ({{ isp_lan_iface }}): $(ip addr show {{ isp_lan_iface }} | grep 'inet ' | awk '{print $2}')"
+        echo "  WAN  ({{ current_isp.wan_iface }}): $(ip addr show {{ current_isp.wan_iface }} | grep 'inet ' | awk '{print $2}')"
+        echo "  LAN  ({{ current_isp.lan_iface }}): $(ip addr show {{ current_isp.lan_iface }} | grep 'inet ' | awk '{print $2}')"
         echo ""
         echo "NAT:"
         iptables -t nat -L POSTROUTING -n | grep MASQUERADE
         echo ""
-        echo "BGP:"
-        vtysh -c "show bgp summary" 2>/dev/null || echo "FRR no responded"
+        echo "BGP: DESACTIVADO (rutas estaticas en pfSense)"
         echo ""
         echo "FRR STATUS:"
-        systemctl is-active frr
+        systemctl is-active frr 2>/dev/null || echo "inactivo"
         echo "=============================================="
       changed_when: false
       register: verif
 
     - name: "VERIF — Mostrar resultado"
-      ansible.builtin.debug:
+      debug:
         msg: "{{ verif.stdout_lines }}"
-
-  handlers:
-    - name: "Restart FRR"
-      ansible.builtin.systemd:
-        name: frr
-        state: restarted
-        daemon_reload: yes
