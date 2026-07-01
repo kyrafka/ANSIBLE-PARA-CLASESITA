@@ -1,0 +1,276 @@
+---
+- name: "Configurar HAProxy con balanceo real"
+  hosts: vm-web01
+  become: true
+  gather_facts: true
+
+  vars:
+    haproxy_stats_user: "admin"
+    haproxy_stats_pass: "H4proxy2024!"
+
+  tasks:
+    - name: "HAProxy — Matar lo que esté usando puerto 80 (liberar antes de cambiar)"
+      shell: |
+        echo "=== Puerto 80 antes ==="
+        sudo ss -tulpn | grep :80 || echo "Nada en 80"
+        echo ""
+        echo "=== Matando procesos en puerto 80 ==="
+        sudo fuser -k 80/tcp 2>/dev/null || echo "No habia nada que matar"
+        sleep 2
+        echo ""
+        echo "=== Puerto 80 despues ==="
+        sudo ss -tulpn | grep :80 || echo "Liberado"
+
+    - name: "HAProxy — Cambiar puerto Nginx a 8080"
+      replace:
+        path: /etc/nginx/sites-available/default
+        regexp: "listen\s+80\s+default_server"
+        replace: "listen 8080 default_server"
+
+    - name: "HAProxy — Cambiar puerto Nginx IPv6 a 8080"
+      replace:
+        path: /etc/nginx/sites-available/default
+        regexp: "listen\s+\[::\]:80\s+default_server"
+        replace: "listen [::]:8080 default_server"
+
+    - name: "HAProxy — Iniciar Nginx en puerto 8080"
+      systemd:
+        name: nginx
+        state: started
+
+    - name: "HAProxy — Verificar Nginx en 8080"
+      shell: |
+        sleep 2
+        echo "=== Puerto 8080 ==="
+        ss -tulpn | grep 8080 | grep nginx || echo "Nginx no esta en 8080"
+        echo ""
+        echo "=== Test WordPress ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:8080/ || echo "FAIL"
+        echo ""
+        echo "=== Puerto 80 ahora ==="
+        ss -tulpn | grep :80 || echo "Puerto 80 libre"
+
+    - name: "HAProxy — Verificar que esta instalado"
+      systemd:
+        name: haproxy
+        state: started
+        enabled: true
+
+    - name: "HAProxy — Crear config real"
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          # ============================================================
+          # HAProxy Configuration — AXIOM TECH
+          # Balanceo: WordPress + Dolibarr + futuras apps
+          # ============================================================
+
+          global
+              log /dev/log local0
+              log /dev/log local1 notice
+              chroot /var/lib/haproxy
+              stats socket /run/haproxy/admin.sock mode 660 level admin
+              stats timeout 30s
+              user haproxy
+              group haproxy
+              daemon
+              maxconn 4096
+              tune.ssl.default-dh-param 2048
+
+          defaults
+              log     global
+              mode    http
+              option  httplog
+              option  dontlognull
+              option  http-server-close
+              option  forwardfor except 127.0.0.0/8
+              option  redispatch
+              retries 3
+              timeout connect 5000
+              timeout client  50000
+              timeout server  50000
+              errorfile 400 /etc/haproxy/errors/400.http
+              errorfile 403 /etc/haproxy/errors/403.http
+              errorfile 503 /etc/haproxy/errors/503.http
+
+          # ============================================================
+          # FRONTEND — Escucha en todas las IPs
+          # ============================================================
+          frontend http_front
+              bind *:80
+              bind *:443 ssl crt /etc/ssl/private/haproxy.pem
+
+              # Estadisticas (solo red interna)
+              acl network_internal src 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
+              acl network_mgmt src 192.168.17.0/27
+
+              # Reglas de enrutamiento por URL
+              acl is_dolibarr path_beg /dolibarr /erp /api
+              acl is_wordpress path_beg /wp-admin /wp-login /wp-content /wp-includes /blog
+              acl is_webmail path_beg /webmail /roundcube /mail
+              acl is_voip path_beg /voip /asterisk /pbx
+
+              # Health check
+              http-check expect status 200
+
+              # Routing
+              use_backend dolibarr_backend if is_dolibarr
+              use_backend wordpress_backend if is_wordpress
+              use_backend webmail_backend if is_webmail
+              use_backend voip_backend if is_voip
+              use_backend wordpress_backend if !is_dolibarr !is_webmail !is_voip
+
+              default_backend wordpress_backend
+
+          # ============================================================
+          # BACKENDS
+          # ============================================================
+
+          # --- WordPress (vm-web01) ---
+          backend wordpress_backend
+              option httpchk GET /wp-admin/installed.php HTTP/1.0
+              http-check expect status 200,301,302,304
+              option httplog
+              option forwardfor
+              server wordpress localhost:8080 check inter 3s fall 3 rise 2
+
+          # --- Dolibarr ERP (vm-services01) ---
+          backend dolibarr_backend
+              option httpchk GET /htdocs/install.php HTTP/1.0
+              http-check expect status 200,301,302,404
+              option httplog
+              option forwardfor
+              server dolibarr 192.168.13.11:80 check inter 3s fall 3 rise 2
+
+          # --- Webmail (vm-services01) ---
+          backend webmail_backend
+              option httpchk GET /webmail/ HTTP/1.0
+              http-check expect status 200,301,302
+              option httplog
+              option forwardfor
+              server webmail 192.168.13.11:80 check inter 3s fall 3 rise 2
+
+          # --- VoIP Dashboard (vm-voip01) ---
+          backend voip_backend
+              option httpchk GET / HTTP/1.0
+              http-check expect status 200,301,302
+              option httplog
+              option forwardfor
+              server voip 192.168.15.11:80 check inter 3s fall 3 rise 2
+
+          # ============================================================
+          # STATS — Solo desde red de monitoreo
+          # ============================================================
+          listen stats
+              bind 192.168.17.11:8404
+              mode http
+              stats enable
+              stats uri /haproxy
+              stats refresh 30s
+              stats realm "HAProxy Stats"
+              stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_pass }}
+              acl network_mgmt src 192.168.17.0/27
+              http-request allow if network_mgmt
+              http-request deny if !network_mgmt
+
+          # ============================================================
+          # HEALTH CHECK — endpoint para monitoreo Zabbix
+          # ============================================================
+          listen health_check
+              bind :8888
+              mode http
+              option httpchk GET /
+              http-check expect status 200
+              server healthcheck 127.0.0.1:8080 check inter 5s downinter 10s
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "HAProxy — Crear certificado SSL auto-firmado"
+      shell: |
+        mkdir -p /etc/ssl/private
+        if [ ! -f /etc/ssl/private/haproxy.pem ]; then
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout /etc/ssl/private/haproxy.pem \
+            -out /etc/ssl/private/haproxy.pem \
+            -subj "/C=PE/L=Lima/O=AXIOM/CN=axiom.local" \
+            -days 365 2>/dev/null
+          chmod 600 /etc/ssl/private/haproxy.pem
+          echo "Certificado creado"
+        else
+          echo "Certificado ya existe"
+        fi
+
+    - name: "HAProxy — Crear pagina de error 503"
+      copy:
+        dest: /etc/haproxy/errors/503.http
+        content: |
+          HTTP/1.1 503 Service Unavailable
+          Cache-Control: no-cache
+          Connection: close
+          Content-Type: text/html
+
+          <html><body><h1>503 - Backend no disponible</h1>
+          <p>Todos los servidores de aplicacion estan fuera de servicio.</p>
+          <p>Intentelo mas tarde.</p>
+          </body></html>
+        owner: root
+        group: root
+        mode: "0644"
+      ignore_errors: true
+
+    - name: "HAProxy — Recargar con nueva config"
+      systemd:
+        name: haproxy
+        state: reloaded
+
+    handlers:
+      - name: "Reload Nginx"
+        systemd:
+          name: nginx
+          state: restarted
+
+    - name: "HAProxy — Verificar estado"
+      shell: |
+        echo "=== Servicios ==="
+        systemctl status haproxy | head -5
+        echo ""
+        echo "=== Puertos escuchando ==="
+        ss -tulpn | grep -E ':80|:443|:8888|:8404'
+        echo ""
+        echo "=== Health check ==="
+        curl -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:8888/
+        echo ""
+        echo "=== Test backends ==="
+        echo "WordPress (localhost:8080):"
+        curl -s -o /dev/null -w "  HTTP %{http_code}\n" http://localhost:8080/ || echo "  FAIL"
+        echo "Dolibarr (192.168.13.11):"
+        curl -s -o /dev/null -w "  HTTP %{http_code}\n" http://192.168.13.11/htdocs/ || echo "  FAIL"
+        echo "VoIP (192.168.15.11):"
+        curl -s -o /dev/null -w "  HTTP %{http_code}\n" http://192.168.15.11/ || echo "  FAIL"
+      register: haproxy_status
+      changed_when: false
+
+    - name: "HAProxy — Mostrar resultado"
+      debug:
+        msg: "{{ haproxy_status.stdout_lines }}"
+
+    - name: "HAProxy — Resumen"
+      debug:
+        msg:
+          - "=========================================="
+          - "HAProxy CONFIGURADO"
+          - "=========================================="
+          - "Frontend: http://192.168.11.11/ (o VIP)"
+          - "  /wp-*        -> WordPress (localhost:8080)"
+          - "  /dolibarr/*  -> Dolibarr ERP (192.168.13.11)"
+          - "  /webmail/*   -> Webmail (192.168.13.11)"
+          - "  /voip/*      -> VoIP (192.168.15.11)"
+          - ""
+          - "SSL: https://192.168.11.11/ (auto-cert)"
+          - "Stats: http://192.168.17.11:8404/haproxy"
+          - "  User: {{ haproxy_stats_user }}"
+          - "  Pass: {{ haproxy_stats_pass }}"
+          - ""
+          - "Health check: http://192.168.11.11:8888/"
+          - "=========================================="

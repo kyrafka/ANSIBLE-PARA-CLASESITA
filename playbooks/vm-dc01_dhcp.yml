@@ -1,0 +1,117 @@
+---
+- name: "Configurar ISC-DHCP Server en vm-dc01"
+  hosts: vm-dc01
+  become: true
+  gather_facts: true
+
+  vars:
+    domain_name: "AXIOM.local"
+    dns_server: "192.168.16.10"
+    gateway: "192.168.12.1"
+    dhcp_ranges:
+      - subnet: "192.168.12.0/25"
+        start: "192.168.12.50"
+        end: "192.168.12.200"
+        gateway: "192.168.12.1"
+        dns: "192.168.16.10"
+      - subnet: "192.168.21.0/27"
+        start: "192.168.21.10"
+        end: "192.168.21.30"
+        gateway: "192.168.21.1"
+        dns: "192.168.16.10"
+
+  tasks:
+    - name: "DHCP — Instalar isc-dhcp-server"
+      apt:
+        name:
+          - isc-dhcp-server
+        state: present
+        update_cache: yes
+
+    - name: "DHCP — Detener servicio temporalmente"
+      systemd:
+        name: isc-dhcp-server
+        state: stopped
+      ignore_errors: true
+
+    - name: "DHCP — Configurar /etc/dhcp/dhcpd.conf"
+      copy:
+        dest: /etc/dhcp/dhcpd.conf
+        content: |
+          # ============================================================
+          # AXIOM.LOCAL — DHCP Server Configuration
+          # vm-dc01 (192.168.16.10)
+          # ============================================================
+
+          option domain-name "{{ domain_name }}";
+          option domain-name-servers {{ dns_server }};
+          option routers {{ gateway }};
+          default-lease-time 600;
+          max-lease-time 7200;
+          ddns-update-style none;
+          authoritative;
+
+          # --------------------------------------------------
+          # VLAN 20 — Usuarios (192.168.12.0/25)
+          # --------------------------------------------------
+          subnet 192.168.12.0 netmask 255.255.255.128 {
+            range {{ dhcp_ranges[0].start }} {{ dhcp_ranges[0].end }};
+            option routers {{ dhcp_ranges[0].gateway }};
+            option domain-name-servers {{ dhcp_ranges[0].dns }};
+            option subnet-mask 255.255.255.128;
+          }
+
+          # --------------------------------------------------
+          # VLAN 21 — Administracion (192.168.21.0/27)
+          # --------------------------------------------------
+          subnet 192.168.21.0 netmask 255.255.255.224 {
+            range {{ dhcp_ranges[1].start }} {{ dhcp_ranges[1].end }};
+            option routers {{ dhcp_ranges[1].gateway }};
+            option domain-name-servers {{ dhcp_ranges[1].dns }};
+            option subnet-mask 255.255.255.224;
+          }
+
+          # --------------------------------------------------
+          # Reservas estáticas (ejemplos)
+          # --------------------------------------------------
+          # host printer01 {
+          #   hardware ethernet 00:11:22:33:44:55;
+          #   fixed-address 192.168.12.10;
+          # }
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "DHCP — Configurar interfaces en /etc/default/isc-dhcp-server"
+      copy:
+        dest: /etc/default/isc-dhcp-server
+        content: |
+          INTERFACESv4="ens34"
+          INTERFACESv6=""
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "DHCP — Habilitar y arrancar servicio"
+      systemd:
+        name: isc-dhcp-server
+        state: started
+        enabled: true
+
+    - name: "DHCP — Verificar estado"
+      shell: |
+        echo "=== Estado del servicio ==="
+        systemctl status isc-dhcp-server --no-pager | head -10
+        echo ""
+        echo "=== Interfaces escuchando ==="
+        grep -E "^INTERFACES" /etc/default/isc-dhcp-server
+        echo ""
+        echo "=== leases activos ==="
+        if [ -f /var/lib/dhcp/dhcpd.leases ]; then
+          grep "binding state" /var/lib/dhcp/dhcpd.leases | tail -5
+        fi
+      register: dhcp_status
+
+    - name: "DHCP — Mostrar resultado"
+      debug:
+        msg: "{{ dhcp_status.stdout_lines }}"

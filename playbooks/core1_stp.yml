@@ -1,0 +1,124 @@
+---
+- name: "Configurar STP (Spanning Tree) en core1"
+  hosts: core1
+  become: true
+  gather_facts: true
+
+  vars:
+    bridge_ports:
+      - ens36
+      - ens37
+    bridge_name: "br0"
+    stp_priority: "32768"
+    stp_fwd_delay: "4"
+    stp_hello_time: "2"
+
+  tasks:
+    - name: "STP — Verificar que es Ubuntu"
+      fail:
+        msg: "Este playbook es para Ubuntu/Debian con netplan y bridge-utils"
+      when: ansible_os_family != "Debian"
+
+    - name: "STP — Instalar bridge-utils"
+      apt:
+        name:
+          - bridge-utils
+        state: present
+        update_cache: yes
+
+    - name: "STP — Verificar interfaces disponibles"
+      shell: |
+        echo "=== Interfaces físicas ==="
+        ip -br link show | grep -v "^lo\|@\|br0\|vlan"
+        echo ""
+        echo "=== Bridge actual ==="
+        ip -br link show | grep "^br0" || echo "No hay bridge br0 todavia"
+      register: ifaces_check
+
+    - name: "STP — Mostrar interfaces"
+      debug:
+        msg: "{{ ifaces_check.stdout_lines }}"
+
+    - name: "STP — Detener red temporalmente"
+      systemd:
+        name: systemd-networkd
+        state: stopped
+      ignore_errors: true
+
+    - name: "STP — Crear bridge br0 con STP habilitado"
+      shell: |
+        brctl addbr br0 2>/dev/null || echo "br0 ya existe"
+        brctl stp br0 on
+        brctl setfwd br0 2
+        brctl sethello br0 {{ stp_hello_time }}
+        brctl maxage br0 20
+        brctl hello br0 {{ stp_hello_time }}
+        echo "STP habilitado en br0"
+
+    - name: "STP — Asignar prioridad al bridge (Root Bridge)"
+      shell: |
+        brctl setbridgeprio br0 {{ stp_priority }}
+        PRIO=$(brctl show br0 | grep br0 | awk '{print $2}')
+        echo "Bridge br0 priority: $PRIO"
+
+    - name: "STP — Agregar puertos al bridge"
+      shell: |
+        for port in {{ bridge_ports | join(' ') }}; do
+          ip link set $port up 2>/dev/null || true
+          brctl addif br0 $port 2>/dev/null && echo "Agregado $port a br0" || echo "$port ya estaba en br0"
+        done
+
+    - name: "STP — Configurar netplan con STP"
+      copy:
+        dest: /etc/netplan/60-stp-bridge.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            bridges:
+              br0:
+                interfaces: [{{ bridge_ports | join(', ') }}]
+                parameters:
+                  stp: true
+                  priority: {{ stp_priority }}
+                  forward-delay: {{ stp_fwd_delay }}
+                  hello-time: {{ stp_hello_time }}
+                addresses:
+                  - "192.168.10.20/24"
+                routes:
+                  - to: default
+                    via: "192.168.10.1"
+                nameservers:
+                  addresses:
+                    - "192.168.16.10"
+                dhcp: false
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: "STP — Aplicar netplan"
+      shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+        echo "Netplan aplicado"
+
+    - name: "STP — Verificar estado final del bridge"
+      shell: |
+        echo "=== Puentes y puertos ==="
+        brctl show
+        echo ""
+        echo "=== STP info ==="
+        brctl showstp br0 2>/dev/null | grep -E "^ br0|priority|state|forward delay" | head -20
+        echo ""
+        echo "=== Interfaces ==="
+        ip -br addr show
+        echo ""
+        echo "=== Rutas ==="
+        ip route | grep -v kernel
+      register: stp_final
+      changed_when: false
+
+    - name: "STP — Mostrar resultado"
+      debug:
+        msg: "{{ stp_final.stdout_lines }}"

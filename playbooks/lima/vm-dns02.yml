@@ -1,0 +1,438 @@
+---
+# ============================================================================
+# vm-dns02.yml — DNS Secundario + NTP + DHCP Failover (reemplaza vm-docker01)
+# ============================================================================
+# VLAN 60 (gestion) — 192.168.16.11/27
+# Bond0: ens34+ens35 active-backup
+# ============================================================================
+
+- name: "vm-dns02 — RED + DNS Slave + NTP + DHCP Failover"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    server_ip: "192.168.16.11"
+    server_hostname: "vm-dns02"
+    pfSense_ip: "192.168.16.1"
+    dns_master_ip: "192.168.16.10"
+    domain_name: "AXIOM.LOCAL"
+    netbios_domain: "AXIOM"
+
+  tasks:
+    # =========================================================================
+    # 1. HOSTNAME
+    # =========================================================================
+    - name: "SYS — Set hostname"
+      ansible.builtin.hostname:
+        name: "{{ server_hostname }}"
+
+    - name: "SYS — /etc/hosts"
+      ansible.builtin.copy:
+        dest: /etc/hosts
+        content: |
+          127.0.0.1 localhost
+          {{ server_ip }} {{ server_hostname }}.{{ domain_name }} {{ server_hostname }}
+        owner: root
+        group: root
+        mode: "0644"
+
+    # =========================================================================
+    # 2. RED — Bond0 + Netplan
+    # =========================================================================
+    - name: "RED — Detener NetworkManager"
+      ansible.builtin.shell: |
+        systemctl is-active NetworkManager >/dev/null 2>&1 && systemctl stop NetworkManager || true
+        systemctl is-enabled NetworkManager >/dev/null 2>&1 && systemctl disable NetworkManager || true
+        echo "OK"
+      changed_when: false
+
+    - name: "RED — Deshabilitar systemd-resolved"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "RED — resolv.conf temporal"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 8.8.4.4
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "RED — Netplan bond0 (ens34+ens35)"
+      ansible.builtin.copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                addresses:
+                  - {{ server_ip }}/27
+                routes:
+                  - to: default
+                    via: {{ pfSense_ip }}
+                nameservers:
+                  addresses:
+                    - {{ dns_master_ip }}
+                    - 8.8.8.8
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "RED — Aplicar netplan"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+      changed_when: true
+
+    - name: "RED — Verificar bond0"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet "
+        echo "=== ACTIVE SLAVE ==="
+        cat /proc/net/bonding/bond0 | grep "Currently Active Slave"
+        echo "=== GATEWAY ==="
+        ip route | grep default
+      changed_when: false
+      register: net_status
+
+    - name: "RED — Resultado"
+      ansible.builtin.debug:
+        msg: "{{ net_status.stdout_lines }}"
+
+    # =========================================================================
+    # 3. PAQUETES
+    # =========================================================================
+    - name: "PKG — Update + instalar bind9, chrony, isc-dhcp-server"
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - bind9
+          - bind9utils
+          - bind9-dnsutils
+          - chrony
+          - isc-dhcp-server
+          - dnsutils
+        state: present
+
+    # =========================================================================
+    # 4. DNS SLAVE — BIND9
+    # =========================================================================
+    - name: "DNS — resolv.conf para usar bind9 local"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 127.0.0.1
+          nameserver {{ dns_master_ip }}
+          search {{ domain_name }}
+          options ndots:0
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "DNS — named.conf.options"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.options
+        content: |
+          options {
+              directory "/var/cache/bind";
+              recursion yes;
+              allow-query { any; };
+              allow-recursion { 192.168.0.0/16; 127.0.0.1; };
+              forwarders {
+                  8.8.8.8;
+                  8.8.4.4;
+              };
+              dnssec-validation no;
+              auth-nxdomain no;
+              listen-on-v6 { any; };
+          };
+        owner: root
+        group: bind
+        mode: "0644"
+        force: yes
+
+    - name: "DNS — named.conf.local (SLAVE zones)"
+      ansible.builtin.copy:
+        dest: /etc/bind/named.conf.local
+        content: |
+          zone "{{ domain_name }}" {
+              type slave;
+              file "/var/cache/bind/db.{{ domain_name }}";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "16.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.16";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "11.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.11";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "13.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.13";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "14.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.14";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "15.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.15";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "17.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.17";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "12.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.12";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+
+          zone "21.168.192.in-addr.arpa" {
+              type slave;
+              file "/var/cache/bind/db.192.168.21";
+              masters { {{ dns_master_ip }}; };
+              allow-transfer { none; };
+              allow-query { any; };
+          };
+        owner: root
+        group: bind
+        mode: "0644"
+        force: yes
+
+    - name: "DNS — Permisos /var/cache/bind"
+      ansible.builtin.file:
+        path: /var/cache/bind
+        state: directory
+        owner: bind
+        group: bind
+        mode: "0755"
+
+    - name: "DNS — Reiniciar bind9"
+      ansible.builtin.systemd:
+        name: bind9
+        state: restarted
+        enabled: yes
+
+    - name: "DNS — Esperar transferencia de zonas"
+      ansible.builtin.shell: |
+        sleep 5
+        journalctl -u named --no-pager -n 20 2>/dev/null || journalctl -u bind9 --no-pager -n 20
+      changed_when: false
+      register: dns_transfer_log
+
+    - name: "DNS — Log de transferencia"
+      ansible.builtin.debug:
+        msg: "{{ dns_transfer_log.stdout_lines }}"
+
+    - name: "DNS — Verificar resolucion"
+      ansible.builtin.shell: |
+        echo "=== Directa ==="
+        dig @{{ server_ip }} vm-dc01.{{ domain_name }} +short
+        echo "=== Todos los registros ==="
+        dig @{{ server_ip }} {{ domain_name }} AXFR 2>/dev/null | grep -E "^[a-z]" | head -20 || echo "AXFR no disponible o zona vacia"
+        echo "=== Reversa 16 ==="
+        dig @{{ server_ip }} -x 192.168.16.10 +short
+      changed_when: false
+      register: dns_verify
+
+    - name: "DNS — Resultado verificacion"
+      ansible.builtin.debug:
+        msg: "{{ dns_verify.stdout_lines }}"
+
+    # =========================================================================
+    # 5. NTP — CHRONY
+    # =========================================================================
+    - name: "NTP — chrony.conf"
+      ansible.builtin.copy:
+        dest: /etc/chrony/chrony.conf
+        content: |
+          pool ntp.ubuntu.com        iburst maxsources 2
+          pool south-america.pool.ntp.org iburst maxsources 2
+          driftfile /var/lib/chrony/drift
+          logdir /var/log/chrony
+          maxupdateskew 100.0
+          makestep 1 3
+          rtcsync
+          allow 192.168.0.0/16
+          local stratum 10
+          bindcmdaddress 0.0.0.0
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "NTP — Reiniciar chrony"
+      ansible.builtin.systemd:
+        name: chrony
+        state: restarted
+        enabled: yes
+
+    # =========================================================================
+    # 6. DHCP FAILOVER — ISC-DHCP-SERVER
+    # =========================================================================
+    - name: "DHCP — Interfaz de escucha"
+      ansible.builtin.copy:
+        dest: /etc/default/isc-dhcp-server
+        content: |
+          INTERFACESv4="bond0"
+          INTERFACESv6=""
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "DHCP — dhcpd.conf (FAILOVER SECONDARY)"
+      ansible.builtin.copy:
+        dest: /etc/dhcp/dhcpd.conf
+        content: |
+          # === DHCP Failover — vm-dns02 (SECONDARY) ===
+          # Primary: vm-dc01 (192.168.16.10)
+          # Secondary: vm-dns02 (192.168.16.11)
+
+          failover peer "dhcp-failover" {
+              secondary;
+              address {{ server_ip }};
+              peer address {{ dns_master_ip }};
+              max-response-delay 60;
+              max-unacked-updates 10;
+              load balance max seconds 3;
+              mclt 3600;
+              split 128;
+          }
+
+          authoritative;
+
+          # === VLAN 20 — Usuarios (192.168.12.0/25) ===
+          subnet 192.168.12.0 netmask 255.255.255.128 {
+              pool {
+                  failover peer "dhcp-failover";
+                  range 192.168.12.50 192.168.12.200;
+              }
+              option subnet-mask 255.255.255.128;
+              option routers 192.168.12.1;
+              option domain-name "{{ domain_name }}";
+              option domain-name-servers {{ server_ip }}, {{ dns_master_ip }};
+              option ntp-servers {{ server_ip }}, {{ dns_master_ip }};
+              default-lease-time 600;
+              max-lease-time 7200;
+          }
+
+          # === VLAN 21 — Administracion (192.168.21.0/27) ===
+          subnet 192.168.21.0 netmask 255.255.255.224 {
+              pool {
+                  failover peer "dhcp-failover";
+                  range 192.168.21.10 192.168.21.30;
+              }
+              option subnet-mask 255.255.255.224;
+              option routers 192.168.21.1;
+              option domain-name "{{ domain_name }}";
+              option domain-name-servers {{ server_ip }}, {{ dns_master_ip }};
+              option ntp-servers {{ server_ip }}, {{ dns_master_ip }};
+              default-lease-time 600;
+              max-lease-time 7200;
+          }
+
+          # === VLAN 60 — Gestion (sin pool DHCP, solo declaracion) ===
+          subnet 192.168.16.0 netmask 255.255.255.224 {
+              option subnet-mask 255.255.255.224;
+              option routers 192.168.16.1;
+              option domain-name "{{ domain_name }}";
+              option domain-name-servers {{ server_ip }}, {{ dns_master_ip }};
+          }
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "DHCP — Reiniciar isc-dhcp-server"
+      ansible.builtin.systemd:
+        name: isc-dhcp-server
+        state: restarted
+        enabled: yes
+
+    - name: "DHCP — Verificar estado"
+      ansible.builtin.shell: |
+        systemctl is-active isc-dhcp-server
+      changed_when: false
+      register: dhcp_status
+
+    - name: "DHCP — Resultado"
+      ansible.builtin.debug:
+        msg: "isc-dhcp-server: {{ dhcp_status.stdout }}"
+
+    # =========================================================================
+    # 7. AGREGAR vm-dns02 COMO NS EN EL MASTER (instrucciones)
+    # =========================================================================
+    - name: "RESUMEN — Instrucciones post-deploy"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "vm-dns02 DESPLEGADO — {{ server_ip }}/27"
+          - "=========================================="
+          - "DNS Slave: OK — transfiriendo de {{ dns_master_ip }}"
+          - "NTP: OK — chrony sirviendo hora a 192.168.0.0/16"
+          - "DHCP Failover: SECONDARY — pendiente configurar PRIMARY en vm-dc01"
+          - "=========================================="
+          - "PENDIENTE en vm-dc01:"
+          - "  1. Agregar also-notify { {{ server_ip }}; } en cada zona"
+          - "  2. Agregar NS record: dns02 IN A {{ server_ip }}"
+          - "  3. Modificar dhcpd.conf como PRIMARY con failover peer"
+          - "  4. Cambiar DNS en clientes: primary={{ dns_master_ip }}, secondary={{ server_ip }}"
+          - "=========================================="

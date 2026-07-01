@@ -1,0 +1,132 @@
+---
+- name: "Configurar OSPF en cores (FRR) — Routing Híbrido"
+  hosts: core1,core2
+  become: true
+  gather_facts: true
+
+  vars:
+    router_id: "{{ '192.168.10.20' if inventory_hostname == 'core1' else '192.168.10.30' }}"
+    ospf_area: "0.0.0.0"
+    ospf_networks:
+      - network: "192.168.10.0/24"
+        area: "0.0.0.0"
+      - network: "192.168.11.0/27"
+        area: "0.0.0.0"
+      - network: "192.168.12.0/25"
+        area: "0.0.0.0"
+      - network: "192.168.13.0/25"
+        area: "0.0.0.0"
+      - network: "192.168.14.0/26"
+        area: "0.0.0.0"
+      - network: "192.168.15.0/26"
+        area: "0.0.0.0"
+      - network: "192.168.16.0/27"
+        area: "0.0.0.0"
+      - network: "192.168.17.0/27"
+        area: "0.0.0.0"
+      - network: "192.168.21.0/27"
+        area: "0.0.0.0"
+    neighbor_core1: "192.168.10.20"
+    neighbor_core2: "192.168.10.30"
+    passive_default: true
+
+  tasks:
+    - name: "OSPF — Instalar FRR"
+      apt:
+        name:
+          - frr
+        state: present
+        update_cache: yes
+
+    - name: "OSPF — Crear directorio de logs"
+      file:
+        path: /var/log/frr
+        state: directory
+        owner: frr
+        group: frr
+        mode: "0755"
+
+    - name: "OSPF — Habilitar ospfd en daemons"
+      lineinfile:
+        path: /etc/frr/daemons
+        regexp: "^ospfd="
+        line: "ospfd=yes"
+        state: present
+
+    - name: "OSPF — Configurar frr.conf con OSPF"
+      copy:
+        dest: /etc/frr/frr.conf
+        content: |
+          # ============================================================
+          # FRR + OSPF Configuration — {{ inventory_hostname }}
+          # Hybrid Routing — Area 0
+          # ============================================================
+          frr version 9.0
+          frr defaults traditional
+          !
+          hostname {{ inventory_hostname }}
+          !
+          log file /var/log/frr/{{ inventory_hostname }}.log
+          log stdout
+          log syslog
+          !
+          ip forwarding
+          ipv6 forwarding
+          !
+          router ospf
+            ospf router-id {{ router_id }}
+            {% for net in ospf_networks %}
+            network {{ net.network }} area {{ net.area }}
+            {% endfor %}
+            {% if passive_default %}
+            passive-interface default
+            {% endif %}
+            auto-cost reference-bandwidth 10000
+            !
+          {% if inventory_hostname == 'core1' %}
+          interface br0
+            ip ospf network point-to-point
+            ip ospf hello-interval 2
+            ip ospf dead-interval 6
+            no ip ospf passive
+          {% endif %}
+          !
+          line vty
+          !
+        owner: frr
+        group: frr
+        mode: "0640"
+
+    - name: "OSPF — Asegurar que FRR arranca"
+      systemd:
+        name: frr
+        state: restarted
+        enabled: true
+        daemon_reload: yes
+
+    - name: "OSPF — Verificar estado"
+      shell: |
+        sleep 3
+        echo "=== FRR Status ==="
+        systemctl is-active frr
+        echo ""
+        echo "=== OSPF neighbors ==="
+        vtysh -c "show ip ospf neighbor" 2>/dev/null || echo "Sin vecinos OSPF aun"
+        echo ""
+        echo "=== OSPF routes ==="
+        vtysh -c "show ip ospf route" 2>/dev/null || echo "Sin rutas OSPF aun"
+        echo ""
+        echo "=== Rutas aprendidas ==="
+        ip route | grep -E "^O\.|^O " | head -10
+      register: ospf_status
+      changed_when: false
+
+    - name: "OSPF — Mostrar resultado"
+      debug:
+        msg: "{{ ospf_status.stdout_lines }}"
+
+    - name: "OSPF — Configurar pass through interfaces (no passive)"
+      shell: |
+        vtysh -c "configure terminal" -c "no passive-interface br0" 2>/dev/null || true
+        vtysh -c "write memory" 2>/dev/null || true
+        echo "Interfaces activas en OSPF"

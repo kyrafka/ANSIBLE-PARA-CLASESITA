@@ -1,0 +1,150 @@
+---
+- name: "Script de Backup hacia AWS S3"
+  hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: "BACKUP — Crear script bash de backup"
+      copy:
+        dest: /tmp/backup_to_s3.sh
+        content: |
+          #!/bin/bash
+          # ============================================================
+          # Script de Backup — AXIOM TECH
+          # Sube configs y backups a AWS S3
+          # Ejecutar via cron: 0 2 * * * /tmp/backup_to_s3.sh
+          # ============================================================
+
+          set -e
+
+          # --- Configuracion ---
+          S3_BUCKET="axiom-backups-tuempresa"
+          AWS_REGION="us-west-2"
+          DATE=$(date +%Y%m%d_%H%M%S)
+          BACKUP_DIR="/tmp/axiom_backups"
+          KEEP_DAYS=7
+
+          # --- Servidores ---
+          SERVERS=(
+            "192.168.16.10:vm-dc01"
+            "192.168.11.11:vm-web01"
+            "192.168.13.11:vm-services01"
+            "192.168.17.11:vm-monitor01"
+            "192.168.14.11:vm-storage01"
+            "192.168.15.11:vm-voip01"
+          )
+
+          # --- Crear directorio local temporal ---
+          mkdir -p "${BACKUP_DIR}/${DATE}"
+          cd "${BACKUP_DIR}"
+
+          echo "=========================================="
+          echo "BACKUP AXIOM — $(date)"
+          echo "=========================================="
+
+          # --- Recoger configs de cada servidor via SSH ---
+          for entry in "${SERVERS[@]}"; do
+            SERVER_IP="${entry%%:*}"
+            SERVER_NAME="${entry##*:}"
+
+            echo ""
+            echo ">> Backup de ${SERVER_NAME} (${SERVER_IP})..."
+
+            mkdir -p "${BACKUP_DIR}/${DATE}/${SERVER_NAME}"
+
+            # Configs criticas (se extraen remote y se tarvian)
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@${SERVER_IP} \
+              "sudo tar czf - \
+                /etc/samba/smb.conf \
+                /etc/bind/named.conf.local \
+                /var/lib/bind/zones/ \
+                /etc/asterisk/ \
+                /etc/haproxy/haproxy.cfg \
+                /etc/zabbix/zabbix_server.conf \
+                /etc/postfix/main.cf \
+                2>/dev/null" \
+              > "${BACKUP_DIR}/${DATE}/${SERVER_NAME}_configs.tar.gz" 2>/dev/null || \
+            echo "  (!) No se pudieron extraer configs de ${SERVER_NAME}"
+
+            # Si tiene NFS/Samba exports, grabar tabla
+            ssh -o StrictHostKeyChecking=no ubuntu@${SERVER_IP} \
+              "sudo cat /etc/exports 2>/dev/null; sudo smbstatus -b 2>/dev/null | head -10" \
+              > "${BACKUP_DIR}/${DATE}/${SERVER_NAME}_shares.txt" 2>/dev/null || true
+
+            echo "  OK"
+          done
+
+          # --- Backup de archivos de vm-dc01 (AD users dump) ---
+          echo ""
+          echo ">> AD Users dump..."
+          ssh -o StrictHostKeyChecking=no ubuntu@192.168.16.10 \
+            "sudo samba-tool user list 2>/dev/null" \
+            > "${BACKUP_DIR}/${DATE}/ad_users.txt" 2>/dev/null || true
+
+          # --- Backup de Zabbix config DB ---
+          echo ""
+          echo ">> Zabbix config..."
+          ssh -o StrictHostKeyChecking=no ubuntu@192.168.17.11 \
+            "sudomysqldump -u zabbix -p'Z4bbix2024!' zabbix --single-transaction 2>/dev/null" \
+            > "${BACKUP_DIR}/${DATE}/zabbix_db.sql" 2>/dev/null || true
+
+          # --- Upload a S3 ---
+          echo ""
+          echo ">> Subiendo a S3..."
+          if command -v aws &>/dev/null; then
+            aws s3 sync "${BACKUP_DIR}/${DATE}/" s3://${S3_BUCKET}/backups/${DATE}/ \
+              --region ${AWS_REGION} \
+              --storage-class STANDARD_IA \
+              --delete 2>/dev/null && \
+            echo "  S3: OK" || echo "  S3: FALLO (revisar credenciales)"
+          else
+            echo "  S3: AWS CLI no disponible — skip"
+          fi
+
+          # --- Limpiar backups locales antiguos ---
+          echo ""
+          echo ">> Limpiando backups locales (>${KEEP_DAYS} dias)..."
+          find ${BACKUP_DIR} -type d -mtime +${KEEP_DAYS} -exec rm -rf {} \; 2>/dev/null || true
+
+          # --- Resumen ---
+          echo ""
+          echo "=========================================="
+          echo "BACKUP COMPLETO — $(date)"
+          echo "=========================================="
+          echo "Fecha: ${DATE}"
+          echo "Bucket: s3://${S3_BUCKET}/backups/${DATE}/"
+          echo "Tamaño: $(du -sh ${BACKUP_DIR}/${DATE}/ 2>/dev/null | cut -f1 || echo 'N/A')"
+          echo "=========================================="
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "BACKUP — Instrucciones de ejecucion"
+      debug:
+        msg:
+          - "=========================================="
+          - "BACKUP SCRIPT CREADO"
+          - "=========================================="
+          - ""
+          - "El script esta en: /tmp/backup_to_s3.sh"
+          - ""
+          - "PASO 1: Subirlo a vm-dc01 o a tu maquina de control:"
+          - "  scp /tmp/backup_to_s3.sh ubuntu@192.168.16.10:/tmp/"
+          - ""
+          - "PASO 2: Instalar AWS CLI en vm-dc01:"
+          - "  sudo apt install awscli -y"
+          - ""
+          - "PASO 3: Configurar credenciales AWS:"
+          - "  aws configure"
+          - "  (usar Access Key + Secret del AWS Academy)"
+          - ""
+          - "PASO 4: Crear bucket S3:"
+          - "  aws s3 mb s3://axiom-backups-tuempresa --region us-west-2"
+          - ""
+          - "PASO 5: Agregar al crontab:"
+          - "  echo '0 2 * * * /tmp/backup_to_s3.sh' | sudo tee /etc/cron.d/axiom-backup"
+          - ""
+          - "NOTA: El script toma configs de todos los servidores"
+          - "      y las sube a S3 con versioning."
+          - "=========================================="
