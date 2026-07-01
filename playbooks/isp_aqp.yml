@@ -27,8 +27,8 @@
     site_code: "AQP"
     hostname: "isp-aqp01"
 
-    # WAN (ens34) — hacia upstream del ISP Arequipa
-    wan_ip: "192.167.1.1/24"
+    # WAN (ens34) — hacia Cisco del ISP Arequipa
+    wan_ip: "192.167.1.2/24"
     wan_gw: "192.167.1.254"
     wan_iface: "ens34"
 

@@ -91,8 +91,8 @@ SEDE AREQUIPA              SEDE TRUJILLO
 
 | VM | WAN IP | WAN GW | LAN IP | Rol | Ubicacion |
 |----|--------|--------|--------|-----|-----------|
-| isp-aqp01 | 192.167.1.1/24 | 192.167.1.254 | 192.167.82.1/24 | Gateway NAT + Routing | Arequipa |
-| isp-tru01 | 192.168.2.1/24 | 192.168.2.254 | 192.169.92.1/24 | Gateway NAT + Routing | Trujillo |
+| isp-aqp01 | 192.167.1.2/24 | 192.167.1.254 | 192.167.82.1/24 | Gateway NAT + Routing | Arequipa |
+| isp-tru01 | 192.168.2.2/24 | 192.168.2.254 | 192.169.92.1/24 | Gateway NAT + Routing | Trujillo |
 
 ## 4c. VMs Arequipa
 
