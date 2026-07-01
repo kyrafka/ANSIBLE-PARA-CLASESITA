@@ -338,63 +338,35 @@
         mode: "0644"
         force: yes
 
-    - name: "DHCP — dhcpd.conf (FAILOVER SECONDARY)"
+    - name: "DHCP — dhcpd.conf (STANDALONE — failover se activa despues)"
       ansible.builtin.copy:
         dest: /etc/dhcp/dhcpd.conf
         content: |
-          # === DHCP Failover — vm-dns02 (SECONDARY) ===
-          # Primary: vm-dc01 (192.168.16.10)
-          # Secondary: vm-dns02 (192.168.16.11)
-
-          failover peer "dhcp-failover" {
-              secondary;
-              address {{ server_ip }};
-              peer address {{ dns_master_ip }};
-              max-response-delay 60;
-              max-unacked-updates 10;
-              load balance max seconds 3;
-              mclt 3600;
-              split 128;
-          }
-
           authoritative;
+          default-lease-time 3600;
+          max-lease-time 7200;
+          option domain-name "{{ domain_name }}";
+          option domain-name-servers {{ dns_master_ip }}, {{ server_ip }};
 
-          # === VLAN 20 — Usuarios (192.168.12.0/25) ===
-          subnet 192.168.12.0 netmask 255.255.255.128 {
-              pool {
-                  failover peer "dhcp-failover";
-                  range 192.168.12.50 192.168.12.200;
-              }
-              option subnet-mask 255.255.255.128;
-              option routers 192.168.12.1;
-              option domain-name "{{ domain_name }}";
-              option domain-name-servers {{ server_ip }}, {{ dns_master_ip }};
-              option ntp-servers {{ server_ip }}, {{ dns_master_ip }};
-              default-lease-time 600;
-              max-lease-time 7200;
-          }
-
-          # === VLAN 21 — Administracion (192.168.21.0/27) ===
-          subnet 192.168.21.0 netmask 255.255.255.224 {
-              pool {
-                  failover peer "dhcp-failover";
-                  range 192.168.21.10 192.168.21.30;
-              }
-              option subnet-mask 255.255.255.224;
-              option routers 192.168.21.1;
-              option domain-name "{{ domain_name }}";
-              option domain-name-servers {{ server_ip }}, {{ dns_master_ip }};
-              option ntp-servers {{ server_ip }}, {{ dns_master_ip }};
-              default-lease-time 600;
-              max-lease-time 7200;
-          }
-
-          # === VLAN 60 — Gestion (sin pool DHCP, solo declaracion) ===
           subnet 192.168.16.0 netmask 255.255.255.224 {
-              option subnet-mask 255.255.255.224;
               option routers 192.168.16.1;
-              option domain-name "{{ domain_name }}";
-              option domain-name-servers {{ server_ip }}, {{ dns_master_ip }};
+              option subnet-mask 255.255.255.224;
+              option broadcast-address 192.168.16.31;
+              option domain-name-servers {{ dns_master_ip }}, {{ server_ip }};
+          }
+
+          subnet 192.168.12.0 netmask 255.255.255.0 {
+              option routers 192.168.12.1;
+              option subnet-mask 255.255.255.0;
+              option domain-name-servers {{ dns_master_ip }}, {{ server_ip }};
+              range 192.168.12.81 192.168.12.200;
+          }
+
+          subnet 192.168.21.0 netmask 255.255.255.224 {
+              option routers 192.168.21.1;
+              option subnet-mask 255.255.255.224;
+              option domain-name-servers {{ dns_master_ip }}, {{ server_ip }};
+              range 192.168.21.10 192.168.21.30;
           }
         owner: root
         group: root
