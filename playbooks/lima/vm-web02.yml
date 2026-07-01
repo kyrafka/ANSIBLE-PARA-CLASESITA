@@ -1,0 +1,340 @@
+---
+# ============================================================================
+# vm-web02.yml — Web Secundario (WordPress replica) + Zabbix Agent2
+# ============================================================================
+# VLAN 10 (DMZ) — 192.168.11.12/27
+# Bond0: ens34+ens35 active-backup
+# Mirror de vm-web01: Apache :8080, WordPress /var/www/axiom/
+# ============================================================================
+
+- name: "vm-web02 — RED + Apache + WordPress Replica + Zabbix Agent2"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    server_ip: "192.168.11.12"
+    server_hostname: "vm-web02"
+    pfSense_ip: "192.168.11.1"
+    dns_master_ip: "192.168.16.10"
+    dns_backup_ip: "192.168.16.11"
+    domain_name: "AXIOM.local"
+    zabbix_server: "192.168.17.11"
+    wp_db_host: "192.168.13.11"
+    wp_db_name: "axiom_web"
+    wp_db_user: "axiom_web"
+    wp_db_pass: "Ax1omWeb!2024"
+
+  tasks:
+    - name: "SYS — Set hostname"
+      ansible.builtin.hostname:
+        name: "{{ server_hostname }}"
+
+    - name: "SYS — /etc/hosts"
+      ansible.builtin.copy:
+        dest: /etc/hosts
+        content: |
+          127.0.0.1 localhost
+          {{ server_ip }} {{ server_hostname }}.{{ domain_name }} {{ server_hostname }}
+        owner: root
+        group: root
+        mode: "0644"
+
+    # =========================================================================
+    # 1. RED — Bond0
+    # =========================================================================
+    - name: "RED — Detener NetworkManager"
+      ansible.builtin.shell: |
+        systemctl is-active NetworkManager >/dev/null 2>&1 && systemctl stop NetworkManager || true
+        systemctl is-enabled NetworkManager >/dev/null 2>&1 && systemctl disable NetworkManager || true
+        echo "OK"
+      changed_when: false
+
+    - name: "RED — Deshabilitar systemd-resolved"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "RED — resolv.conf temporal"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 8.8.4.4
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "RED — Netplan bond0"
+      ansible.builtin.copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                addresses:
+                  - {{ server_ip }}/27
+                routes:
+                  - to: default
+                    via: {{ pfSense_ip }}
+                nameservers:
+                  addresses:
+                    - {{ dns_master_ip }}
+                    - {{ dns_backup_ip }}
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "RED — Aplicar netplan"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+      changed_when: true
+
+    - name: "RED — Verificar bond0"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet "
+        cat /proc/net/bonding/bond0 | grep "Currently Active Slave"
+        ip route | grep default
+      changed_when: false
+      register: net_status
+
+    - name: "RED — Resultado"
+      ansible.builtin.debug:
+        msg: "{{ net_status.stdout_lines }}"
+
+    # =========================================================================
+    # 2. PAQUETES
+    # =========================================================================
+    - name: "PKG — Update + instalar Apache, PHP, MySQL client, Zabbix repo"
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - apache2
+          - php
+          - php-mysql
+          - php-gd
+          - php-curl
+          - php-mbstring
+          - php-xml
+          - php-intl
+          - php-zip
+          - php-bcmath
+          - php-imagick
+          - mysql-client
+          - wget
+          - unzip
+          - curl
+        state: present
+
+    - name: "PKG — Agregar repo Zabbix"
+      ansible.builtin.apt:
+        deb: "https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb"
+        state: present
+      ignore_errors: true
+
+    - name: "PKG — Instalar zabbix-agent2"
+      ansible.builtin.apt:
+        update_cache: yes
+        name: zabbix-agent2
+        state: present
+
+    # =========================================================================
+    # 3. APACHE — Port 8080 (igual que vm-web01)
+    # =========================================================================
+    - name: "APACHE — Cambiar Listen a 8080"
+      ansible.builtin.copy:
+        dest: /etc/apache2/ports.conf
+        content: |
+          Listen 8080
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "APACHE — Crear directorio WordPress"
+      ansible.builtin.file:
+        path: /var/www/axiom
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: "APACHE — Descargar WordPress"
+      ansible.builtin.shell: |
+        if [ ! -f /tmp/wordpress.tar.gz ]; then
+          wget -q -O /tmp/wordpress.tar.gz https://wordpress.org/latest.tar.gz
+        fi
+        tar -xzf /tmp/wordpress.tar.gz -C /var/www/axiom --strip-components=1
+        chown -R www-data:www-data /var/www/axiom
+        echo "OK"
+      changed_when: true
+
+    - name: "APACHE — wp-config.php (misma DB que vm-web01)"
+      ansible.builtin.copy:
+        dest: /var/www/axiom/wp-config.php
+        content: |
+          <?php
+          define( 'DB_NAME', '{{ wp_db_name }}' );
+          define( 'DB_USER', '{{ wp_db_user }}' );
+          define( 'DB_PASSWORD', '{{ wp_db_pass }}' );
+          define( 'DB_HOST', '{{ wp_db_host }}' );
+          define( 'DB_CHARSET', 'utf8mb4' );
+          define( 'DB_COLLATE', 'utf8mb4_unicode_ci' );
+
+          define( 'WP_DEBUG', false );
+          define( 'FS_METHOD', 'direct' );
+          define( 'WP_MEMORY_LIMIT', '256M' );
+          define( 'WP_MAX_MEMORY_LIMIT', '512M' );
+          define( 'DISABLE_WP_CRON', true );
+
+          $table_prefix = 'wp_';
+
+          define( 'AUTH_KEY',         'put your unique phrase here' );
+          define( 'SECURE_AUTH_KEY',  'put your unique phrase here' );
+          define( 'LOGGED_IN_KEY',    'put your unique phrase here' );
+          define( 'NONCE_KEY',        'put your unique phrase here' );
+          define( 'AUTH_SALT',        'put your unique phrase here' );
+          define( 'SECURE_AUTH_SALT', 'put your unique phrase here' );
+          define( 'LOGGED_IN_SALT',   'put your unique phrase here' );
+          define( 'NONCE_SALT',       'put your unique phrase here' );
+
+          if ( ! defined( 'ABSPATH' ) ) {
+              define( 'ABSPATH', __DIR__ . '/' );
+          }
+          require_once ABSPATH . 'wp-settings.php';
+        owner: www-data
+        group: www-data
+        mode: "0644"
+        force: yes
+
+    - name: "APACHE — VirtualHost axiom"
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/axiom.conf
+        content: |
+          <VirtualHost *:8080>
+              ServerName {{ server_hostname }}.{{ domain_name }}
+              DocumentRoot /var/www/axiom
+              <Directory /var/www/axiom>
+                  Options FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              ErrorLog ${APACHE_LOG_DIR}/axiom_error.log
+              CustomLog ${APACHE_LOG_DIR}/axiom_access.log combined
+          </VirtualHost>
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "APACHE — Habilitar sitio axiom + rewrite"
+      ansible.builtin.shell: |
+        a2dissite 000-default 2>/dev/null || true
+        a2ensite axiom
+        a2enmod rewrite headers expires
+        echo "OK"
+      changed_when: true
+
+    - name: "APACHE — Reiniciar"
+      ansible.builtin.systemd:
+        name: apache2
+        state: restarted
+        enabled: yes
+
+    # =========================================================================
+    # 4. ZABBIX AGENT2
+    # =========================================================================
+    - name: "AGENT — Configurar zabbix_agent2.conf"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agent2.conf
+        content: |
+          Server={{ zabbix_server }},127.0.0.1
+          ServerActive={{ zabbix_server }},127.0.0.1
+          Hostname={{ server_hostname }}
+          ListenPort=10050
+          ListenIP=0.0.0.0
+          LogFile=/var/log/zabbix/zabbix_agent2.log
+          LogSize=10
+          DebugLevel=3
+          Timeout=30
+        owner: zabbix
+        group: zabbix
+        mode: "0644"
+        force: yes
+
+    - name: "AGENT — Reiniciar zabbix-agent2"
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted
+        enabled: yes
+
+    # =========================================================================
+    # 5. RESOLV.CONF
+    # =========================================================================
+    - name: "DNS — resolv.conf"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ dns_master_ip }}
+          nameserver {{ dns_backup_ip }}
+          search {{ domain_name }}
+          options ndots:0
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    # =========================================================================
+    # 6. VERIFICACION
+    # =========================================================================
+    - name: "VERIF — Estado servicios"
+      ansible.builtin.shell: |
+        echo "=== APACHE ==="
+        systemctl is-active apache2
+        echo "=== ZABBIX ==="
+        systemctl is-active zabbix-agent2
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet "
+        echo "=== WP CONFIG ==="
+        head -5 /var/www/axiom/wp-config.php
+      changed_when: false
+      register: final_status
+
+    - name: "VERIF — Resultado"
+      ansible.builtin.debug:
+        msg: "{{ final_status.stdout_lines }}"
+
+    - name: "RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "vm-web02 DESPLEGADO — {{ server_ip }}/27"
+          - "=========================================="
+          - "Apache :8080 — WordPress mirror OK"
+          - "Zabbix Agent2 — OK"
+          - "PENDIENTE en vm-web01:"
+          - "  Agregar vm-web02 como backend en HAProxy:"
+          - "  server web02 {{ server_ip }}:8080 check"
+          - "=========================================="

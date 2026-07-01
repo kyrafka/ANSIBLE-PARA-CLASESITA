@@ -1,0 +1,375 @@
+---
+# ============================================================================
+# vm-docker01.yml — Docker + Grafana + Portainer + Zabbix Agent2
+# ============================================================================
+# VLAN 30 (virtualizacion) — 192.168.13.12/25
+# Bond0: ens34+ens35 active-backup
+# ============================================================================
+
+- name: "vm-docker01 — RED + Docker + Grafana + Portainer + Zabbix Agent2"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    server_ip: "192.168.13.12"
+    server_hostname: "vm-docker01"
+    pfSense_ip: "192.168.13.1"
+    dns_master_ip: "192.168.16.10"
+    dns_backup_ip: "192.168.16.11"
+    domain_name: "AXIOM.local"
+    zabbix_server: "192.168.17.11"
+    grafana_admin_pass: "Grafana2024!"
+    portainer_admin_pass: "Portainer2024!"
+
+  tasks:
+    - name: "SYS — Set hostname"
+      ansible.builtin.hostname:
+        name: "{{ server_hostname }}"
+
+    - name: "SYS — /etc/hosts"
+      ansible.builtin.copy:
+        dest: /etc/hosts
+        content: |
+          127.0.0.1 localhost
+          {{ server_ip }} {{ server_hostname }}.{{ domain_name }} {{ server_hostname }}
+        owner: root
+        group: root
+        mode: "0644"
+
+    # =========================================================================
+    # 1. RED — Bond0
+    # =========================================================================
+    - name: "RED — Detener NetworkManager"
+      ansible.builtin.shell: |
+        systemctl is-active NetworkManager >/dev/null 2>&1 && systemctl stop NetworkManager || true
+        systemctl is-enabled NetworkManager >/dev/null 2>&1 && systemctl disable NetworkManager || true
+        echo "OK"
+      changed_when: false
+
+    - name: "RED — Deshabilitar systemd-resolved"
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: "RED — resolv.conf temporal"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver 8.8.8.8
+          nameserver 8.8.4.4
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "RED — Netplan bond0"
+      ansible.builtin.copy:
+        dest: /etc/netplan/50-cloud-init.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                addresses:
+                  - {{ server_ip }}/25
+                routes:
+                  - to: default
+                    via: {{ pfSense_ip }}
+                nameservers:
+                  addresses:
+                    - {{ dns_master_ip }}
+                    - {{ dns_backup_ip }}
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "RED — Aplicar netplan"
+      ansible.builtin.shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+      changed_when: true
+
+    - name: "RED — Verificar bond0"
+      ansible.builtin.shell: |
+        echo "=== BOND0 ==="
+        ip addr show bond0 | grep "inet "
+        cat /proc/net/bonding/bond0 | grep "Currently Active Slave"
+        ip route | grep default
+      changed_when: false
+      register: net_status
+
+    - name: "RED — Resultado"
+      ansible.builtin.debug:
+        msg: "{{ net_status.stdout_lines }}"
+
+    # =========================================================================
+    # 2. DOCKER
+    # =========================================================================
+    - name: "PKG — Instalar prereqs Docker"
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    - name: "DOCKER — Agregar GPG key"
+      ansible.builtin.shell: |
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+        echo "OK"
+      changed_when: true
+
+    - name: "DOCKER — Instalar Docker CE"
+      ansible.builtin.apt:
+        update_cache: yes
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+
+    - name: "DOCKER — Habilitar y arrancar"
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: "DOCKER — Crear red bridge personalizada"
+      ansible.builtin.shell: |
+        docker network create axiom-net 2>/dev/null || echo "ya existe"
+      changed_when: false
+
+    # =========================================================================
+    # 3. ZABBIX AGENT2
+    # =========================================================================
+    - name: "PKG — Agregar repo Zabbix"
+      ansible.builtin.apt:
+        deb: "https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_7.0-2+ubuntu24.04_all.deb"
+        state: present
+      ignore_errors: true
+
+    - name: "PKG — Instalar zabbix-agent2"
+      ansible.builtin.apt:
+        update_cache: yes
+        name: zabbix-agent2
+        state: present
+
+    - name: "AGENT — Configurar zabbix_agent2.conf"
+      ansible.builtin.copy:
+        dest: /etc/zabbix/zabbix_agent2.conf
+        content: |
+          Server={{ zabbix_server }},127.0.0.1
+          ServerActive={{ zabbix_server }},127.0.0.1
+          Hostname={{ server_hostname }}
+          ListenPort=10050
+          ListenIP=0.0.0.0
+          LogFile=/var/log/zabbix/zabbix_agent2.log
+          LogSize=10
+          DebugLevel=3
+          Timeout=30
+        owner: zabbix
+        group: zabbix
+        mode: "0644"
+        force: yes
+
+    - name: "AGENT — Reiniciar zabbix-agent2"
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted
+        enabled: yes
+
+    # =========================================================================
+    # 4. GRAFANA (Docker)
+    # =========================================================================
+    - name: "GRAFANA — Crear directorios"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "472"
+        group: "472"
+        mode: "0755"
+      loop:
+        - /opt/grafana/data
+        - /opt/grafana/provisioning
+        - /opt/grafana/provisioning/datasources
+        - /opt/grafana/provisioning/dashboards
+
+    - name: "GRAFANA — Datasource Zabbix (provisioning)"
+      ansible.builtin.copy:
+        dest: /opt/grafana/provisioning/datasources/zabbix.yml
+        content: |
+          apiVersion: 1
+          datasources:
+            - name: Zabbix
+              type: alexanderzobnin-zabbix-datasource
+              access: proxy
+              url: http://192.168.17.11/zabbix/api_jsonrpc.php
+              isDefault: true
+              jsonData:
+                username: Admin
+                password: zabbix
+                version: 7.0
+        owner: "472"
+        group: "472"
+        mode: "0644"
+        force: yes
+
+    - name: "GRAFANA — Dashboard provisioning"
+      ansible.builtin.copy:
+        dest: /opt/grafana/provisioning/dashboards/default.yml
+        content: |
+          apiVersion: 1
+          providers:
+            - name: default
+              orgId: 1
+              folder: ''
+              type: file
+              disableDeletion: false
+              editable: true
+              options:
+                path: /var/lib/grafana/dashboards
+                foldersFromFilesStructure: false
+        owner: "472"
+        group: "472"
+        mode: "0644"
+        force: yes
+
+    - name: "GRAFANA — Levantar contenedor"
+      ansible.builtin.shell: |
+        docker run -d \
+          --name grafana \
+          --restart unless-stopped \
+          -p 3000:3000 \
+          -v /opt/grafana/data:/var/lib/grafana \
+          -v /opt/grafana/provisioning:/etc/grafana/provisioning \
+          -e GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_pass }} \
+          -e GF_INSTALL_PLUGINS=alexanderzobnin-zabbix-datasource \
+          --network axiom-net \
+          grafana/grafana:latest
+        echo "OK"
+      changed_when: true
+
+    # =========================================================================
+    # 5. PORTAINER (Docker)
+    # =========================================================================
+    - name: "PORTAINER — Crear volumen"
+      ansible.builtin.file:
+        path: /opt/portainer
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: "PORTAINER — Levantar contenedor"
+      ansible.builtin.shell: |
+        docker run -d \
+          --name portainer \
+          --restart unless-stopped \
+          -p 9443:9443 \
+          -p 9000:9000 \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -v /opt/portainer:/data \
+          --network axiom-net \
+          portainer/portainer-ce:latest \
+          --admin-password '{{ portainer_admin_pass | hash("bcrypt") }}' 2>/dev/null || \
+        docker run -d \
+          --name portainer \
+          --restart unless-stopped \
+          -p 9443:9443 \
+          -p 9000:9000 \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          -v /opt/portainer:/data \
+          --network axiom-net \
+          portainer/portainer-ce:latest
+        echo "OK"
+      changed_when: true
+
+    # =========================================================================
+    # 6. RESOLV.CONF FINAL
+    # =========================================================================
+    - name: "DNS — resolv.conf"
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: |
+          nameserver {{ dns_master_ip }}
+          nameserver {{ dns_backup_ip }}
+          search {{ domain_name }}
+          options ndots:0
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    # =========================================================================
+    # 7. VERIFICACION
+    # =========================================================================
+    - name: "VERIF — Esperar contenedores"
+      ansible.builtin.shell: |
+        sleep 10
+        docker ps --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
+      changed_when: false
+      register: docker_ps
+
+    - name: "VERIF — Estado servicios"
+      ansible.builtin.shell: |
+        echo "=== DOCKER ==="
+        systemctl is-active docker
+        echo "=== ZABBIX ==="
+        systemctl is-active zabbix-agent2
+        echo "=== GRAFANA ==="
+        curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
+        echo ""
+        echo "=== PORTAINER ==="
+        curl -sk -o /dev/null -w "%{http_code}" https://localhost:9443
+        echo ""
+      changed_when: false
+      register: services_status
+
+    - name: "VERIF — Contenedores"
+      ansible.builtin.debug:
+        msg: "{{ docker_ps.stdout_lines }}"
+
+    - name: "VERIF — Servicios"
+      ansible.builtin.debug:
+        msg: "{{ services_status.stdout_lines }}"
+
+    - name: "RESUMEN"
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "vm-docker01 DESPLEGADO — {{ server_ip }}/25"
+          - "=========================================="
+          - "Docker: OK"
+          - "Grafana: http://{{ server_ip }}:3000 (admin/{{ grafana_admin_pass }})"
+          - "Portainer: https://{{ server_ip }}:9443 (crear password al primer login)"
+          - "Zabbix Agent2: OK"
+          - "=========================================="
+          - "PENDIENTE en vm-web01 (HAProxy):"
+          - "  Agregar backends:"
+          - "  - Grafana :3000"
+          - "  - Portainer :9443"
+          - "=========================================="
