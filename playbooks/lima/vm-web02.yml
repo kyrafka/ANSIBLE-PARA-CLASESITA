@@ -271,12 +271,12 @@
         dest: /etc/zabbix/zabbix_agent2.conf
         content: |
           Server={{ zabbix_server }},127.0.0.1
-          ServerActive={{ zabbix_server }},127.0.0.1
+          ServerActive={{ zabbix_server }}
           Hostname={{ server_hostname }}
           ListenPort=10050
           ListenIP=0.0.0.0
           LogFile=/var/log/zabbix/zabbix_agent2.log
-          LogSize=10
+          LogFileSize=10
           DebugLevel=3
           Timeout=30
         owner: zabbix
