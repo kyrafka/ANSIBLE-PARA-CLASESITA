@@ -1,23 +1,18 @@
 ---
 # ============================================================================
-# vm-web01_haproxy_update.yml — Actualizar HAProxy con backends nuevos
+# vm-web01_haproxy_fix_grafana.yml — Fix HAProxy para Grafana/Portainer sin loop
 # ============================================================================
-# Agrega: vm-web02 (WordPress replica), Grafana, Portainer
 # Correr DENTRO de vm-web01 (192.168.11.11)
+# Solucion: use_backend con path_beg + replace-path en backend + Location header fix
 # ============================================================================
 
-- name: "vm-web01 — Actualizar HAProxy"
+- name: "vm-web01 — Fix HAProxy Grafana/Portainer"
   hosts: localhost
   connection: local
   become: true
   gather_facts: true
 
   tasks:
-    - name: "HAProxy — Backup config actual"
-      ansible.builtin.shell: |
-        cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.bak.$(date +%s)
-      changed_when: false
-
     - name: "HAProxy — Nueva configuracion"
       ansible.builtin.copy:
         dest: /etc/haproxy/haproxy.cfg
@@ -49,11 +44,17 @@
           frontend http_front
               bind *:80
 
+              # === ACLs ===
+              acl is_grafana path_beg /grafana/
+              acl is_portainer path_beg /portainer/
               acl is_dolibarr path_beg /dolibarr/
               acl is_wordpress path_beg /wp- /wp-content /wp-includes /
               acl is_webmail path_beg /webmail /roundcube /mail
               acl is_voip path_beg /voip /asterisk /pbx
 
+              # === Routing (orden importa) ===
+              use_backend grafana_backend if is_grafana
+              use_backend portainer_backend if is_portainer
               use_backend dolibarr_backend if is_dolibarr
               use_backend wordpress_backend if is_wordpress
               use_backend webmail_backend if is_webmail
@@ -65,6 +66,17 @@
               balance roundrobin
               server web01 127.0.0.1:8080 check
               server web02 192.168.11.12:8080 check
+
+          backend grafana_backend
+              option forwardfor
+              http-request replace-path ^/grafana/(.*) /\1
+              http-response replace-value Location ^http://[^/]+/grafana http://%[hdr(host)] if { res.hdr(Location) -m found }
+              server grafana 192.168.13.12:3000 check
+
+          backend portainer_backend
+              option forwardfor
+              http-request replace-path ^/portainer/(.*) /\1
+              server portainer 192.168.13.12:9000 check
 
           backend dolibarr_backend
               option forwardfor
@@ -85,42 +97,34 @@
               stats enable
               stats uri /haproxy
               stats refresh 30s
-              stats auth admin:proxy.123
+              stats auth admin:H4proxy2024!
         owner: root
         group: root
         mode: "0644"
         force: yes
 
-    - name: "HAProxy — Validar config"
+    - name: "HAProxy — Validar"
       ansible.builtin.shell: |
         haproxy -c -f /etc/haproxy/haproxy.cfg 2>&1
       changed_when: false
-      register: haproxy_check
+      register: check
 
-    - name: "HAProxy — Resultado validacion"
+    - name: "HAProxy — Resultado"
       ansible.builtin.debug:
-        msg: "{{ haproxy_check.stdout }}"
+        msg: "{{ check.stdout }}"
 
     - name: "HAProxy — Reiniciar"
       ansible.builtin.systemd:
         name: haproxy
         state: restarted
-      when: "'Configuration file is valid' in haproxy_check.stdout"
+      when: "'Configuration file is valid' in check.stdout"
 
     - name: "HAProxy — Verificar"
       ansible.builtin.shell: |
         systemctl is-active haproxy
       changed_when: false
-      register: haproxy_status
+      register: status
 
-- name: "RESUMEN"
+    - name: "HAProxy — Estado"
       ansible.builtin.debug:
-        msg:
-          - "HAProxy: {{ haproxy_status.stdout }}"
-          - "WordPress: http://axiom.web.AXIOM.local/ (balancea web01 + web02)"
-          - "Dolibarr: http://192.168.11.11/dolibarr/"
-          - "Webmail: http://192.168.11.11/webmail/"
-          - "Stats: http://192.168.11.11:8404/haproxy"
-          - "NOTA: Grafana y Portainer NO van por HAProxy — acceso directo:"
-          - "  Grafana: http://axiom.grafana.AXIOM.local:3000"
-          - "  Portainer: http://axiom.portainer.AXIOM.local:9000"
+        msg: "{{ status.stdout }}"

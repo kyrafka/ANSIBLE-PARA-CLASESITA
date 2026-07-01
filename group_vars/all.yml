@@ -6,18 +6,20 @@
 # ============================================================================
 
 # --- DNS central en Lima ---
-dns_master: "192.168.16.4"
-dns_backup: "192.168.16.5"
+dns_master: "192.168.16.10"
+dns_backup: "192.168.16.11"
 
 # --- Dominio corporativo ---
-domain_name: "AJ.local"
+domain_name: "AXIOM.local"
 
 # --- Servicios centrales en Lima ---
 lima_services:
   web: "192.168.11.11"
-  samba_ad: "192.168.16.4"
+  samba_ad: "192.168.16.10"
   zabbix: "192.168.17.11"
-  ntp: "192.168.16.4"
+  ntp: "192.168.16.11"
+  dns_master: "192.168.16.10"
+  dns_backup: "192.168.16.11"
 
 # --- VLANs corporativas (definición base) ---
 corporate_vlans:

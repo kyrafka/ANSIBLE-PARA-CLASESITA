@@ -28,11 +28,14 @@
           # --- Servidores ---
           SERVERS=(
             "192.168.16.10:vm-dc01"
+            "192.168.16.11:vm-dns02"
             "192.168.11.11:vm-web01"
+            "192.168.11.12:vm-web02"
             "192.168.13.11:vm-services01"
             "192.168.17.11:vm-monitor01"
             "192.168.14.11:vm-storage01"
             "192.168.15.11:vm-voip01"
+            "192.168.13.12:vm-docker01"
           )
 
           # --- Crear directorio local temporal ---

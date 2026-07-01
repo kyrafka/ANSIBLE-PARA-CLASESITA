@@ -218,26 +218,6 @@
         - /opt/grafana/provisioning/datasources
         - /opt/grafana/provisioning/dashboards
 
-    - name: "GRAFANA — Datasource Zabbix (provisioning)"
-      ansible.builtin.copy:
-        dest: /opt/grafana/provisioning/datasources/zabbix.yml
-        content: |
-          apiVersion: 1
-          datasources:
-            - name: Zabbix
-              type: alexanderzobnin-zabbix-datasource
-              access: proxy
-              url: http://192.168.17.11/zabbix/api_jsonrpc.php
-              isDefault: true
-              jsonData:
-                username: Admin
-                password: zabbix
-                version: 7.0
-        owner: "472"
-        group: "472"
-        mode: "0644"
-        force: yes
-
     - name: "GRAFANA — Dashboard provisioning"
       ansible.builtin.copy:
         dest: /opt/grafana/provisioning/dashboards/default.yml
@@ -258,6 +238,13 @@
         mode: "0644"
         force: yes
 
+    # NOTA: El datasource Zabbix NO se provisiona automaticamente
+    # porque el plugin alexanderzobnin-zabbix-datasource no esta disponible
+    # para Grafana 13 (grafana-cli fue removido).
+    # Configurar manualmente en UI: Data Sources → Add → Zabbix
+    # URL: http://192.168.17.11/zabbix/api_jsonrpc.php
+    # User: Admin / Password: zabbix
+
     - name: "GRAFANA — Levantar contenedor"
       ansible.builtin.shell: |
         docker run -d \
@@ -267,7 +254,7 @@
           -v /opt/grafana/data:/var/lib/grafana \
           -v /opt/grafana/provisioning:/etc/grafana/provisioning \
           -e GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_pass }} \
-          -e GF_INSTALL_PLUGINS=alexanderzobnin-zabbix-datasource \
+          -e GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s:%(http_port)s/ \
           --network axiom-net \
           grafana/grafana:latest
         echo "OK"
@@ -364,12 +351,11 @@
           - "vm-docker01 DESPLEGADO — {{ server_ip }}/25"
           - "=========================================="
           - "Docker: OK"
-          - "Grafana: http://{{ server_ip }}:3000 (admin/{{ grafana_admin_pass }})"
-          - "Portainer: https://{{ server_ip }}:9443 (crear password al primer login)"
+          - "Grafana: http://axiom.grafana.AXIOM.local:3000 (admin/{{ grafana_admin_pass }})"
+          - "Portainer: http://axiom.portainer.AXIOM.local:9000 (crear password al primer login)"
           - "Zabbix Agent2: OK"
           - "=========================================="
-          - "PENDIENTE en vm-web01 (HAProxy):"
-          - "  Agregar backends:"
-          - "  - Grafana :3000"
-          - "  - Portainer :9443"
+          - "NOTA: Grafana/Portainer acceso DIRECTO via DNS"
+          - "  NO van por HAProxy (evitar loops de redirect)"
+          - "  Para Zabbix datasource en Grafana: configurar manualmente en UI"
           - "=========================================="
