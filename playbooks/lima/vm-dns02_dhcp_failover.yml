@@ -1,0 +1,108 @@
+---
+# ============================================================================
+# vm-dns02_dhcp_failover.yml — DHCP Failover SECONDARY en vm-dns02
+# ============================================================================
+# Correr DENTRO de vm-dns02 (192.168.16.11)
+# Failover peer: vm-dc01 (192.168.16.10)
+# ============================================================================
+
+- name: "vm-dns02 — DHCP Failover SECONDARY"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    server_ip: "192.168.16.11"
+    peer_ip: "192.168.16.10"
+
+  tasks:
+    - name: "DHCP — Interfaz de escucha"
+      ansible.builtin.copy:
+        dest: /etc/default/isc-dhcp-server
+        content: |
+          INTERFACESv4="bond0"
+          INTERFACESv6=""
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "DHCP — dhcpd.conf (FAILOVER SECONDARY)"
+      ansible.builtin.copy:
+        dest: /etc/dhcp/dhcpd.conf
+        content: |
+          authoritative;
+          default-lease-time 3600;
+          max-lease-time 7200;
+          option domain-name "AXIOM.local";
+          option domain-name-servers {{ peer_ip }}, {{ server_ip }};
+
+          failover peer "dhcp-failover" {
+              secondary;
+              address {{ server_ip }};
+              peer address {{ peer_ip }};
+              max-response-delay 60;
+              max-unacked-updates 10;
+              load balance max seconds 3;
+          }
+
+          subnet 192.168.16.0 netmask 255.255.255.224 {
+              option routers 192.168.16.1;
+              option subnet-mask 255.255.255.224;
+              option broadcast-address 192.168.16.31;
+              option domain-name-servers {{ peer_ip }}, {{ server_ip }};
+          }
+
+          subnet 192.168.12.0 netmask 255.255.255.0 {
+              pool {
+                  failover peer "dhcp-failover";
+                  range 192.168.12.81 192.168.12.200;
+              }
+              option routers 192.168.12.1;
+              option subnet-mask 255.255.255.0;
+              option broadcast-address 192.168.12.255;
+              option domain-name-servers {{ peer_ip }}, {{ server_ip }};
+              option domain-name "AXIOM.local";
+          }
+
+          subnet 192.168.21.0 netmask 255.255.255.224 {
+              pool {
+                  failover peer "dhcp-failover";
+                  range 192.168.21.10 192.168.21.30;
+              }
+              option routers 192.168.21.1;
+              option subnet-mask 255.255.255.224;
+              option domain-name-servers {{ peer_ip }}, {{ server_ip }};
+          }
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "DHCP — Reiniciar isc-dhcp-server"
+      ansible.builtin.systemd:
+        name: isc-dhcp-server
+        state: restarted
+        enabled: yes
+
+    - name: "DHCP — Verificar"
+      ansible.builtin.shell: |
+        sleep 3
+        systemctl is-active isc-dhcp-server
+      changed_when: false
+      register: dhcp_status
+
+    - name: "DHCP — Resultado"
+      ansible.builtin.debug:
+        msg: "isc-dhcp-server (SECONDARY): {{ dhcp_status.stdout }}"
+
+    - name: "DHCP — Log failover"
+      ansible.builtin.shell: |
+        journalctl -u isc-dhcp-server --no-pager | tail -5
+      changed_when: false
+      register: dhcp_log
+
+    - name: "DHCP — Mostrar log"
+      ansible.builtin.debug:
+        msg: "{{ dhcp_log.stdout_lines }}"
