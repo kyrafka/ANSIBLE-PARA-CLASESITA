@@ -1,0 +1,114 @@
+---
+# ============================================================================
+# vm-docker01_check.yml — Diagnostico de vm-docker01
+# ============================================================================
+# Correr DENTRO de vm-docker01 (192.168.13.12)
+# ============================================================================
+
+- name: "vm-docker01 — Diagnostico completo"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: "CHECK — Docker contenedores"
+      ansible.builtin.shell: |
+        docker ps -a --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
+      changed_when: false
+      register: docker_ps
+
+    - name: "CHECK — Docker redes"
+      ansible.builtin.shell: |
+        docker network ls
+      changed_when: false
+      register: docker_net
+
+    - name: "CHECK — Docker discos"
+      ansible.builtin.shell: |
+        df -h /
+      changed_when: false
+      register: disk
+
+    - name: "CHECK — RAM"
+      ansible.builtin.shell: |
+        free -h
+      changed_when: false
+      register: ram
+
+    - name: "CHECK — Interfaces de red"
+      ansible.builtin.shell: |
+        ip addr show | grep -E "inet |bond0|ens"
+      changed_when: false
+      register: net
+
+    - name: "CHECK — Rutas"
+      ansible.builtin.shell: |
+        ip route
+      changed_when: false
+      register: routes
+
+    - name: "CHECK — DNS resolucion"
+      ansible.builtin.shell: |
+        dig @192.168.16.10 vm-dc01.AXIOM.local +short
+        dig @192.168.16.10 google.com +short
+      changed_when: false
+      register: dns
+
+    - name: "CHECK — Zabbix agent"
+      ansible.builtin.shell: |
+        systemctl is-active zabbix-agent2
+      changed_when: false
+      register: zabbix
+
+    - name: "CHECK — Grafana HTTP"
+      ansible.builtin.shell: |
+        curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
+      changed_when: false
+      register: grafana
+
+    - name: "CHECK — Portainer HTTPS"
+      ansible.builtin.shell: |
+        curl -sk -o /dev/null -w "%{http_code}" https://localhost:9443
+      changed_when: false
+      register: portainer
+
+    - name: "CHECK — SSH"
+      ansible.builtin.shell: |
+        systemctl is-active ssh || systemctl is-active sshd || echo "no-ssh"
+      changed_when: false
+      register: ssh
+
+    - name: "RESULTADO — Docker"
+      ansible.builtin.debug:
+        msg: "{{ docker_ps.stdout_lines }}"
+
+    - name: "RESULTADO — Red"
+      ansible.builtin.debug:
+        msg: "{{ net.stdout_lines }}"
+
+    - name: "RESULTADO — Rutas"
+      ansible.builtin.debug:
+        msg: "{{ routes.stdout_lines }}"
+
+    - name: "RESULTADO — DNS"
+      ansible.builtin.debug:
+        msg: "{{ dns.stdout_lines }}"
+
+    - name: "RESULTADO — Recursos"
+      ansible.builtin.debug:
+        msg:
+          - "Disk: {{ disk.stdout_lines }}"
+          - "RAM: {{ ram.stdout_lines }}"
+
+    - name: "RESULTADO — Servicios"
+      ansible.builtin.debug:
+        msg:
+          - "Zabbix Agent2: {{ zabbix.stdout }}"
+          - "Grafana HTTP: {{ grafana.stdout }}"
+          - "Portainer HTTPS: {{ portainer.stdout }}"
+          - "SSH: {{ ssh.stdout }}"
+
+    - name: "RESULTADO — Docker Networks"
+      ansible.builtin.debug:
+        msg: "{{ docker_net.stdout_lines }}"
