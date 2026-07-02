@@ -17,7 +17,7 @@
     # === RED ===
     storage_ip: "192.167.14.11"
     storage_netmask: "26"
-    storage_gateway: "192.167.14.3"  # VIP CARP pfSense
+    storage_gateway: "192.167.16.3"  # VIP CARP pfSense (VLAN 60 - Gestión, temporal hasta crear VLAN 40)
     dns_primary: "192.167.16.10"     # aqp-dc01
     dns_secondary: "192.167.16.11"   # aqp-dns02
     
