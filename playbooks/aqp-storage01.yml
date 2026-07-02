@@ -48,10 +48,11 @@
         [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.storage.bak.$(date +%s)
         echo "Backup done"
 
-    - name: "NET — Crear netplan con bond0 + Internet temporal (ens36)"
+    - name: "NET — Crear netplan con bond0 (active-backup) + Internet temporal"
       copy:
-        dest: "/etc/netplan/50-storage.yaml"
+        dest: "/etc/netplan/50-cloud-init.yaml"
         content: |
+          # aqp-storage01 — Bond0 active-backup (igual que Lima)
           network:
             version: 2
             renderer: networkd
@@ -71,16 +72,17 @@
                 addresses:
                   - {{ storage_ip }}/{{ storage_netmask }}
                 routes:
-                  - to: 192.167.0.0/16
+                  - to: default
                     via: {{ storage_gateway }}
-                    metric: 200
                 nameservers:
                   addresses:
                     - {{ dns_primary }}
                     - {{ dns_secondary }}
+                    - 8.8.8.8
                 parameters:
-                  mode: 802.3ad
+                  mode: active-backup
                   mii-monitor-interval: 100
+                  primary: ens34
         owner: root
         group: root
         mode: "0600"
