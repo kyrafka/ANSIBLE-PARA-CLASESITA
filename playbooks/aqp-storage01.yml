@@ -1,0 +1,338 @@
+---
+# ============================================================================
+# aqp-storage01.yml — Storage Server para Arequipa
+# ============================================================================
+# Red + Samba AD Member + NFS
+# IP: 192.167.14.11/26 (VLAN 40 Storage)
+# Dominio: AXIOM.LOCAL (aqp-dc01)
+# ============================================================================
+
+- name: "Configurar Storage — aqp-storage01 (Arequipa)"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    # === RED ===
+    storage_ip: "192.167.14.11"
+    storage_netmask: "26"
+    storage_gateway: "192.167.14.3"  # VIP CARP pfSense
+    dns_primary: "192.167.16.10"     # aqp-dc01
+    dns_secondary: "192.167.16.11"   # aqp-dns02
+    
+    # === DOMINIO ===
+    domain_name: "AXIOM.LOCAL"
+    realm: "AXIOM.LOCAL"
+    workgroup: "AXIOM"
+    ad_dc_ip: "192.167.16.10"  # aqp-dc01
+    ad_admin_user: "Administrator"
+    ad_admin_pass: "admin123!"
+    
+    # === NFS CLIENTS (VLANs de Arequipa) ===
+    nfs_vlan20: "192.167.12.0/25"   # Usuarios
+    nfs_vlan21: "192.167.13.0/25"   # Administración
+    nfs_vlan60: "192.167.16.0/27"   # Gestión
+    
+    # === SAMBA IP RANGES ===
+    samba_admins_range: "192.167.12.10-80"
+    samba_secretaria_range: "192.167.12.81-100"
+    samba_usuarios_range: "192.167.12.101-200"
+
+  tasks:
+    # ========================================================================
+    # 1. CONFIGURACIÓN DE RED
+    # ========================================================================
+    - name: "NET — Backup netplan anterior"
+      shell: |
+        [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.storage.bak.$(date +%s)
+        echo "Backup done"
+
+    - name: "NET — Crear netplan con bond0 (VLAN 40)"
+      copy:
+        dest: "/etc/netplan/50-storage.yaml"
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                addresses:
+                  - {{ storage_ip }}/{{ storage_netmask }}
+                routes:
+                  - to: default
+                    via: {{ storage_gateway }}
+                nameservers:
+                  addresses:
+                    - {{ dns_primary }}
+                    - {{ dns_secondary }}
+                parameters:
+                  mode: 802.3ad
+                  mii-monitor-interval: 100
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "NET — Aplicar netplan"
+      shell: |
+        netplan generate
+        netplan apply
+        sleep 5
+        echo "Red configurada"
+
+    # ========================================================================
+    # 2. INSTALACIÓN DE PAQUETES
+    # ========================================================================
+    - name: "PKG — Instalar Samba, Winbind, NFS"
+      apt:
+        name:
+          - samba
+          - samba-common-bin
+          - winbind
+          - libpam-winbind
+          - libnss-winbind
+          - krb5-user
+          - nfs-kernel-server
+          - nfs-common
+        state: present
+        update_cache: yes
+
+    # ========================================================================
+    # 3. UNIR AL DOMINIO AXIOM.LOCAL
+    # ========================================================================
+    - name: "AD — Detener servicios Samba"
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop: [smbd, nmbd, winbind]
+      ignore_errors: true
+
+    - name: "AD — Eliminar secretos viejos"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/samba/private/secrets.tdb
+        - /var/lib/samba/private/netlogon_creds_cli.tdb
+
+    - name: "AD — Unir al dominio"
+      shell: |
+        net ads join -U {{ ad_admin_user }}%{{ ad_admin_pass }} -S {{ ad_dc_ip }} --force
+      register: ads_join
+      changed_when: "'Joined' in ads_join.stdout"
+
+    - name: "AD — Iniciar servicios"
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop: [winbind, smbd, nmbd]
+
+    - name: "AD — Verificar unión"
+      shell: |
+        wbinfo -u | head -3
+        wbinfo -g | head -3
+      register: ad_check
+      changed_when: false
+
+    - name: "AD — Mostrar estado"
+      debug:
+        msg: "Dominio unido: {{ ad_check.stdout_lines }}"
+
+    # ========================================================================
+    # 4. CONFIGURAR SAMBA.CONF
+    # ========================================================================
+    - name: "SMB — Configurar smb.conf"
+      copy:
+        dest: "/etc/samba/smb.conf"
+        content: |
+          [global]
+             workgroup = {{ workgroup }}
+             realm = {{ realm }}
+             security = ADS
+             server string = Storage Server AXIOM Arequipa
+             log file = /var/log/samba/log.%m
+             max log size = 1000
+             
+             # Winbind
+             winbind use default domain = yes
+             winbind offline logon = yes
+             idmap config * : backend = tdb
+             idmap config * : range = 2000-9999
+             idmap config {{ workgroup }} : backend = rid
+             idmap config {{ workgroup }} : range = 10000-20000
+             
+             # Charset
+             unix charset = UTF-8
+             dos charset = CP850
+             
+          # ===============================================
+          # JEFATURA / ADMINISTRACIÓN
+          # ===============================================
+          [Jefatura]
+             path = /shared/jefatura
+             browseable = yes
+             read only = no
+             create mask = 0770
+             directory mask = 0770
+             valid users = @{{ workgroup }}\\administradores
+             hosts allow = {{ samba_admins_range }}
+             comment = Jefatura - Solo administradores
+             
+          # ===============================================
+          # SECRETARIA
+          # ===============================================
+          [Secretaria]
+             path = /shared/secretaria
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             valid users = @{{ workgroup }}\\secretaria
+             hosts allow = {{ samba_secretaria_range }}
+             comment = Secretaria
+             
+          # ===============================================
+          # USUARIOS GENERALES
+          # ===============================================
+          [Usuarios]
+             path = /shared/usuarios
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             valid users = @{{ workgroup }}\\Domain Users
+             hosts allow = {{ samba_usuarios_range }}
+             comment = Usuarios generales
+             
+          # ===============================================
+          # PÚBLICO (solo lectura)
+          # ===============================================
+          [Publico]
+             path = /shared/publico
+             browseable = yes
+             read only = yes
+             create mask = 0755
+             directory mask = 0755
+             guest ok = no
+             hosts allow = 192.167.0.0/16
+             comment = Público - Solo lectura
+             
+          # ===============================================
+          # PROYECTOS (acceso por VLANs)
+          # ===============================================
+          [Proyectos]
+             path = /shared/proyectos
+             browseable = yes
+             read only = no
+             create mask = 0775
+             directory mask = 0775
+             valid users = @{{ workgroup }}\\Domain Users
+             hosts allow = {{ nfs_vlan20 }}, {{ nfs_vlan21 }}, {{ nfs_vlan60 }}
+             comment = Proyectos
+
+    # ========================================================================
+    # 5. CREAR DIRECTORIOS Y PERMISOS
+    # ========================================================================
+    - name: "DIR — Crear estructura de directorios"
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0775"
+        owner: "root"
+        group: "{{ workgroup }}\\Domain Users"
+      loop:
+        - /shared/jefatura
+        - /shared/secretaria
+        - /shared/usuarios
+        - /shared/publico
+        - /shared/proyectos
+
+    - name: "DIR — Configurar permisos especiales para Jefatura"
+      shell: |
+        chown root:{{ workgroup }}\\administradores /shared/jefatura
+        chmod 0770 /shared/jefatura
+
+    # ========================================================================
+    # 6. CONFIGURAR NFS EXPORTS
+    # ========================================================================
+    - name: "NFS — Configurar /etc/exports"
+      copy:
+        dest: "/etc/exports"
+        content: |
+          # NFS Exports para Arequipa
+          /shared/publico       {{ nfs_vlan20 }}(rw,sync,no_subtree_check,no_root_squash)
+          /shared/publico       {{ nfs_vlan21 }}(rw,sync,no_subtree_check,no_root_squash)
+          /shared/publico       {{ nfs_vlan60 }}(rw,sync,no_subtree_check,no_root_squash)
+          
+          /shared/proyectos     {{ nfs_vlan20 }}(rw,sync,no_subtree_check,no_root_squash)
+          /shared/proyectos     {{ nfs_vlan21 }}(rw,sync,no_subtree_check,no_root_squash)
+          /shared/proyectos     {{ nfs_vlan60 }}(rw,sync,no_subtree_check,no_root_squash)
+          
+          /shared/jefatura      {{ nfs_vlan21 }}(rw,sync,no_subtree_check,no_root_squash)
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "NFS — Exportar volúmenes"
+      shell: |
+        exportfs -ra
+        systemctl restart nfs-kernel-server
+        exportfs -v
+
+    # ========================================================================
+    # 7. REINICIAR SERVICIOS
+    # ========================================================================
+    - name: "SVC — Reiniciar Samba"
+      systemd:
+        name: smbd
+        state: restarted
+
+    - name: "SVC — Reiniciar Winbind"
+      systemd:
+        name: winbind
+        state: restarted
+
+    # ========================================================================
+    # 8. VERIFICACIÓN FINAL
+    # ========================================================================
+    - name: "VERIF — Estado final"
+      shell: |
+        echo "=========================================="
+        echo "STORAGE AREQUIPA — RESUMEN"
+        echo "=========================================="
+        echo ""
+        echo "=== RED ==="
+        ip addr show bond0 | grep "inet "
+        echo ""
+        echo "=== DOMINIO ==="
+        wbinfo -u | head -5
+        echo ""
+        echo "=== SHARES SMB ==="
+        testparm -s | grep "^\["
+        echo ""
+        echo "=== NFS EXPORTS ==="
+        exportfs -v
+        echo ""
+        echo "=== SERVICIOS ==="
+        systemctl is-active smbd winbind nfs-server
+        echo ""
+        echo "=========================================="
+        echo "ACCESO SMB: \\\\{{ storage_ip }}\\Jefatura"
+        echo "ACCESO NFS: {{ storage_ip }}:/shared/publico"
+        echo "=========================================="
+      register: final_check
+      changed_when: false
+
+    - name: "VERIF — Mostrar resumen"
+      debug:
+        msg: "{{ final_check.stdout_lines }}"
