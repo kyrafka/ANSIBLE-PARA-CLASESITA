@@ -1,0 +1,261 @@
+---
+# ============================================================================
+# tru-core1_network.yml — Configurar Core 1 de Trujillo
+# ============================================================================
+# Netplan (bonds + VLANs) + FRR (OSPF) + Keepalived (STP)
+# IP: 192.169.92.2/24
+# Router ID: 10.2.0.1
+# ============================================================================
+
+- name: "Configurar Core Trujillo 1 — Netplan + FRR + Keepalived"
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+
+  vars:
+    # --- Interlink HA entre cores ---
+    interlink_ip: "10.2.0.1/30"
+    interlink_iface: "ens38"
+
+    # --- VLANs de Trujillo ---
+    vlans:
+      - id: 20
+        name: "USUARIOS"
+        ip: "192.169.92.2/24"
+        subnet: "192.169.92.0/24"
+      - id: 60
+        name: "GESTION"
+        ip: "192.169.92.62/27"
+        subnet: "192.169.92.60/27"
+      - id: 40
+        name: "STORAGE"
+        ip: "192.169.94.2/26"
+        subnet: "192.169.94.0/26"
+
+    # --- Keepalived para STP ---
+    vrrp_password: "AN3IBL3P4SS"
+    stp_priority: 4096  # Más bajo = root bridge
+
+  tasks:
+    # ========================================================================
+    # 1. INSTALACIÓN DE PAQUETES
+    # ========================================================================
+    - name: "INSTALAR — FRR, Keepalived, VLAN tools"
+      apt:
+        name:
+          - frr
+          - frr-pythontools
+          - keepalived
+          - vlan
+          - netplan.io
+        state: present
+        update_cache: yes
+
+    # ========================================================================
+    # 2. NETPLAN — Bonds + VLANs
+    # ========================================================================
+    - name: "NETPLAN — Backup configuración anterior"
+      shell: |
+        [ -d /etc/netplan ] && cp -r /etc/netplan /tmp/netplan.tru-core1.bak.$(date +%s)
+        echo "Backup done"
+
+    - name: "NETPLAN — Crear configuración"
+      copy:
+        dest: "/etc/netplan/50-core-tru1.yaml"
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              ens34:
+                dhcp4: no
+                optional: true
+              ens35:
+                dhcp4: no
+                optional: true
+              ens36:
+                dhcp4: no
+                optional: true
+              ens37:
+                dhcp4: no
+                optional: true
+              ens38:
+                addresses:
+                  - {{ interlink_ip }}
+                optional: true
+
+            bonds:
+              bond0:
+                interfaces: [ens34, ens35]
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens34
+                optional: true
+
+              bond1:
+                interfaces: [ens36, ens37]
+                parameters:
+                  mode: active-backup
+                  mii-monitor-interval: 100
+                  primary: ens36
+                optional: true
+
+            vlans:
+              {% for vlan in vlans %}
+              bond1.{{ vlan.id }}:
+                id: {{ vlan.id }}
+                link: bond1
+                addresses:
+                  - {{ vlan.ip }}
+                optional: true
+              {% endfor %}
+        owner: root
+        group: root
+        mode: "0600"
+        force: yes
+
+    - name: "NETPLAN — Generar y aplicar"
+      shell: |
+        netplan generate
+        netplan apply
+        sleep 3
+        echo "Netplan aplicado"
+
+    # ========================================================================
+    # 3. FRR — OSPF
+    # ========================================================================
+    - name: "FRR — Habilitar servicios"
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - frr
+        - frr-ospf
+        - frr-ospf6
+
+    - name: "FRR — Configurar OSPF"
+      copy:
+        dest: "/etc/frr/ospfd.conf"
+        content: |
+          !
+          hostname core-tru1
+          password {{ vrrp_password }}
+          enable password {{ vrrp_password }}
+          !
+          router ospf
+            router-id 10.2.0.1
+            log-adjacency-changes
+            {% for vlan in vlans %}
+            network {{ vlan.subnet }} area 0.0.0.0
+            {% endfor %}
+            network 10.2.0.0/30 area 0.0.0.0
+          !
+          line vty
+          !
+        owner: frr
+        group: frr
+        mode: "0640"
+        force: yes
+
+    - name: "FRR — Configurar daemon OSPF"
+      lineinfile:
+        path: "/etc/frr/daemons"
+        regexp: "^ospfd="
+        line: "ospfd=yes"
+        state: present
+
+    - name: "FRR — Reiniciar servicio"
+      systemd:
+        name: frr
+        state: restarted
+      ignore_errors: true
+
+    # ========================================================================
+    # 4. KEEPALIVED — STP Root + VRRP
+    # ========================================================================
+    - name: "KEEPALIVED — Configurar para STP Root"
+      copy:
+        dest: "/etc/keepalived/keepalived.conf"
+        content: |
+          !
+          ! Keepalived para STP Root Bridge (Trujillo)
+          !
+          global_defs {
+            router_id CORE_TRU1
+            vrrp_garp_master_delay 5
+            vrrp_garp_master_repeat 3
+          }
+
+          vrrp_instance STP_ROOT_TRU {
+            state MASTER
+            interface bond0
+            virtual_router_id 2
+            priority {{ stp_priority }}
+            advert_int 1
+            authentication {
+              auth_type PASS
+              auth_pass {{ vrrp_password }}
+            }
+            virtual_ipaddress {
+              10.2.0.1/30
+            }
+          }
+        owner: root
+        group: root
+        mode: "0644"
+        force: yes
+
+    - name: "KEEPALIVED — Habilitar servicio"
+      systemd:
+        name: keepalived
+        state: started
+        enabled: yes
+
+    # ========================================================================
+    # 5. IP FORWARDING + ROUTING
+    # ========================================================================
+    - name: "ROUTING — Habilitar IP Forwarding"
+      shell: |
+        echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-core-tru-routing.conf
+        sysctl -p /etc/sysctl.d/99-core-tru-routing.conf
+
+    - name: "ROUTING — Permitir forwarding entre interfaces"
+      shell: |
+        iptables -C FORWARD -i bond0 -o bond1 -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i bond0 -o bond1 -j ACCEPT
+        iptables -C FORWARD -i bond1 -o bond0 -j ACCEPT 2>/dev/null || \
+        iptables -I FORWARD -i bond1 -o bond0 -j ACCEPT
+
+    # ========================================================================
+    # 6. VERIFICACIÓN FINAL
+    # ========================================================================
+    - name: "VERIF — Interfaces y VLANs"
+      shell: |
+        echo "=============================================="
+        echo "CORE-TRUJILLO 1 — RESUMEN"
+        echo "=============================================="
+        echo ""
+        echo "=== INTERFACES ==="
+        ip -br addr show | grep -E "bond|ens38"
+        echo ""
+        echo "=== VLANs ==="
+        ip -br addr show | grep "bond1\."
+        echo ""
+        echo "=== ENRUTAMIENTO OSPF ==="
+        vtysh -c "show ip ospf neighbor" 2>/dev/null || echo "OSPF sin vecinos aún"
+        echo ""
+        echo "=== VRRP/STP ==="
+        systemctl is-active keepalived
+        echo ""
+        echo "=== FORWARDING ==="
+        cat /proc/sys/net/ipv4/ip_forward
+        echo "=============================================="
+      changed_when: false
+      register: verif
+
+    - name: "VERIF — Mostrar resultado"
+      debug:
+        msg: "{{ verif.stdout_lines }}"
