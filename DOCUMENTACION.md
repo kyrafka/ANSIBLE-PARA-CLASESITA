@@ -1073,6 +1073,149 @@ tailscale netcheck
 | Asterisk PBX (Aqp) | http://192.167.82.64/ | extensiones 100/101/102 / rol.123 |
 | Asterisk PBX (Tru) | http://192.170.12.64/ | extensiones 100/101/102 / rol.123 |
 
+## 21. ESTADO ACTUAL — VERIFICADO (Julio 2026)
+
+### ✅ LIMA (HQ) — 100% Operativo
+
+| Servicio | VM | IP | Estado | URL/Acceso | Credenciales |
+|----------|-----|-----|--------|------------|--------------|
+| **Active Directory** | vm-dc01 | 192.168.16.10 | ✅ Running | — | Administrator / rol.123 |
+| **DNS Master** | vm-dc01 | 192.168.16.10 | ✅ Running | — | — |
+| **DNS Slave** | vm-dns02 | 192.168.16.11 | ✅ Running | — | — |
+| **DHCP** | vm-dc01 | 192.168.16.10 | ✅ Running | — | — |
+| **HAProxy + WordPress** | vm-web01 | 192.168.11.11 | ✅ Running | http://axiom.web.AXIOM.local/ | admin / rol.123 |
+| **Apache (web02)** | vm-web02 | 192.168.11.12 | ✅ Running | — | — |
+| **Email (Postfix/Dovecot)** | vm-services01 | 192.168.13.11 | ✅ Running | http://axiom.webmail.AXIOM.local/ | secretaria / rol.123 |
+| **Roundcube Webmail** | vm-services01 | 192.168.13.11 | ✅ Running | — | — |
+| **MySQL** | vm-services01 | 192.168.13.11 | ✅ Running | — | root / (ver config) |
+| **Storage (Samba+NFS)** | vm-storage01 | 192.168.14.11 | ✅ Running | \\axiom.storage.AXIOM.local | AD users / rol.123 |
+| **Asterisk PBX** | vm-voip01 | 192.168.15.11 | ⚠️ REFUSED | — | Extensiones 100/101/102 |
+| **Zabbix Server** | vm-monitor01 | 192.168.17.11 | ✅ Running | http://axiom.monitor.AXIOM.local/zabbix/ | Admin / zabbix |
+| **Grafana Native** | vm-monitor01 | 192.168.17.11 | ✅ Running | http://axiom.grafana.AXIOM.local:3000 | admin / grafana.123 |
+| **Docker + Grafana** | vm-docker01 | 192.168.13.12 | ✅ Running | — | — |
+| **Portainer** | vm-docker01 | 192.168.13.12 | ✅ Running | http://axiom.portainer.AXIOM.local:9000 | admin / qwe123$qwe123$ |
+| **pfSense HA** | pfSense | 192.168.10.1/3 | ✅ Running | — | — |
+| **Cores (OSPF+STP)** | core1/core2 | 192.168.10.20/30 | ✅ Running | — | — |
+
+**DNS Records configurados:**
+- axiom.web.AXIOM.local → 192.168.11.11
+- axiom.monitor.AXIOM.local → 192.168.17.11
+- axiom.grafana.AXIOM.local → 192.168.13.12
+- axiom.portainer.AXIOM.local → 192.168.13.12
+- axiom.storage.AXIOM.local → 192.168.14.11
+- axiom.mail.AXIOM.local → 192.168.13.11
+- axiom.voip.AXIOM.local → 192.168.15.11
+
+**Storage Exports (vm-storage01):**
+- /shared/public → 192.168.12.0/25, 192.168.13.0/25, **192.170.12.0/24** (Trujillo)
+- /shared/projects → 192.168.13.0/25, **192.170.12.0/24** (Trujillo)
+- /shared/departments → 192.168.13.0/25, **192.170.12.0/24** (Trujillo)
+
+---
+
+### ✅ AREQUIPA — 100% Operativo
+
+| Servicio | VM | IP | Estado | Notas |
+|----------|-----|-----|--------|-------|
+| **AD DC Local** | aqp-dc01 | 192.167.16.10 | ✅ Running | Dominio AXIOM.LOCAL independiente |
+| **DNS Slave** | aqp-dns01 | 192.167.16.11 | ✅ Running | Forwarders a Lima |
+| **DHCP** | aqp-dc01/aqp-dns01 | 192.167.16.10/11 | ✅ Running | Failover configurado |
+| **Storage (Samba+NFS)** | aqp-storage01 | 192.167.14.11 | ✅ Running | Hostname: arq-storage01 (pendiente reboot) |
+| **pfSense-AQP** | pfSense | 192.167.82.1/3 | ✅ Running | Tailscale subnet router |
+| **Cores (OSPF+STP)** | core-aqp1/2 | 192.167.10.20/30 | ✅ Running | MASTER/BACKUP |
+
+**Consumo de servicios Lima desde Arequipa (vía Tailscale):**
+| Servicio Lima | IP | Estado | Método |
+|---------------|-----|--------|--------|
+| Web/WordPress | 192.168.11.11 | ✅ HTTP 200 | Tailscale |
+| Zabbix | 192.168.17.11 | ✅ HTTP 200 | Tailscale |
+| Grafana | 192.168.17.11:3000 | ✅ HTTP 302 | Tailscale |
+| Storage SMB | 192.168.14.11 | ✅ 6 shares | Tailscale |
+| Email (SMTP/IMAP) | 192.168.13.11 | ✅ Puertos abiertos | Tailscale |
+| Portainer | 192.168.13.12:9000 | ✅ HTTP 307 | Tailscale |
+| Asterisk SIP | 192.168.15.11 | ⚠️ REFUSED | Tailscale |
+
+**DNS resolvido desde Arequipa:**
+- axiom.web.AXIOM.local → 192.168.11.11 ✅
+- 192.168.11.11 PTR → axiom.AXIOM.local ✅
+
+---
+
+### 🔲 TRUJILLO — Pendiente de Implementación
+
+**IPs asignadas:** 192.170.12.0/24 (VLAN 20 Usuarios)
+
+**Configuración requerida:**
+- ISP: isp-tru01 (192.170.12.1/24)
+- pfSense: 192.170.12.3 (VIP CARP)
+- Core: 192.170.12.2/3 (OSPF+STP)
+- **No hay servicios locales** (consume todo de Lima vía VPN)
+
+**Storage Lima accesible para Trujillo:**
+- /shared/public → 192.170.12.0/24 ✅ configurado
+- /shared/projects → 192.170.12.0/24 ✅ configurado
+- /shared/departments → 192.170.12.0/24 ✅ configurado
+
+---
+
+## 22. PENDIENTES GENERALES
+
+| Item | Prioridad | Responsable | Notas |
+|------|-----------|-------------|-------|
+| **Asterisk VoIP (Lima)** | Alta | — | Connection refused en puerto 5060. Diagnosticar servicio/firewall |
+| **Azure Hybrid** | Alta | Usuario | 1 VM + 1 DB + 1 Storage + conexión híbrida |
+| **Backup vCenter** | Media | — | Configurar política de backup automático |
+| **Hostname aqp-storage01** | Baja | — | Reboot requerido (arq-storage01 → aqp-storage01) |
+| **Documentar vMotion** | Baja | — | Live Migration entre hosts ESXi |
+| **Snapshots automáticos** | Baja | — | Política de snapshots programados |
+| **Dolibarr ERP** | Baja | — | No instalado (base de datos existe pero sin archivos web) |
+| **Gráficos Grafana** | Media | — | Configurar dashboards personalizados con Zabbix |
+
+---
+
+## 23. ACCESOS RÁPIDOS — ACTUALIZADO
+
+| Servicio | URL | Usuario | Password |
+|----------|-----|---------|----------|
+| WordPress | http://axiom.web.AXIOM.local/ | admin | rol.123 |
+| Zabbix | http://axiom.monitor.AXIOM.local/zabbix/ | Admin | zabbix |
+| Grafana | http://axiom.grafana.AXIOM.local:3000 | admin | grafana.123 |
+| Portainer | http://axiom.portainer.AXIOM.local:9000 | admin | qwe123$qwe123$ |
+| Webmail | http://axiom.webmail.AXIOM.local/ | (AD user) | rol.123 |
+| Storage SMB | \\axiom.storage.AXIOM.local\public | (AD user) | rol.123 |
+| HAProxy Stats | http://192.168.10.11:8404/haproxy | admin | proxy.123 |
+
+---
+
+## 24. COMANDOS ÚTILES
+
+### Verificar servicios Lima desde Arequipa:
+```bash
+# DNS
+dig @192.168.16.10 axiom.web.AXIOM.local
+
+# Web
+curl -I http://192.168.11.11/
+
+# Zabbix
+curl -I http://192.168.17.11/zabbix/
+
+# Storage SMB
+smbclient -L //192.168.14.11 -N
+
+# Email
+nc -zv 192.168.13.11 25
+```
+
+### Montar storage Lima desde cliente:
+```bash
+# NFS
+mount -t nfs axiom.storage.AXIOM.local:/shared/public /mnt/public
+
+# SMB (Linux)
+mount -t cifs //axiom.storage.AXIOM.local/public /mnt/public -o username=usuario
+```
+
 ## 21. Pendientes y Mejoras
 
 - [ ] **Limpiar disco vm-dc01** — 100% lleno (apt autoremove, journalctl --vacuum-time=1d)
